@@ -95,6 +95,45 @@ public:
         return linkedKnobs_[(size_t) k] != nullptr ? linkedKnobs_[(size_t) k]->getBounds()
                                                    : juce::Rectangle<int>();
     }
+    // 测试钩子（T36）
+    bool isPopoverOpenForTest() const { return popoverOpen_; }
+    int  getPopoverBandForTest() const { return popoverBand_; }
+    int  getSelectedBandForTest() const { return selectedBand_; }
+    double getPopoverValueForTest (int k) const { return popoverValues_[(size_t) k]; }
+    void syncPopoverFromParamsForTest() { syncPopoverFromParams(); }
+    void openLinkedDrawerForTest() { toggleLinkedDrawer (true); }
+    juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
+    float curveYAtFreqForTest (float f) const { return gainToY (curveDbAtFreq (f)); }
+    float rangeEdgeYForTest (int b) const
+    {
+        // Range 层底边的 y（取该段几何中心处）
+        return getRangeEdgeRect ((size_t) b).getBottom();
+    }
+    // T36：在段内扫描一个真实命中 Range 缘的点（避免依赖未重建的 Path）
+    bool findRangeEdgePointForTest (int band, float& outX, float& outY) const
+    {
+        const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+        const float W = (float) getWidth();
+        const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+        for (int i = 1; i < 20; ++i)
+        {
+            const float x = edges[(size_t) band] + (edges[(size_t) band + 1] - edges[(size_t) band]) * (float) i / 20.0f;
+            for (int y = (int) plotTopPx() + 4; y < (int) plotBottomPx() - 4; ++y)
+            {
+                int bOut = -1; bool lower = true;
+                if (hitTestRangeEdge (juce::Point<float> (x, (float) y), bOut, lower) && bOut == band && lower)
+                { outX = x; outY = (float) y; return true; }
+            }
+        }
+        return false;
+    }
+    // T36 诊断钩子
+    bool hitTestCurveForTest (float x, float y) const
+    { int b = -1; return hitTestCurve (juce::Point<float> (x, y), b); }
+    bool hitTestRangeEdgeForTest (float x, float y) const
+    { int b = -1; bool l = true; return hitTestRangeEdge (juce::Point<float> (x, y), b, l); }
+    int  hitTestFreqDotForTest (float x, float y) const
+    { int b = -1; return hitTestFreqDot (juce::Point<float> (x, y), b); }
     int  hitTestButtonForTest (float x, float y, int& band, int& btn) const
     {
         return hitTestButton (juce::Point<float> (x, y), band, btn);
@@ -224,6 +263,14 @@ private:
     float dragStartY_ = 0.0f, dragStartMakeup_ = 0.0f;
     bool  dragAxisLocked_ = false;      // #3：主轴已锁定（首次位移超阈值后）
     bool  dragAxisIsX_ = false;         // #3：锁定的是横轴（中心频率）而非纵轴（Makeup）
+    // §6 / O5-A：曲线上"按下"先挂起——点击=选中+开 Popover，真正拖动才改成 Makeup
+    bool  curvePending_ = false;
+    int   curvePendingBand_ = -1;
+    float curveDownX_ = 0.0f, curveDownY_ = 0.0f;
+    bool  rangePending_ = false;
+    int   rangePendingBand_ = -1;
+    bool  rangePendingLower_ = true;
+    float dragRangeEdgeY_ = 0.0f;      // Range 拖动起始的下缘 y（判定是否仍是 Range 意图）
     float dragStartX_ = 0.0f;
     float dragStartRange_ = 0.0f;
     bool mouseDownOnButton_ = false;
@@ -265,6 +312,20 @@ private:
     bool  linkedOpen_ = false;
     float linkedAnim_ = 0.0f;                      // 0=收起 1=展开（~250ms 滑入）
     bool  popoverOpen_ = false;                    // O6 互斥（5.3 用）
+    int   popoverBand_ = -1;
+    std::array<double, 5> popoverValues_ {};       // Threshold/Range/Attack/Release/Mix
+    std::array<double, 3> popoverSliders_ { 4.0, 1.0, 0.0 };  // Ratio / Knee(1=soft) / Ext
+    bool popoverExpertOpen_ = false;
+    // ---- Phase 5.3 Popover 几何/交互 ----
+    float popoverAnim_ = 0.0f;                     // 0=收起 1=展开
+    juce::Rectangle<float> popoverRect() const;
+    bool hitTestPopoverClose (juce::Point<float> p) const;
+    void togglePopover (bool open);
+    void drawPopover (juce::Graphics& g);
+    void drawPopoverTopBar (juce::Graphics& g);
+    void drawPopoverKnobs (juce::Graphics& g);
+    void syncPopoverFromParams();
+    static juce::String fmtHzShort (float hz);
     std::array<std::unique_ptr<Knob>, kLinkedKnobs> linkedKnobs_;
     std::array<double, kLinkedKnobs - 1> linkedOffset_ {};   // 4 个偏移旋钮的当前 Δ
     void ensureLinkedKnobs();

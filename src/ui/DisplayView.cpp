@@ -783,6 +783,15 @@ void DisplayView::timerCallback()
                 if (kb != nullptr) kb->setVisible (false);
     }
 
+    // ---- Phase 5.3：Popover 展开动画（与抽屉同时间常数）----
+    {
+        const double tau = 0.085;
+        const float k = (float) (1.0 - std::exp (-dt / tau));
+        const float target = popoverOpen_ ? 1.0f : 0.0f;
+        if (std::abs (popoverAnim_ - target) < 0.004f) popoverAnim_ = target;
+        else                                          popoverAnim_ += (target - popoverAnim_) * k;
+    }
+
     refreshSpectrumPaths();     // 有新帧才重建
 
     repaint();
@@ -1541,6 +1550,13 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
 
     const auto p = e.position;
 
+    // 0) Phase 5.3：Popover 打开时，点 ✕ / 面板外 → 收起（§6）
+    if (popoverOpen_)
+    {
+        if (hitTestPopoverClose (p)) { togglePopover (false); return; }
+        if (! popoverRect().contains (p)) togglePopover (false);
+    }
+
     // 0) LINKED 抽屉梯形按钮（§5.2）：点开/收起
     if (hitTestDrawerButton (p))
     {
@@ -1613,53 +1629,106 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // 4) EQ 曲线纵向拖拽 = Makeup（O5-A）
+    // 4) EQ 曲线（O5-A）——**按下先挂起**：点击=选中+开 Popover，真正拖动才改成 Makeup。
+    //    （§6「点分区→选中+Popover 弹出」与 O5-A「曲线纵拖=Makeup」在同一像素区冲突，
+    //      按 Pro-MB 语义用"是否发生位移"区分二者）
     int curveBand = -1;
-    if (hitTestCurve (p, curveBand))
+    const bool onCurve = hitTestCurve (p, curveBand);
+    if (onCurve)
     {
-        drag_ = DragMode::Makeup;
-        dragBand_ = selectedBand_;
-        dragStartY_ = p.y;
-        dragStartX_ = p.x;
-        dragStartMakeup_ = proc_.apvts.getRawParameterValue (
-            "band" + juce::String (selectedBand_) + "Makeup")->load();
-        return;
+        curvePending_ = true;
+        curvePendingBand_ = selectedBand_;
+        curveDownX_ = p.x;
+        curveDownY_ = p.y;
+        // 不 return：继续往下走选中/Popover 分支
     }
 
-    // 4.5) Range 钟型缘（曲线未命中才轮到；避免抢占曲线邻域）
+    // 4.5) Range 钟型**下缘**（仅当曲线未命中时；否则曲线永远是赢家）
     {
         int rb = -1; bool lower = true;
-        if (hitTestRangeEdge (p, rb, lower))
+        if (! onCurve && hitTestRangeEdge (p, rb, lower) && lower)
         {
-            selectedBand_ = rb;
-            drag_ = DragMode::Range;
-            dragStartY_ = p.y;
-            dragStartRange_ = proc_.apvts.getRawParameterValue (
-                "band" + juce::String (rb) + "Range")->load();
-            return;
+            curvePending_ = true;
+            curvePendingBand_ = (rb >= 0) ? rb : selectedBand_;
+            curveDownX_ = p.x;
+            curveDownY_ = p.y;
+            rangePending_ = true;
+            rangePendingBand_ = rb;
+            rangePendingLower_ = lower;
         }
     }
 
-    // 5) 其余 = 选段
+    // 5) 点分区 → 选中 + Popover 弹出（§4.1「选段开菜单」/§6）
+    //    ⚠️ 仅响应**绘图区**内的点击（顶栏/global bar/抽屉按钮不算分区）
+    const float plotTop = plotTopPx();
+    const float plotBottom = plotBottomPx();
+    const bool inPlotArea = (p.y >= plotTop && p.y <= plotBottom);
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
     const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+    if (inPlotArea)
     for (int i = 0; i < 4; ++i)
         if (p.x >= edges[i] && p.x < edges[i + 1])
         {
             if (selectedBand_ != i)
             {
                 selectedBand_ = i;
-                curvePathsValid_ = false;     // #4：切段 → 强制重建（否则 Range 层不刷新）
+                hoverBand_ = i;
+                curvePathsValid_ = false;          // #4：切段 → 强制重建
+                if (popoverOpen_) popoverBand_ = i;   // 跟随更新（不关闭）
+                else              togglePopover (true);
             }
-            break;
+            else
+                togglePopover (! popoverOpen_);       // 同段再点 = toggle
+            if (popoverOpen_) syncPopoverFromParams();
+            repaint();
+            return;
         }
+    // 6) 点空白 → 收起 Popover（§6）
+    if (popoverOpen_) togglePopover (false);
     repaint();
 }
 
 void DisplayView::mouseDrag (const juce::MouseEvent& e)
 {
     const auto p = e.position;
+
+    // O5-A：曲线上按下 → 真正发生位移才接管为 Makeup 拖拽，并收起 Popover
+    if (curvePending_)
+    {
+        const float dyEvt = p.y - curveDownY_;
+        if (std::abs (dyEvt) < 4.0f && std::abs (p.x - curveDownX_) < 4.0f)
+            return;                                    // 抖动/静止：仍是"点击"语义
+        curvePending_ = false;
+
+        if (rangePending_)
+        {
+            // Range 缘拖动接管：**本帧立即应用**（内联一次 Range 计算）
+            rangePending_ = false;
+            const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
+            const float startRange = proc_.apvts.getRawParameterValue (
+                "band" + juce::String (rangePendingBand_) + "Range")->load();
+            const float newRange = juce::jlimit (-30.0f, 0.0f,
+                startRange + (curveDownY_ - p.y) * dbPerPx);
+            setParamNorm ("band" + juce::String (rangePendingBand_) + "Range",
+                          (newRange + 30.0f) / 30.0f);
+            drag_ = DragMode::Range;
+            dragBand_ = rangePendingBand_;
+            dragStartY_ = curveDownY_;
+            dragStartRange_ = startRange;
+            if (popoverOpen_) togglePopover (false);
+            return;
+        }
+
+        drag_ = DragMode::Makeup;
+        dragBand_ = curvePendingBand_ >= 0 ? curvePendingBand_ : selectedBand_;
+        dragStartY_ = curveDownY_;
+        dragStartX_ = curveDownX_;
+        dragStartMakeup_ = proc_.apvts.getRawParameterValue (
+            "band" + juce::String (dragBand_) + "Makeup")->load();
+        if (popoverOpen_) togglePopover (false);        // 拖动模式：收起浮层
+        // 不 return —— 继续走 Makeup 分支，让本帧位移立即生效
+    }
 
     if (drag_ == DragMode::Divider)
     {
@@ -1673,7 +1742,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
         // Range 拖动：上拖 range 增大（向 0 dB 靠近）；用动态量程
         const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
         const float newRange = juce::jlimit (-30.0f, 0.0f, dragStartRange_ + (dragStartY_ - p.y) * dbPerPx);
-        setParamNorm ("band" + juce::String (selectedBand_) + "Range",
+        setParamNorm ("band" + juce::String (dragBand_) + "Range",
                       (newRange + 30.0f) / 30.0f);
         return;
     }
@@ -1717,6 +1786,8 @@ void DisplayView::mouseUp (const juce::MouseEvent&)
     dragIndex_ = -1;
     dragBand_ = -1;
     dragAxisLocked_ = false;
+    curvePending_ = false;
+    rangePending_ = false;
 }
 void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 {
@@ -1876,6 +1947,216 @@ void DisplayView::drawLinkedDrawer (juce::Graphics& g)
     g.drawRoundedRectangle (panel, sx (10.0f), 1.0f);
 }
 
+// ============================================================
+// Phase 5.3 · 频段 Popover（UI_SPEC §6，Pro-MB 样式）
+//   点击分区 → 该段选中 + 浮层弹出；点空白/✕/Esc → 收起
+//   O6 方案1：与 LINKED 抽屉互斥
+// ============================================================
+
+juce::Rectangle<float> DisplayView::popoverRect() const
+{
+    const float W = (float) getWidth();
+    const float H = (float) getHeight();
+    const float pw = sx (472.0f);
+    const float ph = sy (200.0f);
+
+    // 随分段居中：取该段左右边界的像素中点
+    const float Wd = W;
+    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], Wd };
+    const float midX = (edges[(size_t) popoverBand_] + edges[(size_t) popoverBand_ + 1]) * 0.5f;
+
+    float px = midX - pw * 0.5f;
+    px = juce::jlimit (sx (8.0f), W - pw - sx (8.0f), px);
+    const float py = (H - sy (kGlobalBarH) - sy (29.0f)) * 0.40f - ph * 0.5f;   // 绘图区中部偏上
+    return juce::Rectangle<float> (px, py, pw, ph);
+}
+
+bool DisplayView::hitTestPopoverClose (juce::Point<float> p) const
+{
+    // 顶栏 ✕ 按钮（右上 22×22）
+    const auto r = popoverRect();
+    const float s = sx (22.0f);
+    return juce::Rectangle<float> (r.getRight() - s - sx (10.0f), r.getY() + sy (8.0f), s, s)
+             .contains (p);
+}
+
+void DisplayView::togglePopover (bool open)
+{
+    if (open == popoverOpen_) return;
+    popoverOpen_ = open;
+    popoverBand_ = open ? selectedBand_ : -1;
+    if (open)
+        toggleLinkedDrawer (false);               // O6 方案1：互斥
+    syncPopoverFromParams();
+    repaint();
+}
+
+void DisplayView::drawPopover (juce::Graphics& g)
+{
+    if (! popoverOpen_ || popoverAnim_ < 0.004f) return;
+    const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
+    const auto r = popoverRect();
+
+    // 半透明玻璃面板 + 阴影边
+    g.setColour (juce::Colours::black.withAlpha (0.35f * a));
+    g.fillRoundedRectangle (r.translated (0.0f, sy (3.0f)), sx (12.0f));
+    g.setColour (pal_.popA.withMultipliedAlpha (a));
+    g.fillRoundedRectangle (r, sx (12.0f));
+    g.setColour (pal_.accent.withAlpha (0.5f * a));
+    g.drawRoundedRectangle (r, sx (12.0f), 1.0f);
+
+    drawPopoverTopBar (g);
+    drawPopoverKnobs (g);
+}
+
+// Popover 打开/切段时从 APVTS 同步当前值（§6.4：参数改动即时写 APVTS）
+void DisplayView::syncPopoverFromParams()
+{
+    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
+    const juce::String ids[] = { Param::bandThreshold (b), Param::bandRange (b),
+                                 Param::bandAttack (b), Param::bandRelease (b),
+                                 Param::bandMix (b) };
+    for (int k = 0; k < 5; ++k)
+        popoverValues_[(size_t) k] = getParamPhysical (ids[k]);
+}
+
+juce::String DisplayView::fmtHzShort (float hz)
+{
+    if (hz >= 1000.0f) return juce::String (hz / 1000.0f, 1) + "k";
+    return juce::String ((int) std::round (hz));
+}
+
+// Popover 顶栏：⚡BYP 宏 + 段名 + 频率范围 + ▼预留 + ✕（§6.3）
+void DisplayView::drawPopoverTopBar (juce::Graphics& g)
+{
+    if (! popoverOpen_) return;
+    const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
+    const auto r = popoverRect();
+
+    // ⚡ BYP 宏按钮（方案 A：记忆 Mix → 设 0 → 恢复，DESIGN §6.6）
+    const float boltS = sx (20.0f);
+    auto bolt = juce::Rectangle<float> (r.getX() + sx (10.0f), r.getY() + sy (7.0f), boltS, boltS);
+    g.setColour (pal_.track);
+    g.fillRoundedRectangle (bolt, sx (5.0f));
+    g.setColour (pal_.accent);
+    g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
+    g.drawText (juce::String::fromUTF8 ("\xE2\x9A\xA1"), bolt, juce::Justification::centred);
+
+    // 段名 + 频率范围
+    static const char* kNames[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
+    float lo, hi;
+    if (popoverBand_ == 0)      { lo = 20.0f;   hi = cachedX1_; }
+    else if (popoverBand_ == 1) { lo = cachedX1_; hi = cachedX2_; }
+    else if (popoverBand_ == 2) { lo = cachedX2_; hi = cachedX3_; }
+    else                        { lo = cachedX3_; hi = 22100.0f; }
+    g.setColour (pal_.text);
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 12.0f));
+    g.drawText (juce::String (kNames[juce::jlimit (0, 3, popoverBand_)]) + "  "
+                + fmtHzShort (lo) + " - " + fmtHzShort (hi),
+                juce::Rectangle<float> (bolt.getRight() + sx (8.0f), r.getY() + sy (7.0f),
+                                        sx (300.0f), sy (20.0f)),
+                juce::Justification::centredLeft);
+
+    // ✕ 关闭按钮（右上）
+    const float cs = sx (22.0f);
+    auto closeBtn = juce::Rectangle<float> (r.getRight() - cs - sx (10.0f), r.getY() + sy (8.0f), cs, cs);
+    g.setColour (pal_.track);
+    g.fillRoundedRectangle (closeBtn, sx (6.0f));
+    g.setColour (pal_.text);
+    g.drawText ("\xE2\x9C\x95", closeBtn, juce::Justification::centred);
+
+    // 分隔线
+    g.setColour (pal_.grid);
+    g.fillRect (r.getX() + sx (10.0f), r.getY() + sy (30.0f), r.getWidth() - sx (20.0f), 1.0f);
+    (void) a;
+}
+
+// Popover 旋钮行：THRESHOLD / RANGE / ATTACK / RELEASE / MIX（v1.7 已删 MAKEUP）+ 范围标注（§6.2）
+void DisplayView::drawPopoverKnobs (juce::Graphics& g)
+{
+    if (! popoverOpen_) return;
+    const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
+    const auto r = popoverRect();
+
+    static const char* kLabels[5] = { "THRESHOLD", "RANGE", "ATTACK", "RELEASE", "MIX" };
+    static const char* kRange [5] = { "-60..0 dB", "-30..30 dB", "0..200 ms", "10..1000 ms", "0..100 %" };
+
+    const float unitW = (r.getWidth() - sx (16.0f)) / 5.0f;
+    for (int k = 0; k < 5; ++k)
+    {
+        const float cx = r.getX() + sx (8.0f) + unitW * (float) k + unitW * 0.5f;
+        const float knobD = sy (46.0f);
+        const float cy = r.getY() + sy (52.0f) + knobD * 0.5f;
+
+        // 旋钮弧（复用 Knob 的绘制语言：暖灰环 + accent 弧）
+        const float norm = juce::jlimit (0.0f, 1.0f, (float) (popoverValues_[(size_t) k] / 1.0));
+        const float a0 = juce::MathConstants<float>::pi * 0.75f;
+        const float a1 = juce::MathConstants<float>::pi * 2.25f;
+        const float av = a0 + norm * (a1 - a0);
+        const float thick = juce::jmax (2.0f, knobD * 0.11f);
+        juce::Path track, val;
+        track.addCentredArc (cx, cy, knobD * 0.5f - thick * 0.5f, knobD * 0.5f - thick * 0.5f,
+                             0.0f, a0, a1, true);
+        g.setColour (pal_.track.withMultipliedAlpha (a));
+        g.strokePath (track, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
+                                                   juce::PathStrokeType::rounded));
+        val.addCentredArc (cx, cy, knobD * 0.5f - thick * 0.5f, knobD * 0.5f - thick * 0.5f,
+                           0.0f, a0, av, true);
+        g.setColour (pal_.accent.withMultipliedAlpha (a));
+        g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+        // 帽 + 指针
+        const float capR = knobD * 0.5f - thick - 1.0f;
+        g.setColour (pal_.knob.withMultipliedAlpha (a));
+        g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.8f * a));
+        g.drawLine (cx + std::cos (av) * capR * 0.30f, cy + std::sin (av) * capR * 0.30f,
+                    cx + std::cos (av) * capR * 0.80f, cy + std::sin (av) * capR * 0.80f,
+                    juce::jmax (1.5f, knobD * 0.07f));
+
+        // 标签 + 范围标注 + 数值
+        g.setColour (pal_.dim.withMultipliedAlpha (a));
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
+        g.drawText (kLabels[k],
+                    juce::Rectangle<float> (cx - unitW * 0.5f, r.getY() + sy (36.0f), unitW, 12.0f),
+                    juce::Justification::centredTop);
+        g.drawText (kRange[k],
+                    juce::Rectangle<float> (cx - unitW * 0.5f, r.getY() + sy (36.0f) + sy (11.0f), unitW, 11.0f),
+                    juce::Justification::centredTop);
+        g.setColour (pal_.text.withMultipliedAlpha (a));
+        g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
+        g.drawText (juce::String (popoverValues_[(size_t) k], 1),
+                    juce::Rectangle<float> (cx - unitW * 0.5f, r.getY() + sy (104.0f), unitW, 12.0f),
+                    juce::Justification::centredTop);
+    }
+
+    // 滑杆行：RATIO + KNEE(HARD/SOFT) + EXT(INT/EXT)（§6.2）
+    const float rowY = r.getY() + sy (142.0f);
+    const float rowW = (r.getWidth() - sx (20.0f)) / 3.0f;
+    for (int k = 0; k < 3; ++k)
+    {
+        const float x0 = r.getX() + sx (10.0f) + rowW * (float) k;
+        const float bw = rowW - sx (10.0f);
+        g.setColour (pal_.track.withMultipliedAlpha (a));
+        g.fillRoundedRectangle (x0, rowY, bw, sy (22.0f), sx (11.0f));
+        g.setColour (pal_.dim.withMultipliedAlpha (a));
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+        const juce::String txt = (k == 0) ? "RATIO  4.0 : 1"
+                              : (k == 1) ? "KNEE  SOFT" : "EXT  INT";
+        g.drawText (txt, juce::Rectangle<float> (x0, rowY, bw, sy (22.0f)),
+                    juce::Justification::centred);
+    }
+
+    // EXPERT 折叠区入口（§6.2/§6.3，放 DETECTOR/LOOKAHEAD 等低频操作项）
+    g.setColour (pal_.dim.withMultipliedAlpha (a));
+    g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
+    g.drawText ("EXPERT  " + juce::String::fromUTF8 ("\xE2\x96\xB6"),
+                juce::Rectangle<float> (r.getX() + sx (10.0f), r.getBottom() - sy (18.0f),
+                                        sx (120.0f), 12.0f),
+                juce::Justification::centredLeft);
+}
+
 // ---------------- 入口 ----------------
 void DisplayView::paint (juce::Graphics& g)
 {
@@ -1894,6 +2175,7 @@ void DisplayView::paint (juce::Graphics& g)
     drawDrawer (g);
     drawDrawer (g);
     drawLinkedDrawer (g);   // Phase 5.2：LINKED 抽屉面板（旋钮为子组件，画在上面）
+    drawPopover (g);        // Phase 5.3：频段 Popover（浮于最上层）
     drawMeters (g);
     drawTopStrip (g);
     drawGlobalBar (g);

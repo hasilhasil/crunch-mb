@@ -2030,13 +2030,13 @@ static void testDisplayDataLayer()
         auto peakNear = [] (const std::array<float, SpectrumEngine::kDisplayPoints>& arr,
                             float targetHz) -> float
         {
-            // 对数频率轴：freq = 10 * (2200)^(i/(N-1))，fMax = min(20000, sr/2)
+            // 对数频率轴：freq = 10 * (2210)^(i/(N-1))，fMax = min(22100, sr/2)
             const int N = SpectrumEngine::kDisplayPoints;
             float best = -200.0f;
             for (int i = 0; i < N; ++i)
             {
                 const double t = (double) i / (double) (N - 1);
-                const double f = 10.0 * std::pow (2000.0, t);
+                const double f = 10.0 * std::pow (2210.0, t);
                 if (f > targetHz * 0.7 && f < targetHz * 1.4)
                     best = juce::jmax (best, arr[(size_t) i]);
             }
@@ -2296,8 +2296,8 @@ static void testInteraction()
 
     // ---- (1) 点击分区选段 ----
     dv.mouseDownForTest (60.0f, 400.0f);
-    check (dv.getSelectedBand() == 0, "T21.1 点击 L 分区 -> 选中 band0",
-           juce::String (dv.getSelectedBand()));
+    check (dv.getSelectedBandForTest() == 0, "T21.1 点击 L 分区 -> 选中 band0",
+           juce::String (dv.getSelectedBandForTest()));
 
     // ---- (2) 分割线拖拽改频率（x1 默认 200Hz → 拖到 400Hz 处）----
     {
@@ -2640,8 +2640,8 @@ static void testFreqDotAndGlobalBypass()
         check (std::abs (after - before) > 0.02f, "T24.1 拖动 LM 段频点 -> band1Makeup 变化",
                "fcen=" + juce::String (fcen, 0) + "Hz  before=" + juce::String (before)
                + " after=" + juce::String (after));
-        check (dv.getSelectedBand() == 1, "T24.2 拖动他段频点同时选中该段",
-               juce::String (dv.getSelectedBand()));
+        check (dv.getSelectedBandForTest() == 1, "T24.2 拖动他段频点同时选中该段",
+               juce::String (dv.getSelectedBandForTest()));
     }
 
     // ② 全局 BYPASS：四段 Mix 全 0，再点恢复
@@ -2667,11 +2667,11 @@ static void testFreqDotAndGlobalBypass()
                         p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (800.0f));
         dv.tickForTest();
         dv.mouseDownForTest (freqToXforTest (500.0f), 400.0f);  // < 800Hz → L 段
-        check (dv.getSelectedBand() == 0, "T24.5 xover1=800Hz 后 500Hz 处选 L 段",
-               juce::String (dv.getSelectedBand()));
+        check (dv.getSelectedBandForTest() == 0, "T24.5 xover1=800Hz 后 500Hz 处选 L 段",
+               juce::String (dv.getSelectedBandForTest()));
         dv.mouseDownForTest (freqToXforTest (900.0f), 400.0f);  // > 800Hz → LM 段
-        check (dv.getSelectedBand() == 1, "T24.6 xover1=800Hz 后 900Hz 处选 LM 段",
-               juce::String (dv.getSelectedBand()));
+        check (dv.getSelectedBandForTest() == 1, "T24.6 xover1=800Hz 后 900Hz 处选 LM 段",
+               juce::String (dv.getSelectedBandForTest()));
     }
 }
 
@@ -3580,6 +3580,156 @@ static void testLinkedDrawer()
     }
 }
 
+// ------------------------------------------------------------
+// T36 Phase 5.3 频段 Popover 交互回归
+//   点分区弹开 / 点空白收起 / ✕ 收起 / O6 与抽屉互斥 / 切段跟随 / 值同步
+// ------------------------------------------------------------
+static void testPopover()
+{
+    std::cout << "\n--- T36 Phase 5.3 Popover 交互 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T36.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    const float W = 920.0f;
+    const float nx[3] = { freqToXforTest (200.0f), freqToXforTest (1000.0f), freqToXforTest (6000.0f) };
+    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+    auto midOf = [&] (int b) { return (edges[(size_t) b] + edges[(size_t) b + 1]) * 0.5f; };
+
+    // 点击落点避开频点/按钮列/BYP 胶囊，取分区上半空白区（y=120，模拟点"分区"）
+    const float kClickY = 120.0f;
+    int dbgB = -1, dbgJ = -1;
+
+    // ① 初始关闭；点分区 → 打开
+    check (! dv.isPopoverOpenForTest(), "T36.1 初始 Popover 关闭", "");
+    dv.mouseDownForTest (midOf (0), kClickY);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (dv.isPopoverOpenForTest(), "T36.2 点分区 → Popover 弹开", "");
+    check (dv.getSelectedBandForTest() == 0, "T36.3 弹开同时选中该段", juce::String (dv.getSelectedBandForTest()));
+
+    // ② O6 互斥：抽屉打开时点分区 → 抽屉应自动收起
+    {
+        // 先手动把抽屉打开（经测试钩子），再点另一段
+        dv.openLinkedDrawerForTest();
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        check (dv.isLinkedOpenForTest(), "T36.4a 抽屉已打开", "");
+        dv.mouseDownForTest (midOf (3), kClickY);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        check (! dv.isLinkedOpenForTest(), "T36.4 开 Popover → 抽屉自动收起（O6 互斥）", "");
+        check (dv.isPopoverOpenForTest(), "T36.4b Popover 已打开", "");
+    }
+
+    // ③ 点空白（顶栏空白区）→ 收起
+    dv.mouseDownForTest (430.0f, 15.0f);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (! dv.isPopoverOpenForTest(), "T36.5 点空白 → Popover 收起", "");
+
+    // ④ 切段跟随：先点 band1 打开，再点 band2 → 仍打开且切到 band2
+    dv.mouseDownForTest (midOf (1), kClickY);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    dv.mouseDownForTest (midOf (2), kClickY);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (dv.isPopoverOpenForTest() && dv.getPopoverBandForTest() == 2,
+           "T36.6 点其他段 → Popover 跟随切换（不关闭）",
+           "band=" + juce::String (dv.getPopoverBandForTest()));
+
+    // ⑤ 值同步：改 band2 阈值参数 → Popover 读数应跟上
+    {
+        const float before = dv.getPopoverValueForTest (0);
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == Param::bandThreshold (2))
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                        p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (-30.0f));
+        dv.syncPopoverFromParamsForTest();
+        const float after = dv.getPopoverValueForTest (0);
+        std::cout << "  Threshold 读数: " << before << " -> " << after << std::endl;
+        check (std::abs (after - (-30.0f)) < 0.2f, "T36.7 Popover 读数同步自 APVTS",
+               juce::String (after));
+    }
+
+    // ⑥ ✕ 按钮命中：打开态下点开区域右上角 → 收起
+    {
+        dv.mouseDownForTest (midOf (0), 120.0f);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        check (dv.isPopoverOpenForTest(), "T36.8a 重新打开", "");
+        const auto r = dv.popoverRectForTest();
+        dv.mouseDownForTest (r.getRight() - 21.0f, r.getY() + 19.0f);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        check (! dv.isPopoverOpenForTest(), "T36.8 点 ✕ → 收起", "");
+    }
+
+    // ⑦ §6 vs O5-A 冲突消解：曲线上"按下"不再抢占点击——
+    //    点击曲线区应打开 Popover；真正拖动才改 Makeup 且收起 Popover
+    {
+        const juce::String makeupId = Param::bandMakeup (2);   // 拖动的是 band2
+        auto mkNow = [&] () -> float
+        {
+            for (auto* p : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                    if (pw->getParameterID() == makeupId)
+                        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                            return rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return -999.0f;
+        };
+        const float mkBefore = mkNow();
+        // 避开频点（band2 频点≈605）与 Range 缘：取段内偏左 25% 处
+        const float cx = midOf (2) - (edges[3] - edges[2]) * 0.25f;
+        const float cy = dv.curveYAtFreqForTest (cx);
+        dv.mouseDownForTest (cx, cy);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        check (dv.isPopoverOpenForTest(), "T36.9 点曲线区 → Popover 打开（不抢占）", "");
+
+        dv.mouseDownForTest (cx, cy);
+        dv.mouseDragForTest (cx, cy - 80.0f);
+        dv.mouseUpForTest (cx, cy - 80.0f);
+        const float mkAfter = mkNow();
+        std::cout << "  Makeup: " << mkBefore << " -> " << mkAfter << std::endl;
+        check (std::abs (mkAfter - mkBefore) > 0.5f, "T36.10 曲线上拖动 → Makeup 变化（O5-A）",
+               juce::String (mkBefore) + " -> " + juce::String (mkAfter));
+        check (! dv.isPopoverOpenForTest(), "T36.11 拖动曲线时 Popover 收起", "");
+    }
+
+    // ⑧ Range 缘同样"点=开面板，拖=改 range"
+    {
+        dv.mouseDownForTest (midOf (0), 120.0f);          // 先打开一个
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        dv.mouseDownForTest (430.0f, 15.0f);               // 点空白收起
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        // 避开频点（band1 频点≈391）：取段内偏左 20% 处
+        // 先选中 band1（hitTestRangeEdge 只对 selectedBand_ 判定），再取段内偏左 20% 处
+        // （避开 band1 频点≈391）
+        dv.mouseDownForTest (midOf (1) - (edges[2] - edges[1]) * 0.20f, 120.0f);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        check (dv.getSelectedBandForTest() == 1, "T36.11b 先选中 band1", "");
+        float rx = 0.0f, ry = 0.0f;
+        const bool foundEdge = dv.findRangeEdgePointForTest (1, rx, ry);
+        check (foundEdge, "T36.11c band1 Range 缘可命中", "");
+        if (! foundEdge) return;
+        dv.mouseDownForTest (rx, ry);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        check (dv.isPopoverOpenForTest(), "T36.12 点 Range 缘 → Popover 打开（不抢占）", "");
+        // 拖动 → 改 range
+        const float rBefore = dv.getRangeDisplay (1);
+        dv.mouseDownForTest (rx, ry);
+        dv.mouseDragForTest (rx, ry - 60.0f);
+        dv.mouseUpForTest (rx, ry - 60.0f);
+        for (int t = 0; t < 90; ++t) dv.tickForTest();      // rangeDisplay_ 平滑需 tick
+        const float rAfter = dv.getRangeDisplay (1);
+        std::cout << "  Range: " << rBefore << " -> " << rAfter << std::endl;
+        check (std::abs (rAfter - rBefore) > 0.2f, "T36.13 Range 缘拖动 → range 变化",
+               juce::String (rBefore) + " -> " + juce::String (rAfter));
+        check (! dv.isPopoverOpenForTest(), "T36.14 拖动 Range 缘时 Popover 收起", "");
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -3624,6 +3774,7 @@ int main()
     testUpwardCompression();        // T33 正 Range = 向上压缩
     testKnobControl();              // T34 Phase 5.1 旋钮控件
     testLinkedDrawer();             // T35 Phase 5.2 LINKED 抽屉
+    testPopover();                  // T36 Phase 5.3 Popover 交互
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
