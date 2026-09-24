@@ -50,7 +50,8 @@ target_sources(CrunchMB PRIVATE
     src/dsp/MultibandDSP.cpp
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
-    src/ui/DisplayView.cpp)
+    src/ui/DisplayView.cpp
+    src/ui/Knob.cpp)
 
 target_compile_definitions(CrunchMB PUBLIC
     JUCE_WEB_BROWSER=0
@@ -88,7 +89,8 @@ target_sources(CrunchMBTests PRIVATE
     src/dsp/MultibandDSP.cpp
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
-    src/ui/DisplayView.cpp)
+    src/ui/DisplayView.cpp
+    src/ui/Knob.cpp)
 target_include_directories(CrunchMBTests PRIVATE src)
 target_compile_definitions(CrunchMBTests PRIVATE
     JUCE_WEB_BROWSER=0

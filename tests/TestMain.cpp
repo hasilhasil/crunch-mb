@@ -25,6 +25,7 @@
 #include "PluginProcessor.h"
 #include "ui/DisplayView.h"
 #include "ui/MBTheme.h"
+#include "ui/Knob.h"
 #include "dsp/BandCompressor.h"
 #include "dsp/CrossoverBank.h"
 #include "dsp/LinearPhaseCrossover.h"
@@ -3385,6 +3386,77 @@ static void testUpwardCompression()
     }
 }
 
+// ------------------------------------------------------------
+// T34 Phase 5.1 旋钮家族控件回归
+//   值钳制 / 拖动速率 / Shift 微调 / 滚轮步进 / Ctrl 复位 / 双击输入
+// ------------------------------------------------------------
+static void testKnobControl()
+{
+    std::cout << "\n--- T34 Phase 5.1 旋钮控件 ---\n";
+
+    {
+        Knob k;
+        k.setBounds (0, 0, 90, 110);
+        k.setRange (-30.0, 30.0, 0.1);
+        k.setDefaultValue (0.0);
+        k.setLabel ("THRESHOLD");
+        k.setValueSuffix ("dB");
+        check (std::abs (k.getValue()) < 1e-6, "T34.1 默认值 0", juce::String (k.getValue()));
+
+        // ① 值钳制
+        k.setValue (99.0, false);
+        check (std::abs (k.getValue() - 30.0) < 1e-6, "T34.2 超出上限被钳到 30", juce::String (k.getValue()));
+        k.setValue (-99.0, false);
+        check (std::abs (k.getValue() + 30.0) < 1e-6, "T34.3 低于下限被钳到 -30", juce::String (k.getValue()));
+
+        // ② 回调触发
+        double got = -999.0;
+        k.onValueChange = [&got] (double v) { got = v; };
+        k.setValue (5.0, true);
+        check (std::abs (got - 5.0) < 1e-6, "T34.4 值变化回调触发", juce::String (got));
+
+        // ③ Ctrl+click 复位（经 mouseDown 模拟）
+        k.setValue (12.0, false);
+        k.mouseDownForTest (45.0f, 55.0f, juce::ModifierKeys::ctrlModifier, 45.0f, 55.0f);
+        check (std::abs (k.getValue()) < 1e-6, "T34.5 Ctrl+click 复位到默认值", juce::String (k.getValue()));
+
+        // ④ 滚轮步进（interval 0.1）
+        k.setValue (0.0, false);
+        k.mouseWheelForTest (45.0f, 55.0f, 1.0);
+        check (std::abs (k.getValue() - 0.1) < 1e-6, "T34.6 滚轮上 +interval", juce::String (k.getValue()));
+        k.mouseWheelForTest (45.0f, 55.0f, -1.0);
+        check (std::abs (k.getValue()) < 1e-6, "T34.7 滚轮下 -interval", juce::String (k.getValue()));
+
+        // ⑤ 垂直拖动（向上拖 → 值增大）
+        k.setValue (0.0, false);
+        k.mouseDownForTest (45.0f, 55.0f, juce::ModifierKeys(), 45.0f, 55.0f);
+        k.mouseDragForTest (45.0f, 55.0f, juce::ModifierKeys(), 45.0f, 55.0f - 110.0f);
+        const float after110 = (float) k.getValue();
+        k.mouseUpForTest (45.0f, 55.0f, juce::ModifierKeys(), 45.0f, 0.0f);
+        std::cout << "  上拖 110px → " << after110 << " dB" << std::endl;
+        check (after110 > 20.0f, "T34.8 垂直拖动改值（上拖=增大，110px≈30dB）",
+               juce::String (after110));
+
+        // ⑥ Shift 微调：同样 110px，Shift 下变化应为 1/10
+        k.setValue (0.0, false);
+        k.mouseDownForTest (45.0f, 55.0f, juce::ModifierKeys::shiftModifier, 45.0f, 55.0f);
+        k.mouseDragForTest (45.0f, 55.0f, juce::ModifierKeys::shiftModifier, 45.0f, 55.0f - 110.0f);
+        const float afterShift = (float) k.getValue();
+        k.mouseUpForTest (45.0f, 55.0f, juce::ModifierKeys::shiftModifier, 45.0f, 0.0f);
+        std::cout << "  Shift 上拖 110px → " << afterShift << " dB" << std::endl;
+        check (afterShift > 2.0f && afterShift < 4.5f, "T34.9 Shift 微调（约 1/10）",
+               juce::String (afterShift) + " vs " + juce::String (after110));
+
+        // ⑦ 拖拽结果按 interval 量化（落在 0.1 网格上）
+        {
+            const float v = (float) k.getValue();
+            const float q = std::floor (v * 10.0f + 0.5f) / 10.0f;
+            check (std::abs (v - q) < 1e-6, "T34.10 拖拽结果按 interval 量化",
+                   juce::String (v));
+        }
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -3427,6 +3499,7 @@ int main()
     testScaleNotOccluded();         // T31 刻度不被遮挡
     testBandShrinkAndScaleSteps();  // T32 双向伸缩 + 刻度步长
     testUpwardCompression();        // T33 正 Range = 向上压缩
+    testKnobControl();              // T34 Phase 5.1 旋钮控件
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
