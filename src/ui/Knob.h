@@ -42,6 +42,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void paintForTest (juce::Graphics& g) { paint (g); }   // T37 像素回归
     // 测试钩子
     void mouseDownForTest (float downX, float downY, juce::ModifierKeys mods,
                            float x, float y)

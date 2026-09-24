@@ -3713,6 +3713,10 @@ static void testPopover()
         const bool foundEdge = dv.findRangeEdgePointForTest (1, rx, ry);
         check (foundEdge, "T36.11c band1 Range 缘可命中", "");
         if (! foundEdge) return;
+        // 选中 band1 时 Popover 会自动打开；先点空白收起，才能验证"点 Range 缘→打开"
+        dv.mouseDownForTest (430.0f, 15.0f);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        check (! dv.isPopoverOpenForTest(), "T36.11d 已收起", "");
         dv.mouseDownForTest (rx, ry);
         for (int t = 0; t < 30; ++t) dv.tickForTest();
         check (dv.isPopoverOpenForTest(), "T36.12 点 Range 缘 → Popover 打开（不抢占）", "");
@@ -3727,6 +3731,125 @@ static void testPopover()
         check (std::abs (rAfter - rBefore) > 0.2f, "T36.13 Range 缘拖动 → range 变化",
                juce::String (rBefore) + " -> " + juce::String (rAfter));
         check (! dv.isPopoverOpenForTest(), "T36.14 拖动 Range 缘时 Popover 收起", "");
+    }
+}
+
+// ------------------------------------------------------------
+// T37 Knob 几何回归：弧心（蓝环）与帽心（近白圆）必须同心（2026-09-24 用户反馈）
+// ------------------------------------------------------------
+static void testKnobGeometry()
+{
+    std::cout << "\n--- T37 Knob 弧心/帽心同心 ---\n";
+
+    Knob k;
+    k.setBounds (0, 0, 84, 96);
+    k.setRange (0.0, 100.0, 1.0);
+    k.setValue (37.0, false);
+    k.setLabel ("TEST");
+    k.setKnobDiameter (52.0f);
+    k.setShowLabel (true);
+
+    juce::Image img (juce::Image::ARGB, 84, 96, true);
+    { juce::Graphics g (img); k.paintForTest (g); }
+
+    // 弧（accent 蓝）像素包围盒
+    int ax0 = 9999, ay0 = 9999, ax1 = -1, ay1 = -1, an = 0;
+    // 帽（近白/亮灰）像素包围盒 —— 只统计旋钮直径范围内（排除下方读数文字）
+    int cx0 = 9999, cy0 = 9999, cx1 = -1, cy1 = -1, cn = 0;
+    const int kD = 52;                                  // knobDiameter_
+    const int knobTop = 27;                             // knobBounds().y = d*0.5+1
+    for (int y = 0; y < 96; ++y)
+        for (int x = 0; x < 84; ++x)
+        {
+            const juce::Colour c = img.getPixelAt (x, y);
+            // accent #2f9dff 系
+            const bool arc = c.getBlue() > 180 && c.getGreen() > 110 && c.getRed() < 130;
+            // 帽：亮且低饱和（knob palette 为亮灰）；限定在旋钮方块内
+            const bool cap = (y >= knobTop && y < knobTop + kD)
+                          && c.getRed() > 150 && c.getGreen() > 150 && c.getBlue() > 150
+                          && std::abs (c.getRed() - c.getBlue()) < 60;
+            if (arc) { ax0 = juce::jmin (ax0, x); ay0 = juce::jmin (ay0, y);
+                       ax1 = juce::jmax (ax1, x); ay1 = juce::jmax (ay1, y); ++an; }
+            else if (cap) { cx0 = juce::jmin (cx0, x); cy0 = juce::jmin (cy0, y);
+                            cx1 = juce::jmax (cx1, x); cy1 = juce::jmax (cy1, y); ++cn; }
+        }
+
+    const float axc = (ax0 + ax1) * 0.5f, ayc = (ay0 + ay1) * 0.5f;
+    const float cxc = (cx0 + cx1) * 0.5f, cyc = (cy0 + cy1) * 0.5f;
+    std::cout << "  弧包围盒中心 = (" << axc << "," << ayc << ") bbox=("
+              << ax0 << "," << ay0 << ")-(" << ax1 << "," << ay1 << ") n=" << an
+              << " | 帽心 = (" << cxc << "," << cyc << ") bbox=("
+              << cx0 << "," << cy0 << ")-(" << cx1 << "," << cy1 << ") n=" << cn << std::endl;
+
+    check (an > 50, "T37.1 弧像素存在", juce::String (an));
+    check (cn > 50, "T37.2 帽像素存在", juce::String (cn));
+
+    // 正确的同心判定：弧像素到"帽心"的距离应≈环半径（thick/2 容差），
+    // 而帽像素到帽心的距离应≈帽半径。若两者圆心不同，弧像素距帽心会明显偏大。
+    {
+        float maxArcR = 0.0f, maxCapR = 0.0f;
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 84; ++x)
+            {
+                const juce::Colour c = img.getPixelAt (x, y);
+                const bool arc = c.getBlue() > 180 && c.getGreen() > 110 && c.getRed() < 130;
+                const bool cap = (y >= 27 && y < 27 + 52)
+                              && c.getRed() > 150 && c.getGreen() > 150 && c.getBlue() > 150
+                              && std::abs (c.getRed() - c.getBlue()) < 60;
+                if (arc) maxArcR = juce::jmax (maxArcR, std::sqrt ((x - cxc) * (x - cxc) + (y - cyc) * (y - cyc)));
+                if (cap) maxCapR = juce::jmax (maxCapR, std::sqrt ((x - cxc) * (x - cxc) + (y - cyc) * (y - cyc)));
+            }
+        std::cout << "  弧外半径=" << maxArcR << " 帽外半径=" << maxCapR << std::endl;
+        // 同心时：帽外半径 ≈ 22（52/2 − thick 5.2 − 2.6 ≈ 19..22），弧外半径 ≈ 26
+        check (maxCapR > 16.0f && maxCapR < 24.0f, "T37.3 帽半径合理（说明弧/帽同心）",
+               juce::String (maxCapR));
+        check (maxArcR > maxCapR + 1.5f, "T37.3b 弧环在帽外侧（同心分层正确）",
+               juce::String (maxArcR) + " vs " + juce::String (maxCapR));
+
+        // T37.5 指针端点须触到弧环内缘（修"指针与蓝弧头之间有缺口像错位"）
+        // T37.5 指针端点须触到弧环内缘（修"指针与蓝弧头之间有缺口像错位"）
+        // JUCE 角度约定（12 点起、顺时针）：p = (cx + R sin θ, cy − R cos θ)
+        {
+            const float d = 52.0f;
+            const float r = d * 0.5f;
+            const float thick = juce::jmax (2.0f, d * 0.10f);
+            const float pointerR = r - thick * 0.5f;
+            const float startAngle = juce::MathConstants<float>::pi * 1.25f;   // 7:30
+            const float endAngle   = juce::MathConstants<float>::pi * 3.75f;   // 4:30
+            const float av = startAngle + 0.37f * (endAngle - startAngle);
+
+            // 用 JUCE 原式把角度预算法成屏幕方向，再按夹角匹配像素（免手工换算）
+            const float refX = std::sin (av), refY = -std::cos (av);
+            float furthestDark = 0.0f, furthestArc = 0.0f;
+            for (int y = 0; y < 96; ++y)
+                for (int x = 0; x < 84; ++x)
+                {
+                    const float dx = (float) x - cxc, dy = (float) y - cyc;
+                    const float m1 = std::sqrt (dx * dx + dy * dy);
+                    if (m1 < 1.0f) continue;
+                    const float cosA = juce::jlimit (-1.0f, 1.0f, (dx * refX + dy * refY) / m1);
+                    if (std::acos (cosA) > 0.12f) continue;
+                    const juce::Colour c = img.getPixelAt (x, y);
+                    const bool arc  = c.getBlue() > 180 && c.getGreen() > 110 && c.getRed() < 130;
+                    const bool dark = c.getRed() < 120 && c.getGreen() < 120 && c.getBlue() < 120;
+                    if (arc)  furthestArc  = juce::jmax (furthestArc,  m1);
+                    if (dark) furthestDark = juce::jmax (furthestDark, m1);
+                }
+            std::cout << "  指针端点半径=" << pointerR
+                      << " av 方向最远弧=" << furthestArc
+                      << " 最远深色=" << furthestDark << std::endl;
+            check (furthestDark > pointerR - thick - 1.0f,
+                   "T37.5 指针端点触到弧环内缘（无缺口）",
+                   "dark=" + juce::String (furthestDark) + " pointerR=" + juce::String (pointerR));
+            check (furthestArc > pointerR - thick - 1.0f || furthestDark > pointerR - thick - 1.0f,
+                   "T37.5b 弧头/指针在同一极角（对齐）", "");
+        }
+    }
+
+    // 弧为部分环（非满环）
+    {
+        check (an > 50 && (ax1 - ax0) < 84, "T37.4 弧为部分环（非满环）",
+               "w=" + juce::String (ax1 - ax0));
     }
 }
 
@@ -3775,6 +3898,7 @@ int main()
     testKnobControl();              // T34 Phase 5.1 旋钮控件
     testLinkedDrawer();             // T35 Phase 5.2 LINKED 抽屉
     testPopover();                  // T36 Phase 5.3 Popover 交互
+    testKnobGeometry();             // T37 Knob 弧心/帽心同心
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

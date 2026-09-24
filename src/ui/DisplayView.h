@@ -314,6 +314,7 @@ private:
     bool  popoverOpen_ = false;                    // O6 互斥（5.3 用）
     int   popoverBand_ = -1;
     std::array<double, 5> popoverValues_ {};       // Threshold/Range/Attack/Release/Mix
+    std::array<float,  5> popoverNormalisedValue_ {};   // 归一化 0..1（旋钮弧用）
     std::array<double, 3> popoverSliders_ { 4.0, 1.0, 0.0 };  // Ratio / Knee(1=soft) / Ext
     bool popoverExpertOpen_ = false;
     // ---- Phase 5.3 Popover 几何/交互 ----
@@ -325,6 +326,8 @@ private:
     void drawPopoverTopBar (juce::Graphics& g);
     void drawPopoverKnobs (juce::Graphics& g);
     void syncPopoverFromParams();
+    float paramRangeMinOf (const juce::String& id) const;
+    float paramRangeMaxOf (const juce::String& id) const;
     static juce::String fmtHzShort (float hz);
     std::array<std::unique_ptr<Knob>, kLinkedKnobs> linkedKnobs_;
     std::array<double, kLinkedKnobs - 1> linkedOffset_ {};   // 4 个偏移旋钮的当前 Δ

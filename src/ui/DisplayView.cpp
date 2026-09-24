@@ -1550,11 +1550,11 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
 
     const auto p = e.position;
 
-    // 0) Phase 5.3：Popover 打开时，点 ✕ / 面板外 → 收起（§6）
-    if (popoverOpen_)
+    // 0) Phase 5.3：Popover 打开时，点 ✕ → 收起
+    if (popoverOpen_ && hitTestPopoverClose (p))
     {
-        if (hitTestPopoverClose (p)) { togglePopover (false); return; }
-        if (! popoverRect().contains (p)) togglePopover (false);
+        togglePopover (false);
+        return;
     }
 
     // 0) LINKED 抽屉梯形按钮（§5.2）：点开/收起
@@ -1968,7 +1968,10 @@ juce::Rectangle<float> DisplayView::popoverRect() const
 
     float px = midX - pw * 0.5f;
     px = juce::jlimit (sx (8.0f), W - pw - sx (8.0f), px);
-    const float py = (H - sy (kGlobalBarH) - sy (29.0f)) * 0.40f - ph * 0.5f;   // 绘图区中部偏上
+    const float plotTop = sy (kTopStripH);
+    const float plotBottom = H - sy (kGlobalBarH) - sy (29.0f);   // 抽屉按钮上方
+    // 垂直位置：绘图区 58% 处（ tuned：原 40% 偏高，压住曲线区上部）
+    const float py = plotTop + (plotBottom - plotTop) * 0.58f - ph * 0.5f;
     return juce::Rectangle<float> (px, py, pw, ph);
 }
 
@@ -2018,7 +2021,32 @@ void DisplayView::syncPopoverFromParams()
                                  Param::bandAttack (b), Param::bandRelease (b),
                                  Param::bandMix (b) };
     for (int k = 0; k < 5; ++k)
+    {
         popoverValues_[(size_t) k] = getParamPhysical (ids[k]);
+        popoverNormalisedValue_[(size_t) k] = juce::jlimit (0.0f, 1.0f,
+            (float) ((popoverValues_[(size_t) k] - paramRangeMinOf (ids[k]))
+                   / (double) juce::jmax (1.0e-6f, paramRangeMaxOf (ids[k]) - paramRangeMinOf (ids[k]))));
+    }
+}
+
+float DisplayView::paramRangeMinOf (const juce::String& id) const
+{
+    for (auto* p : proc_.getParameters())
+        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            if (pw->getParameterID() == id)
+                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                    return (float) rp->getNormalisableRange().start;
+    return 0.0f;
+}
+
+float DisplayView::paramRangeMaxOf (const juce::String& id) const
+{
+    for (auto* p : proc_.getParameters())
+        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            if (pw->getParameterID() == id)
+                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                    return (float) rp->getNormalisableRange().end;
+    return 1.0f;
 }
 
 juce::String DisplayView::fmtHzShort (float hz)
@@ -2089,30 +2117,29 @@ void DisplayView::drawPopoverKnobs (juce::Graphics& g)
         const float knobD = sy (46.0f);
         const float cy = r.getY() + sy (52.0f) + knobD * 0.5f;
 
-        // 旋钮弧（复用 Knob 的绘制语言：暖灰环 + accent 弧）
-        const float norm = juce::jlimit (0.0f, 1.0f, (float) (popoverValues_[(size_t) k] / 1.0));
-        const float a0 = juce::MathConstants<float>::pi * 0.75f;
-        const float a1 = juce::MathConstants<float>::pi * 2.25f;
+        // 旋钮弧（与 Knob 同一角度约定：12 点起顺时针）
+        const float norm = juce::jlimit (0.0f, 1.0f, popoverNormalisedValue_ [(size_t) k]);
+        const float a0 = juce::MathConstants<float>::pi * 1.25f;      // 7:30
+        const float a1 = juce::MathConstants<float>::pi * 3.75f;      // 4:30
         const float av = a0 + norm * (a1 - a0);
         const float thick = juce::jmax (2.0f, knobD * 0.11f);
+        const float ringR = knobD * 0.5f - thick * 0.5f;
         juce::Path track, val;
-        track.addCentredArc (cx, cy, knobD * 0.5f - thick * 0.5f, knobD * 0.5f - thick * 0.5f,
-                             0.0f, a0, a1, true);
+        track.addCentredArc (cx, cy, ringR, ringR, 0.0f, a0, a1, true);
         g.setColour (pal_.track.withMultipliedAlpha (a));
         g.strokePath (track, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
-        val.addCentredArc (cx, cy, knobD * 0.5f - thick * 0.5f, knobD * 0.5f - thick * 0.5f,
-                           0.0f, a0, av, true);
+        val.addCentredArc (cx, cy, ringR, ringR, 0.0f, a0, av, true);
         g.setColour (pal_.accent.withMultipliedAlpha (a));
         g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                                  juce::PathStrokeType::rounded));
-        // 帽 + 指针
+        // 帽 + 指针（延伸到弧内缘，与蓝弧头对头）
         const float capR = knobD * 0.5f - thick - 1.0f;
         g.setColour (pal_.knob.withMultipliedAlpha (a));
         g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
         g.setColour (juce::Colours::black.withAlpha (0.8f * a));
-        g.drawLine (cx + std::cos (av) * capR * 0.30f, cy + std::sin (av) * capR * 0.30f,
-                    cx + std::cos (av) * capR * 0.80f, cy + std::sin (av) * capR * 0.80f,
+        g.drawLine (cx + std::sin (av) * capR * 0.22f, cy - std::cos (av) * capR * 0.22f,
+                    cx + std::sin (av) * ringR,          cy - std::cos (av) * ringR,
                     juce::jmax (1.5f, knobD * 0.07f));
 
         // 标签 + 范围标注 + 数值

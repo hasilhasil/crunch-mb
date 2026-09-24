@@ -28,11 +28,14 @@ juce::Rectangle<float> Knob::knobBounds() const
     return juce::Rectangle<float> (w * 0.5f - d * 0.5f, cy, d, d);
 }
 
+// 角度约定统一为 JUCE addCentredArc 的"12 点钟起、顺时针"：
+//   point = (cx + r·sin(θ), cy − r·cos(θ))
+// 起点（最小）= 7:30 方向，终点（最大）= 4:30 方向，行程 270°，缺口在正下方。
 float Knob::valueToAngle (double v) const
 {
     const float norm = (float) ((v - min_) / (max_ - min_));
-    const float start = juce::MathConstants<float>::pi * 0.75f;      // 135°
-    const float end   = juce::MathConstants<float>::pi * 2.25f;      // 405°（=45°）
+    const float start = juce::MathConstants<float>::pi * 1.25f;      // 7:30 方向
+    const float end   = juce::MathConstants<float>::pi * 3.75f;      // 4:30 方向
     return start + juce::jlimit (0.0f, 1.0f, norm) * (end - start);  // 270° 行程
 }
 
@@ -191,7 +194,7 @@ void Knob::paint (juce::Graphics& g)
     g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
 
-    // ---- 帽（近白）+ 深色指针 ----
+    // ---- 帽（近白）+ 深色指针（延伸到弧内缘，与蓝弧头对头）----
     const float capR = r - thick - juce::jmax (1.0f, d * 0.05f);
     juce::ColourGradient grad (pal_.knob.brighter (0.25f), cx, cy - capR,
                                pal_.knob.darker (0.15f), cx, cy + capR, false);
@@ -199,10 +202,13 @@ void Knob::paint (juce::Graphics& g)
     g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
 
     const float ang = av;
-    const float px1 = cx + std::cos (ang) * capR * 0.28f;
-    const float py1 = cy + std::sin (ang) * capR * 0.28f;
-    const float px2 = cx + std::cos (ang) * capR * 0.82f;
-    const float py2 = cy + std::sin (ang) * capR * 0.82f;
+    // 指针：与弧同一角度约定 —— (cx + R·sin(ang), cy − R·cos(ang))
+    const float pR0 = capR * 0.22f;
+    const float pR1 = r - thick * 0.5f;         // = 弧所在半径
+    const float px1 = cx + std::sin (ang) * pR0;
+    const float py1 = cy - std::cos (ang) * pR0;
+    const float px2 = cx + std::sin (ang) * pR1;
+    const float py2 = cy - std::cos (ang) * pR1;
     g.setColour (pal_.light ? juce::Colours::black.withAlpha (0.75f)
                             : juce::Colours::black.withAlpha (0.80f));
     g.drawLine (px1, py1, px2, py2, juce::jmax (1.5f, d * 0.07f));
