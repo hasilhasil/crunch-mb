@@ -84,7 +84,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         const auto bn = bandName (i);
 
         addFloat  (pid (bandThreshold (i)), bn + " Threshold", { -60.0f, 0.0f, 0.1f },   -20.0f,  "dB",  fmtDb2);
-        addFloat  (pid (bandRange     (i)), bn + " Range",     { -30.0f, 30.0f, 0.1f },  -30.0f,  "dB",  fmtDb2);
+        addFloat  (pid (bandRange     (i)), bn + " Range",     { -30.0f, 30.0f, 0.1f },   -6.0f,  "dB",  fmtDb2);
         addFloat  (pid (bandRatio     (i)), bn + " Ratio",     { 1.0f, 20.0f, 0.1f },      4.0f,  ": 1", fmtRatio);
         addFloat  (pid (bandAttack    (i)), bn + " Attack",    skewed (0.1f, 200.0f,  0.1f,  10.0f),  10.0f,  "ms", fmtMs);
         addFloat  (pid (bandRelease   (i)), bn + " Release",   skewed (10.0f, 1000.0f, 0.5f, 100.0f), 100.0f, "ms", fmtMs);

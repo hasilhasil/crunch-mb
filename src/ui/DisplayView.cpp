@@ -57,36 +57,38 @@ void DisplayView::setActive (bool active) noexcept
 // ---------------- 坐标映射（mockup v9 常量） ----------------
 float DisplayView::freqToX (float f) const
 {
-    const float w = (float) getWidth();
-    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1000.0f) * w;
+    // 横轴：20 Hz .. 22100 Hz，宽度 = 绘图区宽（右缘避开 IN/OUT 音量表，#3）
+    const float w = plotWidthPx();
+    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1105.0f) * w;
 }
 
 float DisplayView::xToFreq (float x) const
 {
-    const float w = (float) getWidth();
-    const double t = (double) x / (double) juce::jmax (1.0f, w);
-    return (float) (20.0 * std::pow (1000.0, t));
+    const float w = juce::jmax (1.0f, plotWidthPx());
+    const double t = (double) x / (double) w;
+    return (float) (20.0 * std::pow (1105.0, t));
 }
 
 float DisplayView::specDbToY (float db) const
 {
-    // db: −100 → plotBottom(), 0 → plotTop（按高度比例缩放）
+    // db: −100 → plotBottom(), 0 → plotTop()
+    // ⚠️ clamp 到绘图区：强信号 dB>0 也不能画进顶栏区域（#2）
     const float t = (db + 100.0f) / 100.0f;
-    return plotBottomPx() - t * plotHeightPx();
+    return juce::jmax (plotTopPx(), plotBottomPx() - t * plotHeightPx());
 }
 
 float DisplayView::gainToY (float gainDb) const
 {
-    // P1：双刻度 —— 曲线增益轴用 ±curveRangeDb_（默认 ±6 dB，Pro-MB 的 Display Range）
-    // gain: −R → plotBottom(), +R → plotTop
-    const float t = (gainDb + curveRangeDb_) / (2.0f * curveRangeDb_);
+    // P1：双刻度 —— 曲线增益轴用**显示量程** curveRangeDisplay_（平滑）
+    const float R = juce::jmax (0.5f, curveRangeDisplay_);
+    const float t = (gainDb + R) / (2.0f * R);
     return plotBottomPx() - juce::jlimit (0.0f, 1.0f, t) * plotHeightPx();
 }
 
 float DisplayView::meterY (float db) const
 {
-    const float top = sy (kTopStripH);                 // A6：音量表顶端避开顶栏
-    const float bottom = plotBottomPx();               // A8：底缘 = global bar 顶
+    const float top = plotTopPx();                      // A6/#4：避开顶栏
+    const float bottom = plotBottomPx();                // #4：避开 global bar
     const float t = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
     return bottom - t * (bottom - top);
 }
@@ -98,12 +100,15 @@ void DisplayView::drawGrid (juce::Graphics& g)
     //   横线② 频谱/电平域（−100…0，每 20dB）——dim 系
     //   纵线   频率刻度
     const float bottom = plotBottomPx();
-    const float top = sy (kTopStripH);
+    const float top = plotTopPx();        // #2：网格不伸进顶栏区域
 
-    const int steps = 4;
-    for (int i = 0; i <= steps; ++i)
+    // 横线：曲线/ Range 增益域（步长同右轴刻度：±6→1dB、±12→2dB、±30→10dB）
+    //      0 线用 gridZ 强调（Pro-MB 的 0 基准线）
+    const int steps = (int) std::floor (curveRangeDisplay_ / 1.0f);
+    for (int i = -steps; i <= steps; ++i)
     {
-        const float db = curveRangeDb_ - (2.0f * curveRangeDb_) * (float) i / (float) steps;
+        const float db = (float) i;
+        if (std::abs (db) > curveRangeDisplay_ + 1.0e-4f) continue;
         g.setColour (std::abs (db) < 0.01f ? pal_.gridZ : pal_.grid);
         g.fillRect (0.0f, gainToY (db), (float) getWidth(), 1.0f);
     }
@@ -121,6 +126,17 @@ void DisplayView::drawGrid (juce::Graphics& g)
 void DisplayView::drawBackground (juce::Graphics& g)
 {
     g.fillAll (pal_.bg);
+
+    // 问题 2：绘图区与顶栏状态栏之间画明确边界（1px gridZ），绘图区内边距 4px，
+    // 使频谱/曲线/刻度都从状态栏下缘**之下**开始，不再有重叠观感。
+    const float top = sy (kTopStripH);
+    g.setColour (pal_.gridZ);
+    g.fillRect (0.0f, top, (float) getWidth(), 1.0f);
+
+    // 底缘同样画一条（与 global bar 分隔）
+    const float bottom = (float) getHeight() - sy (kGlobalBarH);
+    g.setColour (pal_.gridZ);
+    g.fillRect (0.0f, bottom, (float) getWidth(), 1.0f);
 }
 
 float DisplayView::curveDbAtFreq (float freq) const
@@ -182,15 +198,16 @@ void DisplayView::drawPartitions (juce::Graphics& g)
         const float x0 = edges[b] + 1.0f, w = edges[b + 1] - edges[b] - 2.0f;
         const float h = sy (kDesignH);
         g.setColour (pal_.accent.withAlpha ((sel ? 0.10f : 0.05f) * dimK));
-        g.fillRect (x0, 0.0f, w, h);
+        g.fillRect (x0, 0.0f, w, h);   // 分区底色全高（mockup: height=620），描边则贴绘图区
         if (sel)
         {
-            // A2.1/C2：只画上/下两条横边；左边框取消（避免与分割线双边重叠变厚）
+            // A2.1/C2/#4：只画上/下两条横边；描边贴**绘图区边界**（状态栏下缘 / global bar 上缘），
+            // 不再伸进状态栏；左边框取消（避免与分割线双边重叠变厚）
             g.setColour (pal_.accent.withAlpha (0.9f * dimK));
-            g.drawHorizontalLine ((int) 1.5f, x0, x0 + w);
-            g.drawHorizontalLine ((int) (h - 1.5f), x0, x0 + w);
+            g.drawHorizontalLine ((int) plotTopPx(), x0, x0 + w);
+            g.drawHorizontalLine ((int) plotBottomPx(), x0, x0 + w);
             if (b == 3)
-                g.drawVerticalLine ((int) (x0 + w), 1.5f, h - 1.5f);
+                g.drawVerticalLine ((int) (x0 + w), plotTopPx(), plotBottomPx());
         }
     }
 }
@@ -198,35 +215,64 @@ void DisplayView::drawPartitions (juce::Graphics& g)
 void DisplayView::drawScales (juce::Graphics& g)
 {
     // P1 双刻度：
-    //   右轴 = 曲线/Range 增益域（accent，±curveRangeDb_）
+    //   右轴 = 曲线/Range 增益域（accent，±curveRangeDisplay_）
     //   左轴 = 频谱/电平域（dim，0…−100）
-    g.setFont (MBTheme::font (MBTheme::regular(), 10.0f));
-
-    g.setColour (pal_.accent);
-    for (int i = 0; i <= 4; ++i)
+    // #4：刻度文字 clamp 在绘图区内（上下各留一字高），避免首尾被状态栏/global bar 盖住
+    const float top = plotTopPx();
+    const float bottom = plotBottomPx();
+    const float W = (float) getWidth();
+    auto clampTextBox = [&] (juce::Rectangle<float> r) -> juce::Rectangle<float>
     {
-        const float db = curveRangeDb_ - (2.0f * curveRangeDb_) * (float) i / 4.0f;
-        if (std::abs (db) < 0.01f) continue;
-        g.drawText ((db > 0 ? "+" : "") + juce::String (db, 1),
-                    juce::Rectangle<float> (sx (838.0f), gainToY (db) - 6.0f, sx (50.0f), 12.0f),
-                    juce::Justification::centredRight);
+        const float h = r.getHeight();
+        const float y = juce::jlimit (top + h, bottom - h * 2.0f, r.getY());
+        const float x = juce::jmin (r.getX(), W - r.getWidth() - 1.0f);
+        return juce::Rectangle<float> (x, y, r.getWidth(), h);
+    };
+
+    g.setFont (MBTheme::font (MBTheme::regular(), 13.0f));   // #5：字号 10→13
+
+    // 右轴：曲线/Range 增益刻度（accent）
+    // #2：对齐 Pro-MB 截图——步长随量程：±3/±6 → 1dB、±12 → 2dB、±30 → 10dB；
+    //     0 线标签用亮色强调（Pro-MB 的 0 基准线）
+    {
+        const float R = curveRangeDisplay_;
+        const float step = (R <= 6.5f) ? 1.0f : (R <= 12.5f) ? 2.0f : 10.0f;
+        for (float db = -std::floor (R / step) * step; db <= R + 1.0e-4f; db += step)
+        {
+            const juce::String t = (db > 0.0f ? "+" : "") + juce::String (db, (step < 1.0f ? 1 : 0));
+            g.setColour (std::abs (db) < 1.0e-4f ? pal_.text : pal_.accent);
+            g.drawText (t, clampTextBox (juce::Rectangle<float> (sx (818.0f), gainToY (db) - 7.0f,
+                                                                 sx (56.0f), 14.0f)),
+                        juce::Justification::centredRight);
+        }
     }
 
+    // 左轴：频谱/电平刻度（dim）——回滚为 20dB 一步进（#1 回滚）
     g.setColour (pal_.dim);
     for (int db = 0; db >= -100; db -= 20)
         g.drawText (juce::String (db),
-                    juce::Rectangle<float> (sx (4.0f), specDbToY ((float) db) - 6.0f, sx (44.0f), 12.0f),
+                    clampTextBox (juce::Rectangle<float> (sx (4.0f), specDbToY ((float) db) - 7.0f,
+                                                          sx (48.0f), 14.0f)),
                     juce::Justification::centredLeft);
 
-    // 底部频率刻度（常显）
-    g.setFont (MBTheme::font (MBTheme::regular(), 10.5f));
-    g.setColour (pal_.dim);
-    struct FLabel { float f; const char* t; };
-    for (const auto& l : { FLabel { 50, "50" }, FLabel { 100, "100" }, FLabel { 200, "200" },
-                           FLabel { 500, "500" }, FLabel { 1000, "1k" }, FLabel { 2000, "2k" },
-                           FLabel { 5000, "5k" }, FLabel { 10000, "10k" }, FLabel { 20000, "20k" } })
-        g.drawText (l.t, juce::Rectangle<float> (freqToX (l.f) - sx (20.0f), sy (546.0f), sx (40.0f), 14.0f),
+    // 底部频率刻度（常显）——#3：右缘标签右对齐并提亮；#5：字号 10.5→13
+    g.setFont (MBTheme::font (MBTheme::regular(), 13.0f));
+    struct FLabel { float f; const char* t; bool bold; };
+    for (const auto& l : { FLabel { 50, "50", false }, FLabel { 100, "100", false },
+                           FLabel { 200, "200", false }, FLabel { 500, "500", false },
+                           FLabel { 1000, "1k", false }, FLabel { 2000, "2k", false },
+                           FLabel { 5000, "5k", false }, FLabel { 10000, "10k", false },
+                           FLabel { 20000, "20k", true } })
+    {
+        g.setColour (l.bold ? pal_.text : pal_.dim);      // #3：20k 用亮色
+        const float w = sx (46.0f);
+        float x = freqToX (l.f) - w * 0.5f;
+        // #3：右缘附近的标签右对齐到**绘图区右缘**（避开 IN/OUT 音量表）
+        if (freqToX (l.f) > plotRightPx() - w)
+            x = plotRightPx() - w;
+        g.drawText (l.t, juce::Rectangle<float> (x, sy (546.0f), w, 16.0f),
                     juce::Justification::centredTop);
+    }
 }
 
 void DisplayView::drawCrossovers (juce::Graphics& g)
@@ -284,10 +330,13 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
         }
 
         // C6–C9：S/M/BYP/Δ 按钮列（24×24，hover 或选中该段时显示）
+        //     band3 的右缘 = 电平表左边界−8 → 按钮在分区右侧且不压音量表
         const bool showBtns = (b == selectedBand_ || b == hoverBand_);
         if (showBtns)
         {
-            const float bx = (b < 3 ? nx[b] : W) - sx (40.0f);
+            const float edge = (b < 3) ? nx[b]
+                                       : juce::jmin (W, sx (kMeterX) - sx (8.0f));
+            const float bx = edge - sx (40.0f);
             const juce::String labels[4] = { "S", "M", "B", juce::String::fromUTF8 ("\xCE\x94") };
             for (int j = 0; j < 4; ++j)
             {
@@ -408,8 +457,8 @@ void DisplayView::drawMeters (juce::Graphics& g)
     const float barW = sx (13.0f);
     const float b1 = sx (kMeterX) + sx (2.0f);              // IN 柱
     const float b2 = sx (kMeterX) + sx (4.0f) + barW;       // OUT 柱
-    const float top = sy (kTopStripH);                      // A6：条带顶端避开顶栏状态栏
-    const float bottom = plotBottomPx();                    // A8：底缘与 global bar 顶对齐
+    const float top = plotTopPx();                          // A6/#2：条带顶端避开顶栏
+    const float bottom = plotBottomPx();                    // #4：底缘避开 global bar
 
     // 条带底 + 网格（0…−60，每 20dB）
     g.setColour (pal_.meterBg);
@@ -468,8 +517,8 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     const float W = (float) getWidth();
     const float h = sy (kTopStripH);
 
-    // 玻璃条（surfaceA；模糊由后续 Phase 5 的 backdrop 实现，当前平涂）
-    g.setColour (pal_.surfaceA);
+    // #4：状态栏 100% 不透明（不再玻璃），与主界面明确分层
+    g.setColour (pal_.surface);
     g.fillRect (0.0f, 0.0f, W, h);
 
     // A9：模式信息文字已删除（用户不需要这行解释）
@@ -490,6 +539,19 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     g.setColour (pal_.dim);
     g.setFont (MBTheme::font (MBTheme::semiBold(), 10.5f));
     g.drawText ("CURVE", curveBtn, juce::Justification::centred);
+
+    // P1：Display Range 档位按钮（#4：从 global bar 移到顶栏，避免与 IN 读数冲突）
+    //     点击弹出二级菜单（Auto / ±3 / ±6 / ±12 / ±30）
+    displayRangeBtn_ = juce::Rectangle<float> (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f));
+    g.setColour (displayRangeMode_ == 0 ? pal_.accent.withAlpha (0.85f) : pal_.track);
+    g.fillRoundedRectangle (displayRangeBtn_, sx (12.0f));
+    g.setColour (displayRangeMode_ == 0 ? juce::Colours::white.withAlpha (0.92f) : pal_.dim);
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+    {
+        const char* modes[5] = { "Auto", "3 dB", "6 dB", "12 dB", "30 dB" };
+        g.drawText (juce::String ("+/- ") + modes[displayRangeMode_] + "  " + juce::String::fromUTF8 ("\xE2\x96\xBC"),
+                    displayRangeBtn_, juce::Justification::centred);
+    }
 
     auto gearBtn = juce::Rectangle<float> (W - sx (30.0f), sy (3.0f), sx (24.0f), sy (24.0f));
     g.setColour (pal_.track);
@@ -657,6 +719,13 @@ void DisplayView::timerCallback()
 
     updateCurve();
 
+    // P1：显示量程平滑追赶目标（τ=90ms，档位切换动画）
+    if (std::abs (curveRangeDisplay_ - curveRangeDb_) < 0.01f)
+        curveRangeDisplay_ = curveRangeDb_;
+    else
+        curveRangeDisplay_ += (curveRangeDb_ - curveRangeDisplay_)
+                            * (float) (1.0 - std::exp (-dt / 0.090));
+
     // range 拖动动画（每帧向目标值收敛；time-constant 型平滑）
     {
         const double dt2 = dt;
@@ -678,7 +747,8 @@ void DisplayView::timerCallback()
     //     Range 层 Path 不刷新——用户要切到别的段再切回来才看到变化。
     //   · curvePathsValid_ == false（结构/尺寸/主题/切段）→ 强制重建
     {
-        bool needRebuild = ! haveDrawnGain_ || ! curvePathsValid_;
+        bool needRebuild = ! haveDrawnGain_ || ! curvePathsValid_
+                        || std::abs (curveRangeDisplay_ - lastDrawnCurveRange_) > 0.01f;
         for (int b = 0; b < Param::kNumBands && ! needRebuild; ++b)
         {
             if (std::abs (bandDisplayDb_[(size_t) b] - lastDrawnGainDb_[(size_t) b]) > 0.02f
@@ -689,6 +759,7 @@ void DisplayView::timerCallback()
         {
             lastDrawnGainDb_  = bandDisplayDb_;
             lastDrawnRange_   = rangeDisplay_;
+            lastDrawnCurveRange_ = curveRangeDisplay_;
             haveDrawnGain_ = true;
             refreshCurvePaths();
         }
@@ -798,19 +869,31 @@ void DisplayView::updateCurve()
         baseDb_[(size_t) i]   = base;        // Range 层顶边基准（静态）
     }
 
-    // P1：Display Range 自动扩展——曲线值**或 Range 层深度**超出当前量程时升档
-    //     （Range 层 = base + bell×range，最深可达 base+range；否则大 range 值被 clamp 看不见）
-    if (drag_ == DragMode::None || drag_ == DragMode::Divider || drag_ == DragMode::DotFreq)
+    // P1：Display Range 目标量程（平滑动画在 timerCallback 里做，那里有 dt）
+    //   · Auto（模式 0）：按曲线值/Range 深度自动选档（3/6/12/30），只升不降
+    //   · 手动（1..4）：固定档位
+    //   ⚠️ Makeup/Range 拖动期间**冻结目标量程**：否则拖动让曲线值变化 → 触发升档
+    //   → 量程平滑追赶 → gainToY 映射持续微动 → 用户看到"卡顿/抖动"（2026-09-23）
+    if (drag_ != DragMode::Makeup && drag_ != DragMode::Range)
     {
-        float mx = 0.0f;
-        for (int i = 0; i < kCurvePoints; ++i)
-            mx = juce::jmax (mx, std::abs (curveDb_[(size_t) i]));
-        for (int b = 0; b < Param::kNumBands; ++b)
-            mx = juce::jmax (mx, std::abs (bandRangeDb_[(size_t) b]));
-        const float target = (mx <= 3.0f) ? 3.0f : (mx <= 6.0f) ? 6.0f
-                        : (mx <= 12.0f) ? 12.0f : 30.0f;
-        if (target > curveRangeDb_)
-            curveRangeDb_ = target;
+        float target = curveRangeDb_;
+        if (displayRangeMode_ == 0)
+        {
+            float mx = 0.0f;
+            for (int i = 0; i < kCurvePoints; ++i)
+                mx = juce::jmax (mx, std::abs (curveDb_[(size_t) i]));
+            for (int b = 0; b < Param::kNumBands; ++b)
+                mx = juce::jmax (mx, std::abs (bandRangeDb_[(size_t) b]));
+            const float autoTarget = (mx <= 3.0f) ? 3.0f : (mx <= 6.0f) ? 6.0f
+                                   : (mx <= 12.0f) ? 12.0f : 30.0f;
+            target = juce::jmax (curveRangeDb_, autoTarget);      // 只升不降
+        }
+        else
+        {
+            const float fixed[5] = { 6.0f, 3.0f, 6.0f, 12.0f, 30.0f };
+            target = fixed[displayRangeMode_];
+        }
+        curveRangeDb_ = target;
     }
 }
 
@@ -922,7 +1005,10 @@ void DisplayView::refreshSpectrumPaths()
 // ---------------- Phase 4.3 绘制 ----------------
 void DisplayView::drawSpectrum (juce::Graphics& g)
 {
-    if (! spectrumPathsValid_)
+    // ⚠️ guard 只用"内容为空"判断，不用 *PathsValid_ 脏标志——
+    // 2026-09-23 修复：脏标志为 true 的那一帧会整层不画，但 Path 里还有上一帧
+    // 几何可用 → 用户看到"曲线/频谱偶发消失一瞬间"。
+    if (spectrumPreFill_.isEmpty() && spectrumPreStroke_.isEmpty())
         return;
 
     // B1（用户验收指定）：主题色(accent) = Pre，灰(inFill) = Post
@@ -957,7 +1043,8 @@ void DisplayView::drawRangeBell (juce::Graphics& g)
 void DisplayView::drawResponseCurve (juce::Graphics& g)
 {
     // P0：只画一条粗线（Pro-MB 的黄线 = 实时动态总响应）
-    if (! curveVisible_ || ! curvePathsValid_ || curvePath_.isEmpty())
+    // ⚠️ 同 drawSpectrum：不用 valid 脏标志做 guard（会闪）
+    if (! curveVisible_ || curvePath_.isEmpty())
         return;
     g.setColour (pal_.accent);
     g.strokePath (curvePath_, juce::PathStrokeType (2.2f,
@@ -1086,12 +1173,14 @@ bool DisplayView::getParamBool (const juce::String& id) const
 
 int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const
 {
-    // 每段右缘 [线−40, 线−16]，y 从 118 起，4 个 24×24（间距 30）
+    // 每段按钮列 [缘−40, 缘−16]，y 从 118 起，4 个 24×24（间距 30）
+    // ⚠️ 2026-09-23：band3 的"右缘"取 **IN/OUT 电平表左边界 −8px**（不是窗口右缘），
+    //    这样按钮列在分区右侧、又完全不与音量表（x 886..918）重叠。
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
     for (int b = 0; b < 4; ++b)
     {
-        const float edge = (b < 3) ? nx[b] : W;
+        const float edge = (b < 3) ? nx[b] : juce::jmin (W, sx (kMeterX) - sx (8.0f));
         const float x0 = edge - sx (40.0f), x1 = edge - sx (16.0f);
         if (p.x < x0 || p.x > x1) continue;
         for (int j = 0; j < 4; ++j)
@@ -1150,25 +1239,42 @@ void DisplayView::applyDividerFreq (int index, float freq)
 
 void DisplayView::applyCenterFreq (int band, float freq)
 {
-    // P2：横拖频点 = 改该段中心频率（两侧 crossover 同步平移，保持段宽）
+    // P2 + #1：横拖频点 = 改该段"中心频率"
+    //   · band1/2（两缘自由）：整段平移
+    //   · band0（左缘锁 20Hz）/ band3（右缘锁 20kHz）：中心移动时**活动边跟随**，
+    //     左缘/右缘固定 → 中心左移=收缩、右移=扩宽（修"只能单向拖"的 bug）
     float x1 = cachedX1_, x2 = cachedX2_, x3 = cachedX3_;
-    float lo = 0.0f, hi = 0.0f;
-    if (band == 0)      { lo = 20.0f;  hi = x1; }
-    else if (band == 1) { lo = x1;     hi = x2; }
-    else if (band == 2) { lo = x2;     hi = x3; }
-    else                { lo = x3;     hi = 20000.0f; }
-    if (hi <= lo) return;
+    const float kLo = 20.0f, kHi = 20000.0f;
 
-    const float newC  = juce::jlimit (lo * 1.02f, hi / 1.02f, freq);
-    const float ratio = newC / std::sqrt (lo * hi);
-    float newLo = lo * ratio, newHi = hi * ratio;
-    if (newLo < lo) { newHi *= lo / newLo; newLo = lo; }
-    if (newHi > hi) { newLo *= hi / newHi; newHi = hi; }
-
-    if (band == 0)      x1 = newHi;
-    else if (band == 1) { x1 = newLo; x2 = newHi; }
-    else if (band == 2) { x2 = newLo; x3 = newHi; }
-    else                x3 = newLo;
+    if (band == 0)
+    {
+        // 右缘 = 中心² / 左缘(20)
+        const float maxC = std::sqrt (kLo * x2 * 0.5f);      // 保证 x1 ≤ x2/2（≥1 八度）
+        const float newC = juce::jlimit (kLo, maxC, freq);
+        x1 = juce::jlimit (kLo, x2 * 0.5f, (newC * newC) / kLo);
+    }
+    else if (band == 3)
+    {
+        // 左缘 = 中心² / 右缘(20k)；中心下界由"x3 ≥ x2·2"决定：minC = sqrt(2·x2·kHi)
+        const float minC = std::sqrt (2.0f * x2 * kHi);
+        const float newC = juce::jlimit (minC, kHi, freq);
+        x3 = juce::jlimit (x2 * 2.0f, kHi, (newC * newC) / kHi);
+    }
+    else
+    {
+        float lo = (band == 1) ? x1 : x2;
+        float hi = (band == 1) ? x2 : x3;
+        if (hi <= lo) return;
+        const float oldC = std::sqrt (lo * hi);
+        float newC = juce::jlimit (lo, hi, freq);
+        const float shift = std::log2 (newC / oldC);
+        float newLo = lo * std::pow (2.0f, shift);
+        float newHi = hi * std::pow (2.0f, shift);
+        if (newLo < kLo)    { newHi *= kLo / newLo;    newLo = kLo; }
+        if (newHi > kHi)    { newLo *= kHi / newHi;    newHi = kHi; }
+        if (band == 1) { x1 = newLo; x2 = newHi; }
+        else           { x2 = newLo; x3 = newHi; }
+    }
 
     Param::clampCrossovers (x1, x2, x3);
     setParamPhysical (Param::ID::xover1, x1);
@@ -1334,6 +1440,77 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
     (void) rbTest; (void) lowerTest; (void) onBtn; (void) onDot;
 }
 
+bool DisplayView::hitTestDisplayRange (juce::Point<float> p) const
+{
+    // 与 drawTopStrip 中的按钮位置严格一致：W−218..W−132，y 3..27
+    const float W = (float) getWidth();
+    const juce::Rectangle<float> r (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f));
+    return r.contains (p);
+}
+
+void DisplayView::openDisplayRangeMenu()
+{
+    juce::PopupMenu m;
+    const char* labels[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB", "+/- 12 dB", "+/- 30 dB" };
+    for (int i = 0; i < 5; ++i)
+        m.addItem (i + 1, labels[i], true, i == displayRangeMode_);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+        [this] (int result)
+        {
+            if (result <= 0 || result > 5) return;
+            displayRangeMode_ = result - 1;
+            if (displayRangeMode_ != 0)
+            {
+                const float fixed[5] = { 6.0f, 3.0f, 6.0f, 12.0f, 30.0f };
+                curveRangeDb_ = fixed[displayRangeMode_];
+            }
+            repaint();
+        });
+}
+
+void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    // #4 修订：只要在**分区内**滚轮就可改该段大小（不要求 hover 在频点上）
+    const float W = (float) getWidth();
+    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+
+    int band = -1;
+    for (int i = 0; i < 4; ++i)
+        if (e.position.x >= edges[i] && e.position.x < edges[i + 1]) { band = i; break; }
+    if (band < 0)                                   // 落在分割线抓取带/音量表 → 不处理
+        return;
+
+    // 滚轮上（deltaY>0）→ 扩宽；下 → 收窄。步进 6%
+    const float k = (wheel.deltaY > 0.0f ? 1.06f : 1.0f / 1.06f);
+
+    float x1 = cachedX1_, x2 = cachedX2_, x3 = cachedX3_;
+    float lo, hi;
+    if (band == 0)      { lo = 20.0f;  hi = x1; }
+    else if (band == 1) { lo = x1;     hi = x2; }
+    else if (band == 2) { lo = x2;     hi = x3; }
+    else                { lo = x3;     hi = 20000.0f; }
+    if (hi <= lo) return;
+
+    float newLo = lo / k, newHi = hi * k;
+    newLo = juce::jmax (20.0f,    newLo);
+    newHi = juce::jmin (20000.0f, newHi);
+
+    if (band == 0)      x1 = newHi;
+    else if (band == 1) { x1 = newLo; x2 = newHi; }
+    else if (band == 2) { x2 = newLo; x3 = newHi; }
+    else                x3 = newLo;
+
+    Param::clampCrossovers (x1, x2, x3);
+    setParamPhysical (Param::ID::xover1, x1);
+    setParamPhysical (Param::ID::xover2, x2);
+    setParamPhysical (Param::ID::xover3, x3);
+    cachedX1_ = x1; cachedX2_ = x2; cachedX3_ = x3;
+    weightsDirty_ = true;
+    curvePathsValid_ = false;
+    repaint();
+}
+
 void DisplayView::mouseDown (const juce::MouseEvent& e)
 {
     // #7：输入框激活时，先点别处 = 取消
@@ -1344,6 +1521,13 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     const auto p = e.position;
+
+    // 0a) Display Range 档位：点击弹出二级菜单（Pro-MB drop-down 语义）
+    if (hitTestDisplayRange (p))
+    {
+        openDisplayRangeMenu();
+        return;
+    }
 
     // 0) 全局 BYPASS 胶囊（A8 区，global bar 右侧）
     if (hitTestGlobalBypass (p))
@@ -1380,6 +1564,8 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         dragBand_ = dotBand;
         dragStartY_ = p.y;
         dragStartX_ = p.x;
+        dragAxisLocked_ = false;               // #3：重置主轴锁定
+        dragAxisIsX_ = false;
         dragStartMakeup_ = proc_.apvts.getRawParameterValue (
             "band" + juce::String (dotBand) + "Makeup")->load();
         repaint();
@@ -1464,18 +1650,30 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 
     if (drag_ == DragMode::Makeup || drag_ == DragMode::DotFreq)
     {
-        // P2+#6：位移占优方向决定语义——纵向=Makeup，横向=段中心频率
+        // P2 + #2：主轴**首次锁定后永不重锁**（完全隔离）
+        //   · 首次位移超 4px 即锁定主轴，整次拖动只响应该轴
+        //   · 纵拖时无论怎样左右都不改分区；横拖时无论怎样上下都不改 Makeup（用户明确要求）
         const float dx = p.x - dragStartX_;
         const float dy = dragStartY_ - p.y;
-        if (drag_ == DragMode::Makeup && std::abs (dx) > std::abs (dy) && std::abs (dx) > 3.0f)
-            drag_ = DragMode::DotFreq;
+        if (! dragAxisLocked_)
+        {
+            if (std::abs (dx) > 4.0f || std::abs (dy) > 4.0f)
+            {
+                dragAxisLocked_ = true;
+                dragAxisIsX_ = std::abs (dx) > std::abs (dy);
+            }
+        }
+
+        drag_ = (dragAxisIsX_ && dragAxisLocked_) ? DragMode::DotFreq : DragMode::Makeup;
+
         if (drag_ == DragMode::DotFreq)
         {
             applyCenterFreq (dragBand_, juce::jlimit (20.0f, 20000.0f, xToFreq (p.x)));
             return;
         }
-        // 增益刻度：±curveRangeDb_ 满量程（上拖=增益增大）
-        const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
+        // 增益刻度：显示量程满程（上拖=增益增大）
+        const float R = juce::jmax (0.5f, curveRangeDisplay_);
+        const float dbPerPx = (2.0f * R) / plotHeightPx();
         const float newMakeup = juce::jlimit (-36.0f, 36.0f, dragStartMakeup_ + dy * dbPerPx);
         setParamNorm ("band" + juce::String (dragBand_) + "Makeup",
                       (newMakeup + 36.0f) / 72.0f);
@@ -1488,6 +1686,7 @@ void DisplayView::mouseUp (const juce::MouseEvent&)
     drag_ = DragMode::None;
     dragIndex_ = -1;
     dragBand_ = -1;
+    dragAxisLocked_ = false;
 }
 void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 {

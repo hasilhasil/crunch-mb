@@ -38,6 +38,7 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     // 主题（Phase 5 的 ⚙ 菜单接；当前提供 setter）
     void setTheme (MBTheme::Theme t);
@@ -77,6 +78,53 @@ public:
     float getCurveYAtFreq (float f) const { return gainToY (curveDbAtFreq (f)); }
     // 测试钩子：读 range 显示值与 Range 层几何（T26）
     float getRangeDisplay (int band) const { return rangeDisplay_[(size_t) band]; }
+    float getCurveRangeForTest() const { return curveRangeDisplay_; }
+    int   getDisplayRangeModeForTest() const { return displayRangeMode_; }
+    // 测试钩子：各层 Path 是否有内容（T29 闪烁回归）
+    std::string getCurvePathLenForTest() const { return curvePath_.isEmpty() ? "" : "x"; }
+    std::string getRangeEdgeLenForTest (int b) const
+    {
+        return rangeEdgePath_[(size_t) b].isEmpty() ? "" : "x";
+    }
+    int  hitTestButtonForTest (float x, float y, int& band, int& btn) const
+    {
+        return hitTestButton (juce::Point<float> (x, y), band, btn);
+    }
+    // T31：读绘图区边界（验证刻度不被遮挡）
+    float testPlotTop() const { return plotTopPx(); }
+    float testPlotBottom() const { return plotBottomPx(); }
+    // T31：返回某 dB 值对应的刻度文字 y（模拟 drawScales 的 clamp 逻辑）
+    float testScaleTextY (float db, bool isGainAxis) const
+    {
+        const float top = plotTopPx();
+        const float bottom = plotBottomPx();
+        const float h = 12.0f;
+        const float rawY = (isGainAxis ? gainToY (db) : specDbToY (db)) - 6.0f;
+        return juce::jlimit (top + 1.0f, bottom - h - 1.0f, rawY);
+    }
+    void mouseWheelForTest (float x, float y, float dx, float dy)
+    {
+        auto mkEv = [&]
+        {
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            return juce::MouseEvent (src, juce::Point<float> (x, y), juce::ModifierKeys(),
+                                     0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                     nullptr, nullptr, juce::Time(),
+                                     juce::Point<float> (x, y), juce::Time(), 1, false);
+        };
+        juce::MouseWheelDetails w;
+        w.deltaX = dx;
+        w.deltaY = dy;
+        w.isReversed = false;
+        w.isSmooth = false;
+        w.isInertial = false;
+        mouseWheelMove (mkEv(), w);
+    }
+    float getFreqDotXForTest (int band) const { return freqToX (bandCenterFreq (band)); }
+    float getFreqDotYForTest (int band) const
+    {
+        return gainToY (curveDbAtFreqBase (bandCenterFreq (band)));
+    }
     juce::Rectangle<float> getRangeEdgeRect (int band) const
     {
         return rangeEdgePath_[(size_t) band].getBounds();
@@ -91,9 +139,12 @@ private:
     float specDbToY (float db) const;
     float gainToY (float gainDb) const;
     float meterY (float db) const;
-    // A8：绘图区底缘 = global bar 顶（绝对对齐，消除任何舍入误差）
+    // A8/#4：绘图区边界**完全贴合**状态栏下缘与 global bar 上缘（无间隙）
     float plotBottomPx() const noexcept { return (float) getHeight() - sy (kGlobalBarH); }
-    float plotHeightPx() const noexcept { return plotBottomPx() - sy (kTopStripH); }
+    float plotTopPx()    const noexcept { return sy (kTopStripH); }
+    float plotRightPx()  const noexcept { return sx (kMeterX) - sx (4.0f); }   // #3：右缘避开 IN/OUT 音量表
+    float plotWidthPx()  const noexcept { return plotRightPx(); }
+    float plotHeightPx() const noexcept { return plotBottomPx() - plotTopPx(); }
 
     // ---- 布局（按 920×620 设计，比例缩放） ----
     float sx (float x) const noexcept { return x * (float) getWidth()  / kDesignW; }
@@ -162,6 +213,8 @@ private:
     int  dragIndex_ = -1;            // 分割线索引 0..2
     int  dragBand_ = -1;             // Makeup 拖动作用的段（C4 可跨段）
     float dragStartY_ = 0.0f, dragStartMakeup_ = 0.0f;
+    bool  dragAxisLocked_ = false;      // #3：主轴已锁定（首次位移超阈值后）
+    bool  dragAxisIsX_ = false;         // #3：锁定的是横轴（中心频率）而非纵轴（Makeup）
     float dragStartX_ = 0.0f;
     float dragStartRange_ = 0.0f;
     bool mouseDownOnButton_ = false;
@@ -195,6 +248,9 @@ private:
     void closeFreqEditor (bool apply);
     bool isAllBypassed() const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
+    bool hitTestDisplayRange (juce::Point<float> p) const;
+    void openDisplayRangeMenu();
+    juce::Rectangle<float> displayRangeBtn_;
 
     // ---- Phase 4.3：仿 EQ 动态曲线 ----
     static constexpr int kCurvePoints = 241;
@@ -208,10 +264,14 @@ private:
     std::array<float, 4> bandRangeDb_     {};       // 段 range 值（每帧读取）
     std::array<float, 4> rangeDisplay_    {};       // range 显示值（拖动动画平滑）
     std::array<float, kCurvePoints> baseDb_ {};     // 未压缩基准逐点（Range 层，静态）
-    // P1：双刻度 —— 曲线/Range 用 ±curveRangeDb_（3/6/12/30，默认 6）
-    float curveRangeDb_ = 6.0f;
+    // P1：双刻度 —— 曲线/Range 用 ±curveRangeDb_（3/6/12/30）
+    //   displayRangeMode_：0=Auto（自动扩档，Pro-MB 默认）、1..4 = 固定 ±3/±6/±12/±30
+    int   displayRangeMode_ = 0;
+    float curveRangeDb_ = 6.0f;          // 目标量程（瞬时）
+    float curveRangeDisplay_ = 6.0f;     // 显示量程（平滑过渡 → 档位切换动画）
     std::array<float, 4> lastDrawnGainDb_  {};      // 上次绘制增益（曲线重建门控）
     std::array<float, 4> lastDrawnRange_  {};      // 上次绘制 range（Range 层重建门控）
+    float lastDrawnCurveRange_ = -1.0f;            // 上次绘制的显示量程（量程动画门控）
     bool  haveDrawnGain_ = false;
     bool  weightsDirty_ = true;
     float cachedX1_ = 0.0f, cachedX2_ = 0.0f, cachedX3_ = 0.0f;

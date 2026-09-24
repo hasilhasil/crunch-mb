@@ -130,7 +130,7 @@ void SpectrumAnalyzer::processFrame (const float* data)
 void SpectrumAnalyzer::rebuildLookup (int numPoints)
 {
     const double fMin = 10.0;
-    const double fMax = juce::jmin (20000.0, sampleRate_ * 0.5);   // A5：显示到 20k
+    const double fMax = juce::jmin (22100.0, sampleRate_ * 0.5);   // A5+：显示上限 22100 Hz
     const double binHz = sampleRate_ / (double) fftSize_;
 
     lutK0_.resize ((size_t) numPoints);

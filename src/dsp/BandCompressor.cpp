@@ -45,29 +45,54 @@ float BandCompressor::computeTargetGainDb (float levelDb) const noexcept
     const float slope = 1.0f / ratio_ - 1.0f;      // ≤ 0
     const float w = kneeWidthDb_;
 
-    float gainDb;
-    if (w > 0.0f)
+    // Range 符号决定方向（Pro-MB / Future MB 语义）：
+    //   Range < 0 → 向下压缩：阈值以上衰减（经典 compressor）
+    //   Range > 0 → 向上压缩：阈值以下抬升（从噪声底压缩动态范围）
+    const bool upward = rangeDb_ > 0.0f;
+    const float lim = std::abs (rangeDb_);          // |Range| = 增益变化幅度上限
+
+    float gainDb = 0.0f;
+
+    if (upward)
     {
-        // 软拐点：±w/2 区间二次插值（标准 soft-knee 传输曲线）
-        if (over <= -0.5f * w)       gainDb = 0.0f;
-        else if (over >= 0.5f * w)   gainDb = slope * over;
+        // u = 低于阈值多少（>0 表示低于阈值）
+        const float u = -over;
+        if (w > 0.0f)
+        {
+            if (u >= 0.5f * w)       gainDb = -slope * u;                 // 正：上抬
+            else if (u <= -0.5f * w) gainDb = 0.0f;                       // 阈值以上不处理
+            else
+            {
+                const float t = u + 0.5f * w;
+                gainDb = -slope * t * t / (2.0f * w);                     // 膝区二次（连续）
+            }
+        }
         else
         {
-            const float t = over + 0.5f * w;
-            gainDb = slope * t * t / (2.0f * w);
+            gainDb = (u > 0.0f) ? (-slope * u) : 0.0f;
         }
     }
     else
     {
-        gainDb = over > 0.0f ? slope * over : 0.0f;
+        if (w > 0.0f)
+        {
+            // 软拐点：±w/2 区间二次插值（标准 soft-knee 传输曲线）
+            if (over <= -0.5f * w)       gainDb = 0.0f;
+            else if (over >= 0.5f * w)   gainDb = slope * over;
+            else
+            {
+                const float t = over + 0.5f * w;
+                gainDb = slope * t * t / (2.0f * w);
+            }
+        }
+        else
+        {
+            gainDb = over > 0.0f ? slope * over : 0.0f;
+        }
     }
 
-    // Range 钳制（Pro-MB 同功能）：|Range| = 增益变化幅度上限，符号 = 方向。
-    // 本插件为压缩器，增益变化方向恒为负：Range ≤ 0 时限制 |GR|；Range > 0
-    // 时仅允许正向变化（预留），压缩增益被钳到 0。
-    const float lo = juce::jmin (rangeDb_, 0.0f);
-    const float hi = juce::jmax (rangeDb_, 0.0f);
-    return juce::jlimit (lo, hi, gainDb);
+    // |增益变化| ≤ |Range|
+    return juce::jlimit (-lim, lim, gainDb);
 }
 
 float BandCompressor::getStaticGainDb (float levelDb) const noexcept

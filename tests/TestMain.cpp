@@ -1307,9 +1307,9 @@ static void testSidechainThroughProcessor()
                 if (pw->paramID == id) { p->setValueNotifyingHost (normalised); return; }
     };
 
-    // band0：阈值 −40dB、ratio 6:1、attack 1ms（快速收敛）、Ext 开
+    // band0：阈值 −40dB、ratio 12:1、attack 1ms（快速收敛）、Ext 开
     setParam ("band0Threshold", (-40.0f - (-60.0f)) / 60.0f);
-    setParam ("band0Ratio",     (6.0f - 1.0f) / 19.0f);
+    setParam ("band0Ratio",     (12.0f - 1.0f) / 19.0f);
     setParam ("band0Attack",    (1.0f - 0.1f) / (200.0f - 0.1f));
     setParam ("band0Ext",       1.0f);
 
@@ -1684,8 +1684,8 @@ static void testParameterSensitivity()
     //     Ext 在无侧链时正确回退 INT → 输出应与 Ext off 一致（expectChange=false）。
     const Case bandCases[] = {
         { "band0Threshold", 0.25f,  true,  "Low Threshold −20→−45dB（压得更狠）" },
-        { "band0Range",     0.80f,  true,  "Low Range −30→−6dB（放松 GR 钳制）" },
-        { "band0Ratio",     0.58f,  true,  "Low Ratio 4→12" },
+        { "band0Range",     0.99f,  true,  "Low Range −6→−29dB（恢复 GR 钳制）" },
+        { "band0Ratio",     0.99f,  true,  "Low Ratio 4→20" },
         { "band0Attack",    0.99f,  true,  "Low Attack 10→200ms" },
         { "band0Release",   0.90f,  true,  "Low Release 100→900ms" },
         { "band0Makeup",    0.66f,  true,  "Low Makeup 0→+12dB" },
@@ -1705,6 +1705,8 @@ static void testParameterSensitivity()
             setP (mb, c.id, c.norm);
             if (juce::String (c.id) == "band0Knee")
                 setP (mb, "band0Threshold", 0.33f);   // ≈−40dB：让 0.4 幅值信号落入 12dB 膝区
+            if (juce::String (c.id) == "band0Ratio")
+                setP (mb, "band0Threshold", 0.37f);   // ≈−38dB：Range=−6 默认下让 Ratio 差异可测
         });
         const double ddb = 20.0 * std::log10 ((v + 1e-12) / (base + 1e-12));
         const bool changed = std::abs (ddb) > 0.05;
@@ -1722,8 +1724,13 @@ static void testParameterSensitivity()
     // 让 400Hz 分量正好落在交叉区，斜率差异才可测。
     struct GCase { const char* desc; std::function<void (CrunchMBAudioProcessor*)> setup; bool expectChange; };
     const GCase gCases[] = {
-        { "xoverSlope 24→12（xover1 同步移到 400Hz 使信号落入交叉区）",
-          [&] (CrunchMBAudioProcessor* mb) { setC (mb, "xoverSlope", 1, 4); setP (mb, "xover1", 0.614f); }, true },
+        { "xoverSlope 24→12（xover1 移到 400Hz + band0Range 调深，使裙边差异可测）",
+          [&] (CrunchMBAudioProcessor* mb)
+          {
+              setC (mb, "xoverSlope", 1, 4);
+              setP (mb, "xover1", 0.614f);
+              setP (mb, "band0Range", 0.99f);      // −29dB：斜率差异经压缩放大后可测
+          }, true },
         { "phaseMode Natural→Minimal（LR 树同拓扑，应几乎一致）",
           [&] (CrunchMBAudioProcessor* mb) { setC (mb, "phaseMode", 1, 3); }, false },
         { "linearQuality Low（IIR 模式下应无影响）",
@@ -2097,7 +2104,8 @@ static void testStaticRenderPixels()
         return (dr <= tol && dg <= tol && db <= tol);
     };
 
-    // 设计坐标 → 像素（920×620 直射）
+    // 设计坐标 → 像素（920×620）。横轴右缘 = 绘图区右缘 882（避开音量表）：
+    //   200Hz→290, 1kHz→492, 6kHz→718
     struct P { int x, y; const char* expect; const char* what; };
     const P pts[] = {
         {  10, 300, "111920", "分区 L 底（accent 5% over bg）" },
@@ -2105,9 +2113,9 @@ static void testStaticRenderPixels()
         { 640, 480, "13202C", "分区 HM 底（选中 accent 10% over bg）" },   // y=480 避开网格/曲线
         { 850, 480, "111920", "分区 H 底" },
         { 900, 300, "16181B", "电平表条带底" },
-        { 306, 513, "2A2E33", "交叉点手柄 1" },
-        { 521, 513, "2A2E33", "交叉点手柄 2" },
-        { 760, 513, "2A2E33", "交叉点手柄 3" },
+        { 290, 513, "2A2E33", "交叉点手柄 1" },
+        { 492, 513, "2A2E33", "交叉点手柄 2" },
+        { 718, 513, "2A2E33", "交叉点手柄 3" },
         { 300, 600, "202429", "全局条玻璃（surfaceA 0.84 over 分区底）" },
     };
     int pass = 0, fail = 0;
@@ -2120,9 +2128,9 @@ static void testStaticRenderPixels()
     }
 
     // 分割线：1.5px 宽，采样常落抗锯齿边缘 → 用"比相邻分区底色亮 ≥8"证明线存在
-    for (const auto& d : { std::make_pair (307, "分割线 x1 (200Hz)"),
-                           std::make_pair (521, "分割线 x2 (1kHz)"),
-                           std::make_pair (760, "分割线 x3 (6kHz)") })
+    for (const auto& d : { std::make_pair (290, "分割线 x1 (200Hz)"),
+                           std::make_pair (492, "分割线 x2 (1kHz)"),
+                           std::make_pair (718, "分割线 x3 (6kHz)") })
     {
         const juce::Colour line = img.getPixelAt (d.first, 300);
         const juce::Colour nb   = img.getPixelAt (d.first - 12, 300);   // 同分区内邻点
@@ -2139,8 +2147,8 @@ static void testStaticRenderPixels()
 
     // 段名行下方背景（y=70，避开文字与网格）：应为分区底色（非文字区），排除异常色带
     for (const auto& d : { std::make_pair (100, "L 段名行下方背景"),
-                           std::make_pair (460, "LM 段名行下方背景（文字盒外）"),
-                           std::make_pair (700, "HM 段名行下方背景") })
+                           std::make_pair (340, "LM 段名行下方背景（文字盒外）"),
+                           std::make_pair (680, "HM 段名行下方背景") })
     {
         const juce::Colour c = img.getPixelAt (d.first, 70);
         const bool ok = near (d.first, 70, "111920", 16) || near (d.first, 70, "13202C", 16);
@@ -2250,7 +2258,8 @@ static void testDynamicLayer()
 // ------------------------------------------------------------
 static float freqToXforTest (float f)
 {
-    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1000.0f) * 920.0f;
+    // 与 DisplayView::freqToX 一致：横轴 20Hz..22100Hz，宽度 = 绘图区右缘（882 @920×620）
+    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1105.0f) * (886.0f - 4.0f);
 }
 
 static void testInteraction()
@@ -2794,9 +2803,10 @@ static void testRangeLiveUpdate()
     };
 
     // Range 层几何验证（不受渲染混合/抗锯齿影响）：Range 底边 y 应随 range 参数实时变化
+    // （量程切换是 τ=90ms 平滑，需足够 tick 收敛）
     auto rangeEdgeBottom = [&]() -> float
     {
-        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        for (int t = 0; t < 300; ++t) dv.tickForTest();
         return dv.getRangeEdgeRect (2).getBottom();
     };
 
@@ -2811,6 +2821,568 @@ static void testRangeLiveUpdate()
     check (bA > 0.0f && bB > 0.0f && std::abs (bB - bA) > 20.0f,
            "T26.1 改 Range 参数后 Range 层立即刷新（无需切段）",
            "bA=" + juce::String (bA, 1) + " bB=" + juce::String (bB, 1));
+}
+
+// ------------------------------------------------------------
+// T27 Display Range 档位 + 拖动不卡回归（2026-09-23 用户反馈）
+//   · 档位点击循环 Auto→3→6→12→30，显示量程平滑追赶
+//   · 频点拖动：横向分量不应永久锁定横拖模式（"卡住"bug）
+// ------------------------------------------------------------
+static void testDisplayRangeAndDrag()
+{
+    std::cout << "\n--- T27 Display Range 档位 / 拖动不卡 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T27.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+    auto mkOf = [&] (int band)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == Param::bandMakeup (band)) return pw->getValue();
+        return -1.0f;
+    };
+
+    // ① 档位：点击按钮只弹二级菜单，不直接改档位（#4 用户要求的形式）
+    //    菜单项选择由 openDisplayRangeMenu() 的 PopupMenu 回调处理（宿主内异步，测试无法直接点）
+    {
+        // 顶栏按钮：W−218..W−132，y 3..27
+        const float bx = 920.0f - 218.0f + 43.0f;
+        const float by = 15.0f;
+        const int modeBefore = dv.getDisplayRangeModeForTest();
+        dv.mouseDownForTest (bx, by);          // 弹菜单（异步），档位不应立即变
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        const int modeAfter = dv.getDisplayRangeModeForTest();
+        std::cout << "  档位模式: " << modeBefore << " -> " << modeAfter << std::endl;
+        check (modeAfter == modeBefore,
+               "T27.1 点击档位按钮只弹菜单（不改档位）",
+               juce::String (modeBefore) + " -> " + juce::String (modeAfter));
+    }
+
+    // ② 拖动隔离（#2）：主轴锁定后，纵拖不再被横拖"抢走"——上下操作只改 Makeup
+    {
+        float dx0 = 0.0f, dy0 = 0.0f;
+        dv.getFreqDotPos (2, dx0, dy0);
+        const float mkBefore = mkOf (2);
+        const float xoBefore = [&]
+        {
+            float s = 0.0f;
+            for (const char* id : { Param::ID::xover2, Param::ID::xover3 })
+                for (auto* p : proc->getParameters())
+                    if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                        if (pw->getParameterID() == id)
+                            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                                s += rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return s;
+        }();
+
+        // 纯纵拖（带 3px 横向漂移）：只应改 Makeup，分区不动
+        dv.mouseDownForTest (dx0, dy0);
+        for (int i = 1; i <= 10; ++i)
+            dv.mouseDragForTest (dx0 + 3.0f, dy0 - 15.0f * i);
+        dv.mouseUpForTest (dx0 + 3.0f, dy0 - 150.0f);
+
+        const float mkAfter = mkOf (2);
+        const float xoAfter = [&]
+        {
+            float s = 0.0f;
+            for (const char* id : { Param::ID::xover2, Param::ID::xover3 })
+                for (auto* p : proc->getParameters())
+                    if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                        if (pw->getParameterID() == id)
+                            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                                s += rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return s;
+        }();
+        std::cout << "  纯纵拖: Makeup " << mkBefore << " -> " << mkAfter
+                  << " | xover2+3 " << xoBefore << " -> " << xoAfter << std::endl;
+        check (std::abs (mkAfter - mkBefore) > 0.02f,
+               "T27.3 纯纵拖改 Makeup 生效（隔离后仍响应）",
+               juce::String (mkBefore) + " -> " + juce::String (mkAfter));
+        check (std::abs (xoAfter - xoBefore) < 1.0f,
+               "T27.3b 纯纵拖不改变分区位置（横拖隔离）",
+               juce::String (xoBefore) + " -> " + juce::String (xoAfter));
+    }
+}
+
+// ------------------------------------------------------------
+// T28 四段 Range 全覆盖回归（2026-09-23 用户反馈"只改了 Low 分区"）
+//   · 四段 Range 默认值都是 -6 dB
+//   · 改任一段 Range，**该段** Range 层几何立即变化（四段都验）
+//   · Makeup 拖动期间量程冻结（避免"卡顿"）
+// ------------------------------------------------------------
+static void testAllBandsRange()
+{
+    std::cout << "\n--- T28 四段 Range 全覆盖（默认值/各自刷新/拖动冻结量程）---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T28.0 处理器实例可访问", "");
+
+    // ① 四段默认值都是 -6 dB
+    {
+        int ok = 0;
+        for (int b = 0; b < 4; ++b)
+        {
+            for (auto* p : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                    if (pw->getParameterID() == Param::bandRange (b))
+                        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                            if (std::abs (rp->getNormalisableRange().convertFrom0to1 (pw->getValue())
+                                          - (-6.0f)) < 0.05f)
+                                ++ok;
+        }
+        check (ok == 4, "T28.1 四段 Range 默认值均为 -6 dB", juce::String (ok) + "/4");
+    }
+
+    // ② 改任一段 Range → 该段 Range 层几何立即变化（四段都测）
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+
+    auto rangeRect = [&] (int band) { return dv.getRangeEdgeRect (band); };
+    auto setBandRange = [&] (int band, float db)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == Param::bandRange (band))
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                        p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (db));
+    };
+
+    int moved = 0;
+    for (int b = 0; b < 4; ++b)
+    {
+        setBandRange (b, -6.0f);
+        for (int t = 0; t < 250; ++t) dv.tickForTest();
+        const float y0 = rangeRect (b).getBottom();
+        setBandRange (b, -20.0f);
+        for (int t = 0; t < 250; ++t) dv.tickForTest();
+        const float y1 = rangeRect (b).getBottom();
+        const bool ok = std::abs (y1 - y0) > 5.0f;
+        if (ok) ++moved;
+        std::cout << "  band" << b << " Range 底边 y: " << y0 << " -> " << y1
+                  << (ok ? "  [PASS]" : "  [FAIL]") << std::endl;
+    }
+    check (moved == 4, "T28.2 四段 Range 各自实时刷新（不只 Low）", juce::String (moved) + "/4");
+
+    // ③ Makeup 拖动期间量程冻结（防卡顿）
+    {
+        dv.mouseDownForTest (dv.getFreqDotXForTest (2), dv.getFreqDotYForTest (2));
+        dv.mouseDragForTest (dv.getFreqDotXForTest (2) + 2.0f,
+                             dv.getFreqDotYForTest (2) - 30.0f);
+        const float r1 = dv.getCurveRangeForTest();
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        const float r2 = dv.getCurveRangeForTest();
+        dv.mouseUpForTest (0.0f, 0.0f);
+        std::cout << "  拖动中量程: " << r1 << " -> " << r2 << std::endl;
+        check (std::abs (r2 - r1) < 0.6f, "T28.3 Makeup 拖动期间量程冻结（无卡顿）",
+               juce::String (r1) + " -> " + juce::String (r2));
+    }
+}
+
+// ------------------------------------------------------------
+// T29 绘制层不闪烁回归（2026-09-23 用户反馈"拖频点时曲线偶发消失一瞬间"）
+//   根因：绘制 guard 用了 *PathsValid_ 脏标志 → 脏的那一帧整层不画。
+//   修复：guard 只用"内容为空"；Path 里始终保留上一帧几何。
+//   Test：连续多帧"置脏 → 不重建 → paint"，各层 Path 必须仍有内容。
+// ------------------------------------------------------------
+static void testNoFlicker()
+{
+    std::cout << "\n--- T29 绘制层不闪烁（脏帧仍保留上一帧几何）---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T29.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();      // 建立各层 Path
+
+    // 汇总"各层内容是否非空"——tick 会重建，paint 不应因脏标志而空
+    auto allLayersNonEmpty = [&]() -> bool
+    {
+        return ! dv.getCurvePathLenForTest().empty()
+            && ! dv.getRangeEdgeLenForTest (0).empty();
+    };
+    check (allLayersNonEmpty(), "T29.1 曲线/Range 层 Path 有内容", "");
+
+    // 连续 200 帧：每帧 tick（含门控）+ paint，任一层都不得变空
+    juce::Image img (juce::Image::ARGB, 920, 620, true);
+    bool everEmpty = false;
+    for (int t = 0; t < 200; ++t)
+    {
+        dv.tickForTest();
+        { juce::Graphics g (img); dv.paintForTest (g); }
+        if (! allLayersNonEmpty()) { everEmpty = true; break; }
+    }
+    check (! everEmpty, "T29.2 连续 200 帧无任何一层变空（不闪烁）", "");
+
+    // 模拟"脏但不重建"：改尺寸（置脏）后立刻 paint，Path 应仍有上一帧几何
+    dv.setSize (1000, 700);                 // resized → curvePathsValid_ = false
+    { juce::Graphics g (img); dv.paintForTest (g); }
+    check (allLayersNonEmpty(), "T29.3 置脏帧 paint 仍保留上一帧几何（不闪）", "");
+}
+
+// ------------------------------------------------------------
+// T30 本轮 4 项修复回归（2026-09-23）
+//   ① band3 按钮列避开 IN/OUT 电平表
+//   ② 绘图区顶部边界（频谱顶点不越过状态栏下缘）
+//   ③ 横拖可触发（主轴锁定后，明确横拖仍能切横轴）
+//   ④ 频点 hover + 滚轮 → 段宽伸缩（只动 crossover）
+// ------------------------------------------------------------
+static void testRoundFixes()
+{
+    std::cout << "\n--- T30 本轮 4 项修复回归 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T30.0 处理器实例可访问", "");
+
+    const auto xoverOf = [&] (const juce::String& id)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == id)
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                        return rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+        return -1.0f;
+    };
+    const auto normOf = [&] (const juce::String& id)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == id) return pw->getValue();
+        return -1.0f;
+    };
+
+    // ① band3 按钮列必须完全避开 IN/OUT 电平表（x 886..918）
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        dv.mouseDownForTest (freqToXforTest (9000.0f), 400.0f);   // 选中 band3
+        int b = -1, j = -1;
+        const bool hit = dv.hitTestButtonForTest (890.0f, 130.0f, b, j) != 0;
+        std::cout << "  (890,130) 命中按钮 = " << hit << std::endl;
+        check (! hit, "T30.1 band3 按钮列避开 IN/OUT 音量表（890 处不再命中）",
+               hit ? "命中" : "未命中");
+        // band3 按钮列在分区右侧、电平表左侧（右缘取 886−8=878 → 按钮 838..862）
+        const float bx3 = 886.0f - 8.0f - 28.0f;      // 838..862 的中心
+        const bool hit2 = dv.hitTestButtonForTest (bx3, 130.0f, b, j) != 0;
+        check (hit2 && b == 3, "T30.2 band3 按钮列在分区右侧可点",
+               hit2 ? ("band" + juce::String (b)).toRawUTF8() : "未命中");
+        // 绘制验证：该位置应能画出按钮底色（非分区底色）
+        juce::Image img (juce::Image::ARGB, 920, 620, true);
+        { juce::Graphics g (img); dv.paintForTest (g); }
+        const juce::Colour c = img.getPixelAt ((int) bx3, 130);
+        std::cout << "  band3 按钮中心像素 = " << (int) c.getRed() << ","
+                  << (int) c.getGreen() << "," << (int) c.getBlue() << std::endl;
+        check (c.getRed() > 30 || c.getGreen() > 30,
+               "T30.2b band3 按钮已绘制（像素非分区底色）", "");
+    }
+
+    // ③ 横拖触发：明确横向位移 → xover 参数变化
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        float dx0 = 0.0f, dy0 = 0.0f;
+        dv.getFreqDotPos (2, dx0, dy0);
+        const float before = xoverOf (Param::ID::xover2) + xoverOf (Param::ID::xover3);
+        dv.mouseDownForTest (dx0, dy0);
+        for (int i = 1; i <= 10; ++i)                      // 明确横拖
+            dv.mouseDragForTest (dx0 + 12.0f * i, dy0 + 2.0f);
+        dv.mouseUpForTest (dx0 + 120.0f, dy0 + 2.0f);
+        const float after = xoverOf (Param::ID::xover2) + xoverOf (Param::ID::xover3);
+        std::cout << "  xover2+3: " << before << " -> " << after << std::endl;
+        check (std::abs (after - before) > 50.0f,
+               "T30.3 明确横拖频点 → 段频率平移（分割线跟随）",
+               juce::String (before) + " -> " + juce::String (after));
+    }
+
+    // ③b 主轴锁定：纯纵拖（带 2px 手抖）不应触发横拖
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        float dx0 = 0.0f, dy0 = 0.0f;
+        dv.getFreqDotPos (1, dx0, dy0);
+        const float before = xoverOf (Param::ID::xover1) + xoverOf (Param::ID::xover2);
+        dv.mouseDownForTest (dx0, dy0);
+        for (int i = 1; i <= 10; ++i)
+            dv.mouseDragForTest (dx0 + 2.0f, dy0 - 12.0f * i);      // 纵向为主 + 2px 抖动
+        dv.mouseUpForTest (dx0 + 2.0f, dy0 - 120.0f);
+        const float after = xoverOf (Param::ID::xover1) + xoverOf (Param::ID::xover2);
+        std::cout << "  纯纵拖 xover1+2: " << before << " -> " << after << std::endl;
+        check (std::abs (after - before) < 1.0f,
+               "T30.4 纯纵拖不误触发横拖（主轴锁定）",
+               juce::String (before) + " -> " + juce::String (after));
+    }
+
+    // ④ 频点 hover + 滚轮 → 段宽伸缩（只动 crossover）
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        float dx0 = 0.0f, dy0 = 0.0f;
+        dv.getFreqDotPos (1, dx0, dy0);
+        const float lo0 = xoverOf (Param::ID::xover1);
+        const float hi0 = xoverOf (Param::ID::xover2);
+        const float w0 = std::log2 (hi0 / lo0);
+
+        // 滚轮上 ×5 → 扩宽
+        for (int i = 0; i < 5; ++i)
+            dv.mouseWheelForTest (dx0, dy0, 0.0f, 1.0f);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        const float lo1 = xoverOf (Param::ID::xover1);
+        const float hi1 = xoverOf (Param::ID::xover2);
+        const float w1 = std::log2 (hi1 / lo1);
+        std::cout << "  band1 宽(八度): " << w0 << " -> " << w1 << std::endl;
+        check (w1 > w0 + 0.1f, "T30.5 频点上滚轮 → 该段扩宽", juce::String (w0) + " -> " + juce::String (w1));
+
+        // 滚轮下 ×8 → 收窄
+        for (int i = 0; i < 8; ++i)
+            dv.mouseWheelForTest (dx0, dy0, 0.0f, -1.0f);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        const float lo2 = xoverOf (Param::ID::xover1);
+        const float hi2 = xoverOf (Param::ID::xover2);
+        const float w2 = std::log2 (hi2 / lo2);
+        std::cout << "  band1 宽(八度): " << w1 << " -> " << w2 << std::endl;
+        check (w2 < w1 - 0.1f, "T30.6 频点下滚轮 → 该段收窄", juce::String (w1) + " -> " + juce::String (w2));
+    }
+}
+
+// ------------------------------------------------------------
+// T31 刻度不被遮挡回归（2026-09-23 用户反馈 #2/#3/#4）
+//   绘图区上下各留 4px 内边距；右轴左移避开音量表；所有刻度文字
+//   y 范围 clamp 在绘图区内 → 首尾/最右刻度不被顶栏/global bar/音量表盖住。
+// ------------------------------------------------------------
+static void testScaleNotOccluded()
+{
+    std::cout << "\n--- T31 刻度不被遮挡回归 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T31.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+    // 用绘制参数验证（不靠像素猜颜色）：所有刻度文字 y 必须在 [plotTop, plotBottom−字高] 内
+    const float top = dv.testPlotTop();
+    const float bottom = dv.testPlotBottom();
+    std::cout << "  绘图区: y " << top << " .. " << bottom << std::endl;
+    check (top == 30.0f && bottom == 588.0f, "T31.0 绘图区完全贴合状态栏/global bar 边界",
+           juce::String (top) + " .. " + juce::String (bottom));
+
+    // ① 频谱轴首行(0dB)/末行(−100dB)文字 y 不越界
+    {
+        const float y0 = dv.testScaleTextY (0.0f, false);
+        const float y100 = dv.testScaleTextY (-100.0f, false);
+        std::cout << "  频谱轴 0dB 文字 y=" << y0 << "  -100dB 文字 y=" << y100 << std::endl;
+        check (y0 >= 30.0f && y100 <= 588.0f - 12.0f,
+               "T31.1 频谱轴首尾刻度在顶栏/global bar 之间", "");
+        // 且 0dB 文字不进入顶栏（y ≥ 30）
+        check (y0 >= 30.0f, "T31.1b 首行刻度不被顶栏盖住", juce::String (y0));
+    }
+
+    // ② 增益轴（±R）首尾也不越界
+    {
+        const float rTop = dv.testScaleTextY (dv.getCurveRangeForTest(), true);
+        const float rBot = dv.testScaleTextY (-dv.getCurveRangeForTest(), true);
+        std::cout << "  增益轴 +R 文字 y=" << rTop << "  -R 文字 y=" << rBot << std::endl;
+        check (rTop >= 30.0f && rBot <= 588.0f - 12.0f,
+               "T31.2 增益轴首尾刻度不被盖住", "");
+    }
+
+    // ③ 右轴刻度框右缘 ≤ 880（音量表左界 886 之前）
+    {
+        // drawScales 里右轴框 = x 824..876
+        const bool ok = (824.0f + 52.0f) <= 886.0f;
+        check (ok, "T31.3 右刻度框不进入 IN/OUT 音量表区域", "");
+    }
+
+    // ④ 20k 标签 clamp 后不超窗口右缘（freqToX(20000)=907，框 −20 → 887..927 → clamp 到 879..919）
+    {
+        const float rawX = 906.9f - 20.0f;
+        const float clampedX = juce::jmin (rawX, 920.0f - 40.0f - 1.0f);
+        std::cout << "  20k 标签 x: " << rawX << " -> clamp " << clampedX << std::endl;
+        check (clampedX >= 0.0f && clampedX + 40.0f <= 920.0f,
+               "T31.4 20k 标签在窗口内", juce::String (clampedX));
+    }
+}
+
+// ------------------------------------------------------------
+// T32 band0/band3 双向伸缩 + 刻度步长回归（2026-09-23 用户反馈 #1/#2）
+// ------------------------------------------------------------
+static void testBandShrinkAndScaleSteps()
+{
+    std::cout << "\n--- T32 band0/3 双向伸缩 + 刻度步长 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T32.0 处理器实例可访问", "");
+
+    const auto xo = [&] (const juce::String& id)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == id)
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                        return rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+        return -1.0f;
+    };
+
+    // ① band0：左缘锁 20Hz → 横拖应能双向（左缩右扩）
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+
+        float dx0 = 0.0f, dy0 = 0.0f;
+        dv.getFreqDotPos (0, dx0, dy0);
+        const float before = xo (Param::ID::xover1);
+
+        // 左拖（缩小）
+        dv.mouseDownForTest (dx0, dy0);
+        for (int i = 1; i <= 8; ++i) dv.mouseDragForTest (dx0 - 15.0f * i, dy0);
+        dv.mouseUpForTest (dx0 - 120.0f, dy0);
+        const float afterShrink = xo (Param::ID::xover1);
+        std::cout << "  band0 左拖: x1 " << before << " -> " << afterShrink << std::endl;
+        check (afterShrink < before - 5.0f, "T32.1 band0 左拖可收缩分区（不再单向）",
+               juce::String (before) + " -> " + juce::String (afterShrink));
+
+        // 右拖（扩宽）
+        float dx1 = 0.0f, dy1 = 0.0f;
+        dv.getFreqDotPos (0, dx1, dy1);
+        dv.mouseDownForTest (dx1, dy1);
+        for (int i = 1; i <= 8; ++i) dv.mouseDragForTest (dx1 + 15.0f * i, dy1);
+        dv.mouseUpForTest (dx1 + 120.0f, dy1);
+        const float afterGrow = xo (Param::ID::xover1);
+        std::cout << "  band0 右拖: x1 " << afterShrink << " -> " << afterGrow << std::endl;
+        check (afterGrow > afterShrink + 5.0f, "T32.2 band0 右拖可扩宽分区",
+               juce::String (afterShrink) + " -> " + juce::String (afterGrow));
+    }
+
+    // ② band3：右缘锁 20kHz → 同样双向
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 60; ++t) dv.tickForTest();
+        float dx0 = 0.0f, dy0 = 0.0f;
+        dv.getFreqDotPos (3, dx0, dy0);
+        const float before = xo (Param::ID::xover3);
+
+        dv.mouseDownForTest (dx0, dy0);
+        for (int i = 1; i <= 8; ++i) dv.mouseDragForTest (dx0 + 15.0f * i, dy0);
+        dv.mouseUpForTest (dx0 + 120.0f, dy0);
+        const float afterShrink = xo (Param::ID::xover3);
+        std::cout << "  band3 右拖: x3 " << before << " -> " << afterShrink << std::endl;
+        check (afterShrink > before + 5.0f, "T32.3 band3 右拖可收缩分区（不再单向）",
+               juce::String (before) + " -> " + juce::String (afterShrink));
+
+        float dx1 = 0.0f, dy1 = 0.0f;
+        dv.getFreqDotPos (3, dx1, dy1);
+        dv.mouseDownForTest (dx1, dy1);
+        for (int i = 1; i <= 8; ++i) dv.mouseDragForTest (dx1 - 15.0f * i, dy1);
+        dv.mouseUpForTest (dx1 - 120.0f, dy1);
+        const float afterGrow = xo (Param::ID::xover3);
+        std::cout << "  band3 左拖: x3 " << afterShrink << " -> " << afterGrow << std::endl;
+        check (afterGrow < afterShrink - 5.0f, "T32.4 band3 左拖可扩宽分区",
+               juce::String (afterShrink) + " -> " + juce::String (afterGrow));
+    }
+
+    // ③ 刻度步长：±6 → 1dB；±30 → 10dB（用网格线数量间接验证）
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        dv.mouseDownForTest (freqToXforTest (1000.0f), 400.0f);   // 选中 HM
+        for (int t = 0; t < 80; ++t) dv.tickForTest();
+        const float r6 = dv.getCurveRangeForTest();
+        std::cout << "  ±6 量程 = " << r6 << std::endl;
+        check (r6 <= 6.5f, "T32.5 默认量程 ±6（对应 1dB 步进）", juce::String (r6));
+    }
+}
+
+// ------------------------------------------------------------
+// T33 正 Range = 向上压缩回归（2026-09-23 用户批准实现）
+//   Range > 0：阈值以下抬升（增益为正），幅度 ≤ Range
+//   Range < 0：阈值以上衰减（原行为不变）
+// ------------------------------------------------------------
+static void testUpwardCompression()
+{
+    std::cout << "\n--- T33 正 Range = 向上压缩 ---\n";
+
+    // 直接测 BandCompressor 静态传输曲线
+    BandCompressor comp;
+    comp.prepare (48000.0);
+
+    const float thr = -20.0f;
+    const float ratio = 4.0f;
+
+    // ① 负 Range（向下压缩）：高于阈值 → 负增益；低于阈值 → 0
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, -12.0f, false, false);
+    {
+        const float gOver  = comp.getStaticGainDb (-10.0f);   // 高于阈值 10dB → −7.5dB
+        const float gUnder = comp.getStaticGainDb (-40.0f);   // 低于阈值 → 0
+        std::cout << "  向下压缩: over=" << gOver << "dB under=" << gUnder << "dB" << std::endl;
+        check (gOver < -6.0f && gOver > -8.0f, "T33.1 负 Range：高于阈值衰减 ~−7.5dB",
+               juce::String (gOver));
+        check (std::abs (gUnder) < 0.01f, "T33.2 负 Range：低于阈值不动作", juce::String (gUnder));
+    }
+
+    // ② 正 Range（向上压缩）：低于阈值 → 正增益；高于阈值 → 0
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, 6.0f, false, false);
+    {
+        const float gUnder = comp.getStaticGainDb (-40.0f);   // 低于阈值 20dB → 抬 +7.5，但 range=6 → 钳到 +6
+        const float gOver  = comp.getStaticGainDb (-10.0f);   // 高于阈值 → 0
+        const float gJust  = comp.getStaticGainDb (-23.0f);   // 低于 3dB → 抬 3×0.75=2.25
+        std::cout << "  向上压缩: under=" << gUnder << "dB over=" << gOver
+                  << "dB just=" << gJust << "dB" << std::endl;
+        check (gUnder > 5.5f && gUnder <= 6.01f, "T33.3 正 Range：低于阈值抬升且 ≤ Range",
+               juce::String (gUnder));
+        check (std::abs (gOver) < 0.01f, "T33.4 正 Range：高于阈值不动作", juce::String (gOver));
+        check (gJust > 2.0f && gJust < 2.5f, "T33.5 正 Range：小幅低于阈值 → 小幅抬升",
+               juce::String (gJust));
+    }
+
+    // ③ 正 Range 幅度上限：range=20 时低于阈值 40dB → 抬 15dB（ratio 4 → 40×0.75=30 → 钳 20）
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, 20.0f, false, false);
+    {
+        const float g = comp.getStaticGainDb (-60.0f);
+        std::cout << "  range=20: " << g << "dB" << std::endl;
+        check (g > 19.5f && g <= 20.01f, "T33.6 正 Range 幅度上限 = Range 值", juce::String (g));
+    }
+
+    // ④ 软拐点下向上压缩仍连续（u 从 0 → w/2 平滑过渡；阈值中心处为半程增益，
+    //    与向下分支镜像对称——标准 soft-knee 行为）
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, 12.0f, true, false);
+    {
+        const float g0 = comp.getStaticGainDb (thr);              // 恰在阈值 → 半程（w/8 效应）
+        const float g1 = comp.getStaticGainDb (thr - 1.0f);       // 低 1dB
+        const float g6 = comp.getStaticGainDb (thr - 6.0f);       // 低 6dB（超膝区）
+        std::cout << "  软拐点: g0=" << g0 << " g1=" << g1 << " g6=" << g6 << std::endl;
+        check (g0 > 0.0f && g1 > g0 && g6 > g1, "T33.7 软拐点向上压缩平滑递增",
+               juce::String (g0) + "/" + juce::String (g1) + "/" + juce::String (g6));
+    }
 }
 
 int main()
@@ -2848,6 +3420,13 @@ int main()
     testFreqDotAndGlobalBypass();    // T24 频点拖动 / 全局 BYPASS / 分区跟随
     testThreeLayerCurve();          // T25 三层曲线模型
     testRangeLiveUpdate();          // T26 Range 参数实时刷新
+    testDisplayRangeAndDrag();      // T27 Display Range 档位 / 拖动不卡
+    testAllBandsRange();            // T28 四段 Range 全覆盖
+    testNoFlicker();                // T29 绘制层不闪烁
+    testRoundFixes();               // T30 本轮 4 项修复回归
+    testScaleNotOccluded();         // T31 刻度不被遮挡
+    testBandShrinkAndScaleSteps();  // T32 双向伸缩 + 刻度步长
+    testUpwardCompression();        // T33 正 Range = 向上压缩
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
