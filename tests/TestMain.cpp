@@ -3457,6 +3457,96 @@ static void testKnobControl()
     }
 }
 
+// ------------------------------------------------------------
+// T35 Phase 5.2 LINKED CONTROL 抽屉回归
+//   梯形按钮开合 / Δ 偏移语义（四段同参数线性偏移）/ Mix 绝对值 / 点空白收起
+// ------------------------------------------------------------
+static void testLinkedDrawer()
+{
+    std::cout << "\n--- T35 Phase 5.2 LINKED 抽屉 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T35.0 处理器实例可访问", "");
+
+    const auto phys = [&] (const juce::String& id)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == id)
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                        return rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+        return -999.0f;
+    };
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 梯形按钮中心（与 drawDrawer 布局一致：宽 456 居中、底部贴 global bar）
+    const float btnX = (920.0f - 456.0f) * 0.5f + 228.0f;      // 中心
+    const float btnY = 620.0f - 32.0f - 29.0f + 15.0f;         // 中心
+
+    // ① 点梯形按钮 → 打开
+    check (! dv.isLinkedOpenForTest(), "T35.1 初始为收起", "");
+    dv.mouseDownForTest (btnX, btnY);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();              // 等动画完成
+    check (dv.isLinkedOpenForTest(), "T35.2 点梯形按钮 → 抽屉打开", "");
+
+    // ② Threshold 偏移旋钮（k=0）：拖到 +3dB → 四段阈值同 +3
+    {
+        const float base0 = phys (Param::bandThreshold (0));
+        const float base3 = phys (Param::bandThreshold (3));
+        // 抽屉面板：宽 5×92=460 居中；单元 92；第一单元中心 ≈ 面板 x + 46
+        const float panelX = (920.0f - 5.0f * 92.0f) * 0.5f;
+        const float thX = panelX + 46.0f;
+        const float panelTop = 620.0f - 32.0f - 29.0f - 108.0f - 4.0f;
+        const float knobCenterY = panelTop + 8.0f + 52.0f * 0.5f + 1.0f;
+
+        // 直接把旋钮值设为 +3（经 Knob 的拖拽钩子等效）：调 knob 的 onValueChange 已接线，
+        // 这里通过 DisplayView 暴露的 applyLinkedOffset 测试钩子验证参数联动
+        dv.applyLinkedOffsetForTest (0, 3.0);
+        std::cout << "  Threshold: band0 " << base0 << " -> " << phys (Param::bandThreshold (0))
+                  << " | band3 " << base3 << " -> " << phys (Param::bandThreshold (3)) << std::endl;
+        check (std::abs (phys (Param::bandThreshold (0)) - (base0 + 3.0f)) < 0.15f,
+               "T35.3 Threshold 偏移 +3dB → band0 阈值同增", juce::String (phys (Param::bandThreshold (0))));
+        check (std::abs (phys (Param::bandThreshold (3)) - (base3 + 3.0f)) < 0.15f,
+               "T35.4 Threshold 偏移 +3dB → band3 阈值同增（四段联动）",
+               juce::String (phys (Param::bandThreshold (3))));
+    }
+
+    // ③ Makeup 偏移（k=3）：+6dB → 四段 Makeup 同增
+    {
+        const float base1 = phys (Param::bandMakeup (1));
+        dv.applyLinkedOffsetForTest (3, 6.0);
+        std::cout << "  Makeup: band1 " << base1 << " -> " << phys (Param::bandMakeup (1)) << std::endl;
+        check (std::abs (phys (Param::bandMakeup (1)) - (base1 + 6.0f)) < 0.15f,
+               "T35.5 Makeup 偏移 +6dB → band1 同增", juce::String (phys (Param::bandMakeup (1))));
+    }
+
+    // ④ Mix 绝对值（k=4）：设为 40% → 四段 Mix 全为 40
+    {
+        dv.applyLinkedOffsetForTest (4, 40.0);
+        const float m0 = phys (Param::bandMix (0));
+        const float m2 = phys (Param::bandMix (2));
+        std::cout << "  Mix: band0=" << m0 << " band2=" << m2 << std::endl;
+        check (std::abs (m0 - 40.0f) < 0.5f && std::abs (m2 - 40.0f) < 0.5f,
+               "T35.6 Mix 绝对值语义（四段同为设定值）", juce::String (m0) + "/" + juce::String (m2));
+    }
+
+    // ⑤ 点空白（绘图区）→ 收起
+    dv.mouseDownForTest (400.0f, 400.0f);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (! dv.isLinkedOpenForTest(), "T35.7 点空白 → 抽屉收起", "");
+
+    // ⑥ 再点梯形按钮 → 重新打开（状态保持）
+    dv.mouseDownForTest (btnX, btnY);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (dv.isLinkedOpenForTest(), "T35.8 再次点击可重新打开", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -3500,6 +3590,7 @@ int main()
     testBandShrinkAndScaleSteps();  // T32 双向伸缩 + 刻度步长
     testUpwardCompression();        // T33 正 Range = 向上压缩
     testKnobControl();              // T34 Phase 5.1 旋钮控件
+    testLinkedDrawer();             // T35 Phase 5.2 LINKED 抽屉
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "MBTheme.h"
+#include "Knob.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -86,6 +87,9 @@ public:
     {
         return rangeEdgePath_[(size_t) b].isEmpty() ? "" : "x";
     }
+    // 测试钩子（T35）
+    bool isLinkedOpenForTest() const { return linkedOpen_; }
+    void applyLinkedOffsetForTest (int k, double v) { applyLinkedOffset (k, v); }
     int  hitTestButtonForTest (float x, float y, int& band, int& btn) const
     {
         return hitTestButton (juce::Point<float> (x, y), band, btn);
@@ -250,6 +254,22 @@ private:
     bool hitTestGlobalBypass (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;
     void openDisplayRangeMenu();
+    // ---- Phase 5.2 LINKED CONTROL 抽屉（§5.2 / O2-A / O6-方案1） ----
+    static constexpr int kLinkedKnobs = 5;         // Threshold/Attack/Release/Makeup/Mix
+    static constexpr int kLinkedMixIndex = 4;      // Mix 例外：绝对值语义
+    bool  linkedOpen_ = false;
+    float linkedAnim_ = 0.0f;                      // 0=收起 1=展开（~250ms 滑入）
+    bool  popoverOpen_ = false;                    // O6 互斥（5.3 用）
+    std::array<std::unique_ptr<Knob>, kLinkedKnobs> linkedKnobs_;
+    std::array<double, kLinkedKnobs - 1> linkedOffset_ {};   // 4 个偏移旋钮的当前 Δ
+    void ensureLinkedKnobs();
+    void layoutLinkedKnobs();
+    void applyLinkedOffset (int k, double newValue);
+    float getParamPhysical (const juce::String& id) const;
+    juce::Rectangle<float> drawerPanelRect() const;
+    bool hitTestDrawerButton (juce::Point<float> p) const;
+    void toggleLinkedDrawer (bool open);
+    void drawLinkedDrawer (juce::Graphics& g);
     juce::Rectangle<float> displayRangeBtn_;
 
     // ---- Phase 4.3：仿 EQ 动态曲线 ----
