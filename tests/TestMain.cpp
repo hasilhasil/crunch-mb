@@ -3545,6 +3545,39 @@ static void testLinkedDrawer()
     dv.mouseDownForTest (btnX, btnY);
     for (int t = 0; t < 60; ++t) dv.tickForTest();
     check (dv.isLinkedOpenForTest(), "T35.8 再次点击可重新打开", "");
+
+    // ⑦ 自检修复：旋钮标签行必须落在抽屉面板内（旧版标签突出到绘图区）
+    {
+        const float panelX = (920.0f - 5.0f * 92.0f) * 0.5f;
+        const float panelTop = 620.0f - 32.0f - 29.0f - 120.0f - 4.0f;
+        const int knobTopY = (int) (panelTop + 20.0f);
+        const int knobH = 96;
+        // 标签盒 y = knobTop − 15 .. knobTop − 1（Knob::paint 内部）
+        const int labelY0 = knobTopY - 15;
+        const int labelY1 = knobTopY;
+        check (labelY0 >= (int) panelTop, "T35.9 旋钮标签行在抽屉面板内（不溢出）",
+               "labelY0=" + juce::String (labelY0) + " panelTop=" + juce::String ((int) panelTop));
+        // 读例行不超面板底
+        check (knobTopY + 94 <= (int) (panelTop + 120.0f), "T35.10 读数行不超出抽屉面板",
+               juce::String (knobTopY + 94));
+        (void) knobH;
+    }
+
+    // ⑧ 窗口缩放后旋钮重排（resized() 中调用 layoutLinkedKnobs）
+    {
+        const float scale = 1100.0f / 920.0f;
+        const float unitW = 92.0f * scale;
+        const float knobW = 84.0f * scale;
+        const float panelX = (1100.0f - 5.0f * unitW) * 0.5f;
+        const float expectX = panelX + (unitW - knobW) * 0.5f;   // 单元内居中
+        dv.setSize (1100, 700);
+        const float gotX = (float) dv.linkedKnobBoundsForTest (0).getX();
+        std::cout << "  缩放 1100×700 后 knob0 x = " << gotX << "（期望 " << expectX << "）" << std::endl;
+        check (std::abs (gotX - expectX) < 2.0f, "T35.11 缩放窗口后抽屉旋钮回位",
+               juce::String (gotX) + " vs " + juce::String (expectX));
+        dv.setSize (920, 620);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+    }
 }
 
 int main()

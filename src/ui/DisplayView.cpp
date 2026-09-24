@@ -1753,7 +1753,7 @@ juce::Rectangle<float> DisplayView::drawerPanelRect() const
     // 面板：宽 5×92，居中；贴在梯形按钮上方（留 4px 间隙）
     const float W = (float) getWidth();
     const float pw = sx (5.0f * 92.0f);
-    const float ph = sy (108.0f);
+    const float ph = sy (120.0f);                     // 20(标签) + 96(旋钮) + 4(余量)
     const float px = (W - pw) * 0.5f;
     const float buttonTop = (float) getHeight() - sy (kGlobalBarH) - sy (29.0f);
     return juce::Rectangle<float> (px, buttonTop - ph - sy (4.0f), pw, ph);
@@ -1805,6 +1805,9 @@ void DisplayView::ensureLinkedKnobs()
         kb->setDecimals (cfgs[k].dec);
         kb->setKnobDiameter (52.0f);
         kb->setShowLabel (true);
+        kb->setLinkedMark (true);                       // §5.2：⊞ 联动标识
+        if (k != kLinkedMixIndex)
+            kb->setValuePrefix (juce::String::fromUTF8 ("\xCE\x94 "));   // §5.2：偏移读数带 Δ
         const int kk = k;
         kb->onValueChange = [this, kk] (double v) { applyLinkedOffset (kk, v); };
         addAndMakeVisible (kb);
@@ -1820,8 +1823,10 @@ void DisplayView::layoutLinkedKnobs()
     for (int k = 0; k < kLinkedKnobs; ++k)
     {
         if (linkedKnobs_[(size_t) k] == nullptr) continue;
+        // 自检修复：旋钮顶部留 20px 给标签行（Knob 的标签画在旋钮上方 15px），
+        // 否则标签会突出到面板外、贴到绘图区上
         const float x = panel.getX() + unitW * (float) k + (unitW - sx (84.0f)) * 0.5f;
-        const float y = panel.getY() + sy (8.0f) + (1.0f - a) * panel.getHeight();
+        const float y = panel.getY() + sy (20.0f) + (1.0f - a) * panel.getHeight();
         linkedKnobs_[(size_t) k]->setBounds ((int) x, (int) y, (int) sx (84.0f), (int) sy (96.0f));
         linkedKnobs_[(size_t) k]->setVisible (linkedOpen_ || linkedAnim_ > 0.001f);
     }
@@ -1869,13 +1874,6 @@ void DisplayView::drawLinkedDrawer (juce::Graphics& g)
     g.fillRoundedRectangle (panel, sx (10.0f));
     g.setColour (pal_.accent.withAlpha (0.55f * a));
     g.drawRoundedRectangle (panel, sx (10.0f), 1.0f);
-
-    // 顶部小标题（当前模式提示）
-    g.setColour (pal_.dim.withAlpha (0.9f * a));
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.0f));
-    g.drawText ("LINKED CONTROL  " + juce::String (linkedOpen_ ? "(ON)" : ""),
-                panel.withTrimmedBottom (panel.getHeight() - sy (10.0f)),
-                juce::Justification::centredTop);
 }
 
 // ---------------- 入口 ----------------
@@ -1906,4 +1904,8 @@ void DisplayView::resized()
     // D3：尺寸变化 → 曲线与频谱几何全部失效（坐标基于实际像素，必须重建）
     curvePathsValid_ = false;
     spectrumPathsValid_ = false;
+
+    // Phase 5.2：抽屉旋钮跟着重排（否则缩放窗口后旋钮跑位）
+    if (linkedOpen_ || linkedAnim_ > 0.001f)
+        layoutLinkedKnobs();
 }

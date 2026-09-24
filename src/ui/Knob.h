@@ -26,6 +26,9 @@ public:
     void setKnobDiameter (float px)            { knobDiameter_ = px; repaint(); }
     void setShowLabel (bool s)                 { showLabel_ = s; repaint(); }
     void setBipolar (bool b)                   { bipolar_ = b; repaint(); }   // 中点起弧（LINKED 偏移用）
+    void setValuePrefix (juce::String p)       { valuePrefix_ = std::move (p); repaint(); }
+    void setLinkedMark (bool b)                { linkedMark_ = b; repaint(); }   // §5.2 ⊞ 联动标识
+    void setPalette (MBTheme::Palette p)       { pal_ = p; repaint(); }
 
     // ---- 值 ----
     void setValue (double v, bool sendNotification = true);
@@ -97,11 +100,12 @@ private:
     float  knobDiameter_ = 48.0f;
     bool   showLabel_ = true;
     bool   bipolar_ = false;
+    bool   linkedMark_ = false;                    // §5.2：⊞ 联动标识
     bool   dragging_ = false;
     bool   shiftFine_ = false;
     float  slowAccum_ = 0.0f;                  // 慢拖累积（速度比例）
 
-    juce::String label_, suffix_;
+    juce::String label_, suffix_, valuePrefix_;
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
 
     // 内嵌编辑（自绘）

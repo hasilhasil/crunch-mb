@@ -90,6 +90,11 @@ public:
     // 测试钩子（T35）
     bool isLinkedOpenForTest() const { return linkedOpen_; }
     void applyLinkedOffsetForTest (int k, double v) { applyLinkedOffset (k, v); }
+    juce::Rectangle<int> linkedKnobBoundsForTest (int k) const
+    {
+        return linkedKnobs_[(size_t) k] != nullptr ? linkedKnobs_[(size_t) k]->getBounds()
+                                                   : juce::Rectangle<int>();
+    }
     int  hitTestButtonForTest (float x, float y, int& band, int& btn) const
     {
         return hitTestButton (juce::Point<float> (x, y), band, btn);

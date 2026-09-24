@@ -155,15 +155,27 @@ void Knob::paint (juce::Graphics& g)
     {
         g.setFont (MBTheme::font (MBTheme::semiBold(), juce::jmin (10.5f, d * 0.22f)));
         g.setColour (pal_.dim);
-        g.drawText (label_, juce::Rectangle<float> (0.0f, kb.getY() - juce::jmin (15.0f, d * 0.32f), w, 14.0f),
-                    juce::Justification::centredTop);
+        auto labelBox = juce::Rectangle<float> (0.0f, kb.getY() - juce::jmin (15.0f, d * 0.32f), w, 14.0f);
+        g.drawText (label_, labelBox, juce::Justification::centredTop);
+
+        // §5.2：⊞ 联动标识（标签右侧小方块+加号，表示作用于四段）
+        if (linkedMark_)
+        {
+            const float bw = juce::jmin (8.0f, d * 0.17f);
+            const float bx = labelBox.getRight() - bw - 2.0f;
+            const float by = labelBox.getY() + 3.0f;
+            g.setColour (pal_.accent.withAlpha (0.85f));
+            g.drawRoundedRectangle (bx, by, bw, bw, 2.0f, 1.0f);
+            g.fillRect (bx + bw * 0.2f, by + bw * 0.45f, bw * 0.6f, juce::jmax (1.0f, bw * 0.1f));
+            g.fillRect (bx + bw * 0.45f, by + bw * 0.2f, juce::jmax (1.0f, bw * 0.1f), bw * 0.6f);
+        }
     }
 
-    // ---- 弧（轨道 + 值）----
+    // ---- 弧（轨道 + 值）----§5.2：拖动中"联动脉冲"——弧加亮加粗
     const float a0 = valueToAngle (min_);
     const float a1 = valueToAngle (max_);
     const float av = valueToAngle (value_);
-    const float thick = juce::jmax (2.0f, d * 0.10f);
+    const float thick = juce::jmax (2.0f, d * 0.10f) * (dragging_ ? 1.35f : 1.0f);
 
     juce::Path track;
     track.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f, a0, a1, true);
@@ -175,7 +187,7 @@ void Knob::paint (juce::Graphics& g)
     const float from = bipolar_ ? valueToAngle (default_) : a0;
     val.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f,
                        juce::jmin (from, av), juce::jmax (from, av), true);
-    g.setColour (pal_.accent);
+    g.setColour (dragging_ ? pal_.accent.brighter (0.30f) : pal_.accent);
     g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
 
@@ -195,8 +207,8 @@ void Knob::paint (juce::Graphics& g)
                             : juce::Colours::black.withAlpha (0.80f));
     g.drawLine (px1, py1, px2, py2, juce::jmax (1.5f, d * 0.07f));
 
-    // ---- 数值读数（旋钮下方）----
-    juce::String txt = juce::String (value_, decimals_);
+    // ---- 数值读数（旋钮下方）----§5.2：偏移旋钮带 "Δ " 前缀
+    juce::String txt = valuePrefix_ + juce::String (value_, decimals_);
     if (suffix_.isNotEmpty()) txt << " " << suffix_;
     g.setFont (MBTheme::font (MBTheme::regular(), juce::jmin (11.0f, d * 0.24f)));
     g.setColour (editing_ ? pal_.accent : pal_.text);
