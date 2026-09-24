@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Crunch MB — UI 稿 v6（全出血频谱 / 抽屉式 LINKED / 电平表重排 / Popover 高透明）</title>
+<style>
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Regular.ttf');   font-weight:400; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Medium.ttf');    font-weight:500; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-SemiBold.ttf');  font-weight:600; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Bold.ttf');      font-weight:700; }
+
+body.theme-blue  { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --surfaceA:rgba(34,38,43,.84); --popA:rgba(34,38,43,.62);
+                   --track:#2a2e33; --knob:#f2efe8; --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b;
+                   --gridz:#3c4249; --meterbg:#16181b; --infill:#6a7076; --outlevel:#e8eaed;
+                   --accent:#2f9dff; --shadow:rgba(0,0,0,.55); --light:0; --halo:rgba(0,0,0,.65); }
+body.theme-red   { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --surfaceA:rgba(34,38,43,.84); --popA:rgba(34,38,43,.62);
+                   --track:#2a2e33; --knob:#f2efe8; --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b;
+                   --gridz:#3c4249; --meterbg:#16181b; --infill:#6a7076; --outlevel:#e8eaed;
+                   --accent:#e05b5b; --shadow:rgba(0,0,0,.55); --light:0; --halo:rgba(0,0,0,.65); }
+body.theme-cream { --bg:#f6f0e7; --panel:#efe8db; --surface:#fffdf8; --surfaceA:rgba(255,253,248,.86); --popA:rgba(255,253,248,.68);
+                   --track:#ded4c4; --knob:#ffffff; --text:#463f38; --dim:#8d8375; --grid:#e7dfcf;
+                   --gridz:#c8bdac; --meterbg:#f2ebdf; --infill:#b5aa98; --outlevel:#703c2b;
+                   --accent:#e07856; --shadow:rgba(80,60,40,.30); --light:1; --halo:rgba(255,255,255,.7); }
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Poppins','Segoe UI',sans-serif; background:#0a0c0e; color:#ccc; padding:24px 30px 60px; }
+h1 { font-size:19px; font-weight:700; color:#fff; }
+.sub { font-size:12px; color:#8a9; margin:5px 0 14px; line-height:1.7; }
+.themesw { margin:0 0 18px; display:flex; gap:8px; align-items:center; }
+.themesw span { font-size:12px; color:#8a9; margin-right:6px; }
+.tbtn { font-family:inherit; font-size:12px; font-weight:600; padding:6px 18px; border-radius:14px;
+        border:none; cursor:pointer; background:#2a2e33; color:#d8d8d8; }
+.tbtn.on { color:#fff8f8; }
+.tbtn[data-theme=blue].on  { background:#2f9dff; }
+.tbtn[data-theme=red].on   { background:#e05b5b; }
+.tbtn[data-theme=cream].on { background:#e07856; }
+
+.win { position:relative; width:920px; height:620px; background:var(--bg); color:var(--text);
+       border:1px solid #333; border-radius:10px; overflow:hidden; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+
+#scope { position:absolute; left:0; top:0; z-index:0; }
+
+/* 顶栏 / 全局条：玻璃条（频谱透出） */
+.topstrip { height:30px; background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+            display:flex; align-items:center; position:absolute; left:0; top:0; width:100%; z-index:5; }
+.bdot { width:8px; height:8px; border-radius:50%; background:var(--accent); margin:0 8px 0 10px; }
+.bname { font-size:13.5px; font-weight:600; color:var(--accent); }
+.modeinfo { font-size:11px; font-weight:500; color:var(--dim); margin-left:26px; }
+.tbtn-ui { position:absolute; font-family:inherit; border:none; cursor:pointer;
+           font-size:10px; font-weight:600; letter-spacing:.4px; border-radius:14px; }
+#curveBtn { right:38px; top:3px; width:86px; height:24px; background:var(--track); color:var(--dim); }
+#gearBtn  { right:6px;  top:3px; width:24px; height:24px; background:var(--track); color:var(--text);
+            border-radius:12px; font-size:13px; }
+
+.globalbar { height:32px; background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+             border-top:1px solid var(--gridz); display:flex; align-items:center; padding:0 56px 0 14px; gap:24px;
+             font-family:inherit; position:absolute; left:0; bottom:0; width:100%; z-index:5; }
+.gitem { font-size:11.5px; color:var(--text); cursor:pointer; white-space:nowrap; }
+.gitem i { font-style:normal; color:var(--dim); font-size:10.5px; margin-right:5px; }
+.gitem em { font-style:normal; color:var(--dim); font-size:8.5px; margin-left:5px; }
+.gitem:hover { color:var(--accent); }
+.gval { font-size:11.5px; color:var(--text); cursor:ew-resize; white-space:nowrap; }
+.gval i { font-style:normal; color:var(--dim); font-size:10.5px; margin-right:5px; }
+.gsep { width:1px; height:14px; background:var(--gridz); }
+.grow { margin-left:auto; }
+.pill { font-family:inherit; font-size:10px; font-weight:600; border:none; cursor:pointer;
+        letter-spacing:.5px; border-radius:11px; background:var(--track); color:var(--dim); padding:5px 14px; }
+.pill.on { background:var(--accent); color:#fff8f8; }
+
+/* 抽屉按钮（global 上方，家族风格融合） */
+.drawer { position:absolute; left:240px; top:542px; width:440px; height:26px; z-index:6;
+          background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+          border:1px solid var(--gridz); border-radius:13px;
+          display:flex; align-items:center; justify-content:center; gap:9px; cursor:pointer;
+          font-family:inherit; color:var(--text); box-shadow:0 6px 18px var(--shadow); transition:.22s; }
+.drawer:hover { border-color:var(--accent); color:var(--accent); box-shadow:0 8px 22px var(--shadow); }
+.drawer.open { border-color:var(--accent); background:linear-gradient(0deg, var(--surfaceA), var(--surfaceA)); }
+.drawer.open .dl-name { color:var(--accent); }
+.dl-name { font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--accent); }
+.dl-sub  { font-size:9px; color:var(--dim); }
+.dl-arrow{ font-size:9px; color:var(--dim); transition:.22s; }
+.drawer.open .dl-arrow { transform:rotate(180deg); color:var(--accent); }
+
+/* LINKED 弹出玻璃卡（v5 样式保留） */
+.linkedpop { position:absolute; left:80px; top:424px; width:760px; height:112px; z-index:8;
+             background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+             border:1px solid var(--gridz); border-radius:14px; box-shadow:0 14px 40px var(--shadow);
+             display:flex; align-items:center; padding:6px 14px; gap:10px;
+             opacity:0; transform:translateY(14px); pointer-events:none; transition:.25s ease; }
+.linkedpop.open { opacity:1; transform:none; pointer-events:auto; }
+.lk-side { width:128px; text-align:center; flex:none; }
+.lk-side .t1 { font-size:12px; font-weight:700; color:var(--accent); letter-spacing:.5px; line-height:1.25; }
+.lk-side .t2 { font-size:9px; color:var(--dim); margin-top:3px; }
+.lk-cell { flex:1; text-align:center; }
+.grip { width:14px; height:14px; border-radius:4px; background:var(--track); display:inline-flex;
+        align-items:center; justify-content:center; flex-wrap:wrap; gap:1.2px; padding:2.5px;
+        vertical-align:middle; margin-left:3px; }
+.grip i { width:3px; height:3px; border-radius:1px; background:var(--dim); display:block; }
+
+/* 频段 Popover：v1.5 高透明（alpha .62/.68 + blur 14） */
+.popover { position:absolute; width:472px; background:var(--popA);
+           backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+           border:1px solid var(--gridz); border-radius:14px;
+           box-shadow:0 14px 44px var(--shadow); z-index:9; padding:6px 14px 10px; }
+.pop-head { display:flex; align-items:center; height:26px; gap:8px; }
+.pop-pw { width:22px; height:22px; border-radius:50%; background:var(--track); color:var(--accent);
+          font-size:11px; border:none; cursor:pointer; }
+.pop-title { font-size:12.5px; font-weight:600; color:var(--accent); }
+.pop-range { font-size:9.5px; color:var(--dim); }
+.pop-ic { margin-left:auto; width:22px; height:22px; border-radius:6px; background:var(--track);
+          color:var(--text); border:none; cursor:pointer; font-size:10px; }
+.pop-knobrow { display:flex; justify-content:space-between; margin-top:4px; }
+.pop-sl { display:flex; align-items:center; gap:10px; margin-top:5px; }
+.cap  { font-size:10.5px; font-weight:600; color:var(--dim); }
+.sl { flex:1; height:5px; border-radius:3px; background:var(--track); position:relative; }
+.sl .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:3px; }
+.sl .kdot { position:absolute; top:50%; width:12px; height:12px; border-radius:50%;
+            background:var(--knob); transform:translate(-50%,-50%); box-shadow:0 1px 4px rgba(0,0,0,.4); }
+.slval { font-size:10.5px; color:var(--text); min-width:50px; text-align:right; }
+.seg { display:inline-flex; background:var(--track); border-radius:8px; padding:2px; gap:2px; }
+.seg button { border:none; background:transparent; color:var(--dim); font-family:inherit;
+              font-size:10px; font-weight:600; letter-spacing:.4px; padding:4px 14px;
+              border-radius:6px; cursor:pointer; }
+.seg button.on { background:var(--accent); color:#fff8f8; }
+.expert-tab { position:absolute; right:-1px; top:48px; width:20px; height:84px;
+              background:var(--track); border-radius:0 12px 12px 0; display:flex;
+              align-items:center; justify-content:center; cursor:pointer; }
+.expert-tab span { font-size:8.5px; font-weight:700; letter-spacing:1px; color:var(--dim);
+                   writing-mode:vertical-rl; transform:rotate(180deg); }
+
+.screen-title { font-size:14px; font-weight:600; color:#e8eaed; margin:26px 0 10px; }
+.screen-title small { color:#8a9; font-weight:400; margin-left:10px; font-size:11px; }
+.preview { background:var(--bg); border:1px solid #333; border-radius:10px; padding:14px; width:940px; }
+</style>
+</head>
+<body class="theme-blue">
+
+<h1>Crunch MB — UI 稿 <span style="color:#e07856">v6</span> <span style="font-size:13px; color:#8a9;">（六点反馈修订版）</span></h1>
+<div class="sub">
+  <b style="color:#9c8;">①</b> 频谱<b>全出血铺满整个界面</b>（920×620 全高全宽，顶栏/全局条改玻璃条透出频谱）　
+  <b style="color:#9c8;">②</b> 电平表右缘留 <b>6px 边缘</b>（背景=频谱，频谱延至窗口右缘）　
+  <b style="color:#9c8;">③</b> 电平表文字重排：顶部 IN/OUT <b>9px SemiBold+描边</b>（完整显示不遮挡）、底部读数 <b>11.5px SemiBold</b> 醒目（紧凑整数 dB，避免瘦柱互叠）<br>
+  <b style="color:#9c8;">④</b> LINKED 改<b>抽屉式</b>：全局条上方长方形抽屉按钮（家族风格玻璃+描边），点开弹出 v5 样式半透明 LINKED 菜单——<b>点按钮实时开合</b>（下方另有开启态预览）　
+  <b style="color:#9c8;">⑤</b> EQ 曲线纵向拖动 → 见页底 <b>O5 待拍板</b>　
+  <b style="color:#9c8;">⑥</b> 频段 Popover 背景<b>透明度更高</b>（alpha 62%/68% + blur 14px，频谱透出更明显）。
+  <br>演示态：HM 选中（Popover 高透明开）+ LM hover + 分割线 3（6.0k）拖动中（频率读数渐显）+ 抽屉关闭。
+</div>
+<div class="themesw"><span>主题：</span>
+  <button class="tbtn on" data-theme="blue">Blue</button>
+  <button class="tbtn" data-theme="red">Red</button>
+  <button class="tbtn" data-theme="cream">Cream</button>
+</div>
+
+<div class="win" id="win">
+  <svg id="scope" width="920" height="620"></svg>
+
+  <div class="topstrip">
+    <div class="bdot"></div><div class="bname">HIGH MID</div>
+    <div class="modeinfo">Natural Phase · 24 dB/oct · LA Off</div>
+    <button class="tbtn-ui" id="curveBtn">CURVE</button>
+    <button class="tbtn-ui" id="gearBtn">⚙</button>
+  </div>
+
+  <!-- 频段 Popover（⑥ 高透明） -->
+  <div class="popover" id="popover" style="left:60px; top:296px;">
+    <div class="pop-head">
+      <button class="pop-pw">⚡</button>
+      <span class="pop-title">HIGH MID</span>
+      <span class="pop-range">· 1000–6000 Hz</span>
+      <button class="pop-ic">▼</button>
+      <button class="pop-ic" style="margin-left:5px;">✕</button>
+    </div>
+    <div class="pop-knobrow" id="popKnobs"></div>
+    <div class="pop-sl">
+      <span class="cap" style="width:56px;">RATIO</span>
+      <span class="sl"><span class="fill" style="width:38%;"></span><span class="kdot" style="left:38%;"></span></span>
+      <span class="slval">4.00 : 1</span>
+    </div>
+    <div class="pop-sl" style="margin-top:7px;">
+      <span class="cap" style="width:56px;">KNEE</span>
+      <span class="seg"><button>HARD</button><button class="on">SOFT</button></span>
+      <span class="cap" style="margin-left:14px;">SIDECHAIN</span>
+      <span class="seg"><button class="on">INT</button><button>EXT</button></span>
+    </div>
+    <div class="expert-tab"><span>EXPERT</span></div>
+  </div>
+
+  <!-- LINKED 弹出卡（④ 抽屉内容，v5 样式保留） -->
+  <div class="linkedpop" id="linkedPop">
+    <div class="lk-side">
+      <div class="t1">LINKED<br>CONTROL</div>
+      <div class="t2">四段联动 · 线性偏移</div>
+    </div>
+    <div style="flex:1; display:flex; justify-content:space-between; padding:0 8px;" id="linkKnobs"></div>
+  </div>
+
+  <!-- 抽屉按钮（④） -->
+  <div class="drawer" id="drawer">
+    <span class="grip"><i></i><i></i><i></i><i></i></span>
+    <span class="dl-name">LINKED CONTROL</span>
+    <span class="dl-sub">四段联动 · 线性偏移</span>
+    <span class="dl-arrow">▾</span>
+  </div>
+
+  <!-- 全局菜单条（不变） -->
+  <div class="globalbar">
+    <span class="gitem"><i>Phase:</i>Natural Phase<em>▾</em></span>
+    <span class="gsep"></span>
+    <span class="gitem"><i>Slope:</i>24 dB/oct<em>▾</em></span>
+    <span class="gsep"></span>
+    <span class="gitem"><i>Quality:</i>Medium<em>▾</em></span>
+    <span class="gsep"></span>
+    <span class="gitem"><i>Lookahead:</i>Off<em>▾</em></span>
+    <span class="grow"></span>
+    <span class="gval"><i>IN</i>0.00 dB</span>
+    <span class="gsep"></span>
+    <span class="gval"><i>OUT</i>0.00 dB</span>
+    <span class="gsep"></span>
+    <button class="pill">BYPASS</button>
+  </div>
+</div>
+
+<div class="screen-title">抽屉开启态预览 <small>点窗口内抽屉按钮可实时开合（~250ms 滑入）</small></div>
+<div class="preview">
+  <div class="linkedpop open" style="position:relative; left:0; top:0; margin:0 auto; width:760px;">
+    <div class="lk-side">
+      <div class="t1">LINKED<br>CONTROL</div>
+      <div class="t2">四段联动 · 线性偏移</div>
+    </div>
+    <div style="flex:1; display:flex; justify-content:space-between; padding:0 8px;" id="linkKnobs2"></div>
+  </div>
+  <div class="drawer open" style="position:relative; left:0; top:0; margin:10px auto 0;">
+    <span class="grip"><i></i><i></i><i></i><i></i></span>
+    <span class="dl-name">LINKED CONTROL</span>
+    <span class="dl-sub">四段联动 · 线性偏移</span>
+    <span class="dl-arrow">▾</span>
+  </div>
+</div>
+
+<div class="sub" style="margin-top:14px; max-width:940px;">
+  <b style="color:#9c8;">O5 待拍板：</b>分区蓝色 EQ 曲线能否直接纵向拖动？——按锁定设计目前<b>不能</b>（曲线 = 8A 动态状态显示，非常静态 EQ 响应；O4 裁定无拖拽点）。
+  可支持方案 <b>A（推荐）</b>：分区内按住曲线纵向拖 = 该段 Makeup（Pro-MB 频段拖拽手感，曲线实时跟随）；B：维持旋钮入口。回复 A 或 B 即定。
+  <br><b style="color:#9c8;">⑥ 透明度校准：</b>Popover 现为 62% 不透明度（Cream 68%）——若想更透/更实，报数值即调。
+</div>
+
+<script>
+document.querySelectorAll('.tbtn').forEach(btn => btn.addEventListener('click', () => {
+  document.body.className = 'theme-' + btn.dataset.theme;
+  document.querySelectorAll('.tbtn').forEach(b => b.classList.toggle('on', b === btn));
+  drawAll();
+}));
+const C = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+
+/* 抽屉开合 */
+const drawer = document.getElementById('drawer'), linkedPop = document.getElementById('linkedPop');
+drawer.addEventListener('click', () => {
+  const open = drawer.classList.toggle('open');
+  linkedPop.classList.toggle('open', open);
+});
+
+/* ══ 全出血坐标 ══ */
+const TOP = 0, BOT = 588;                 // 频谱纵贯 0..588（全局条下沿之上）
+const METER_X = 882, METER_W = 32;        // 条带 882..914，右缘 6px 边缘（背景=频谱）
+const freqToX = f => Math.log(f/20)/Math.log(1000) * 920;
+const NX = [200, 1000, 6000].map(freqToX);
+const bandEdge = b => b < 3 ? NX[b] : 920;
+const specDbToY = db => 596 - ((db+100)/100) * 556;
+const gainToY  = g  => 596 - ((g+36)/48) * 556;
+const meterY   = db => 588 - Math.min(1, Math.max(0, (db+60)/60)) * 588;
+
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function specPts(off, rng, jit){
+  const pts = [];
+  for (let i = 0; i <= 320; i++){
+    const t = i/320, f = 20 * Math.pow(1000, t);
+    let db = -32 - 16*Math.log10(f/20) + (rng()-0.5)*jit;
+    if (f > 8000) db -= 7*Math.log10(f/8000);
+    pts.push([freqToX(f), specDbToY(db + off)]);
+  }
+  return pts;
+}
+const pathOf = (pts, close) => {
+  let d = 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
+  if (close) d += ` L${pts[pts.length-1][0].toFixed(1)} 596 L${pts[0][0].toFixed(1)} 596 Z`;
+  return d;
+};
+const BAND_GAIN = [0, 1.2, -4.5, -0.8];
+function gainAt(f){
+  const l2 = Math.log2(f); let g = BAND_GAIN[0];
+  for (let i = 0; i < 3; i++){
+    const t = 1/(1 + Math.exp(-(l2 - Math.log2([200,1000,6000][i]))/0.30*4));
+    g = g*(1-t) + BAND_GAIN[i+1]*t;
+  }
+  return g;
+}
+
+function knobSVG(size, frac){
+  const r = size*0.40, ringW = Math.max(3, r*0.17), ringR = r - ringW/2 - 1;
+  const capR = ringR - ringW/2 - 1.5, cx = size/2, cy = size/2;
+  const pol = d => [cx + ringR*Math.sin(d*Math.PI/180), cy - ringR*Math.cos(d*Math.PI/180)];
+  const arc = (a0,a1) => { const p0 = pol(a0), p1 = pol(a1);
+    return `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${ringR.toFixed(1)} ${ringR.toFixed(1)} 0 ${(a1-a0)>180?1:0} 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`; };
+  const a0 = -135, a1 = 135, av = a0 + 270*frac, pp = pol(av);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <path d="${arc(a0,a1)}" fill="none" stroke="${C('--track')}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <path d="${arc(a0,av)}" fill="none" stroke="${C('--accent')}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy+1.5}" r="${capR}" fill="rgba(0,0,0,0.18)"/>
+    <circle cx="${cx}" cy="${cy}" r="${capR}" fill="${C('--knob')}" stroke="rgba(0,0,0,0.06)"/>
+    <line x1="${cx}" y1="${cy}" x2="${(cx+(pp[0]-cx)*capR/ringR*0.9).toFixed(1)}" y2="${(cy+(pp[1]-cy)*capR/ringR*0.9).toFixed(1)}"
+          stroke="#463f38" stroke-width="${Math.max(2, capR*0.1).toFixed(1)}" stroke-linecap="round"/>
+  </svg>`;
+}
+
+function drawScope(){
+  const svg = document.getElementById('scope');
+  const acc = C('--accent'), panel = C('--panel'), track = C('--track'), dim = C('--dim'),
+        text = C('--text'), grid = C('--grid'), gridz = C('--gridz'), infill = C('--infill'),
+        meterbg = C('--meterbg'), outlevel = C('--outlevel'), halo = C('--halo');
+  let s = '';
+
+  /* 双刻度（0.8α，右刻度贴紧电平表） */
+  s += `<g opacity="0.8">`;
+  [+12, 0, -12, -24, -36].forEach(g =>
+    s += `<text x="28" y="${gainToY(g)+4}" fill="${acc}" font-size="10" text-anchor="end">${g>0?'+':''}${g}</text>`);
+  [0, -20, -40, -60, -80, -100].forEach(db =>
+    s += `<text x="878" y="${specDbToY(db)+4}" fill="${dim}" font-size="10" text-anchor="end">${db}</text>`);
+  s += `</g>`;
+
+  /* 网格（全宽） */
+  for (let db = 0; db >= -100; db -= 20)
+    s += `<line x1="0" y1="${specDbToY(db)}" x2="920" y2="${specDbToY(db)}" stroke="${db===0?gridz:grid}"/>`;
+  [50,100,500,2000,5000,10000].forEach(f =>
+    s += `<line x1="${freqToX(f).toFixed(1)}" y1="0" x2="${freqToX(f).toFixed(1)}" y2="588" stroke="${grid}"/>`);
+
+  /* 四分区底块（0..620 全高全出血） */
+  const edges = [0, NX[0], NX[1], NX[2], 920];
+  const names = ['LOW','LOW MID','HIGH MID','HIGH'];
+  for (let b = 0; b < 4; b++){
+    const sel = b === 2, w = edges[b+1]-edges[b];
+    s += `<rect x="${edges[b]+1}" y="0" width="${w-2}" height="620" fill="${acc}" opacity="${sel?0.10:0.05}"/>`;
+    if (sel) s += `<rect x="${edges[b]+1}" y="0" width="${w-2}" height="620" fill="none" stroke="${acc}" stroke-width="1.5" opacity="0.9"/>`;
+  }
+
+  /* 双层频谱 + 仿 EQ 曲线（全出血至右缘） */
+  const rng1 = mulberry32(7), rng2 = mulberry32(7);
+  const pre = specPts(0, rng1, 5), post = specPts(3, rng2, 5);
+  s += `<path d="${pathOf(pre,true)}"  fill="${infill}" opacity="0.22"/>`;
+  s += `<path d="${pathOf(pre,false)}" fill="none" stroke="${infill}" stroke-width="1" opacity="0.55"/>`;
+  s += `<path d="${pathOf(post,true)}" fill="${acc}" opacity="0.33"/>`;
+  s += `<path d="${pathOf(post,false)}" fill="none" stroke="#fff" stroke-width="2" opacity="0.95"/>`;
+
+  let eqd = '';
+  for (let i = 0; i <= 240; i++){
+    const t = i/240, f = 20*Math.pow(1000,t);
+    eqd += (i?' L':'M') + freqToX(f).toFixed(1) + ' ' + gainToY(gainAt(f)).toFixed(1);
+  }
+  s += `<line x1="0" y1="${gainToY(0).toFixed(1)}" x2="920" y2="${gainToY(0).toFixed(1)}" stroke="${gridz}" opacity="0.7"/>`;
+  s += `<path d="${eqd}" fill="none" stroke="${acc}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+
+  /* 分割线全高 + 手柄（y500）+ 拖动渐显读数（分割线 3 拖动中） */
+  ['200','1.0k','6.0k'].forEach((t, e) => {
+    const x = NX[e], dragging = (e === 2);
+    s += `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="588" stroke="${dragging?acc:gridz}" stroke-width="${dragging?2:1.5}" opacity="${dragging?0.8:1}"/>`;
+    s += `<rect x="${(x-6).toFixed(1)}" y="500" width="12" height="26" rx="4" fill="${dragging?acc:track}" stroke="${gridz}"/>`;
+    if (dragging){
+      s += `<rect x="${(x-24).toFixed(1)}" y="470" width="48" height="22" rx="6" fill="${acc}"/>`;
+      s += `<text x="${x.toFixed(1)}" y="485" fill="#fff8f8" font-size="11" font-weight="600" text-anchor="middle">${t}</text>`;
+    }
+  });
+
+  /* 每段 header（Makeup 旋钮 + 段名 + 状态点） */
+  for (let b = 0; b < 4; b++){
+    const cx = (edges[b] + edges[b+1]) / 2;
+    s += `<text x="${edges[b]+10}" y="44" fill="${acc}" font-size="11.5" font-weight="600" opacity="0.9">${names[b]}</text>`;
+    const frac = [0.5, 0.62, 0.42, 0.52][b];
+    s += `<g transform="translate(${cx-20},52)">${knobSVG(40, frac)}</g>`;
+    s += `<text x="${cx}" y="106" fill="${text}" font-size="10" text-anchor="middle">MAKEUP ${['+0.00','+3.20','−1.60','+0.80'][b]} dB</text>`;
+    const sx = bandEdge(b) - 28, lit = [(b===1?1:0),(b===3?1:0),0,0];
+    for (let j = 0; j < 4; j++)
+      s += `<circle cx="${sx.toFixed(1)}" cy="${42 + j*9}" r="3" fill="${lit[j]?acc:track}"/>`;
+  }
+
+  /* hover 按钮列（LOW MID） */
+  {
+    const x = NX[1] - 40, y0 = 118;
+    ['S','M','B','Δ'].forEach((t, j) => {
+      const y = y0 + j*30, on = j === 0;
+      s += `<rect x="${x.toFixed(1)}" y="${y}" width="24" height="24" rx="6" fill="${on?acc:track}" opacity="0.95"/>`;
+      s += `<text x="${x+12}" y="${y+16}" fill="${on?'#fff8f8':dim}" font-size="11.5" font-weight="600" text-anchor="middle">${t}</text>`;
+    });
+  }
+
+  /* 频率刻度（底沿） */
+  [[50,'50'],[100,'100'],[200,'200'],[500,'500'],[1000,'1k'],[2000,'2k'],[5000,'5k'],[10000,'10k']]
+    .forEach(([f,t]) => s += `<text x="${freqToX(f).toFixed(1)}" y="584" fill="${dim}" font-size="10.5" text-anchor="middle" opacity="0.8">${t}</text>`);
+
+  /* ── IN/OUT 电平表（② 右缘 6px 边缘 ③ 文字重排） ── */
+  {
+    const barW = 13, b1 = METER_X + 2, b2 = METER_X + 4 + barW;
+    s += `<defs><linearGradient id="outg" x1="0" y1="0" x2="0" y2="588" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="${acc}"/><stop offset="1" stop-color="${outlevel}"/></linearGradient></defs>`;
+    s += `<rect x="${METER_X}" y="0" width="${METER_W}" height="588" fill="${meterbg}"/>`;
+    [0,-20,-40,-60].forEach(db => {
+      const y = meterY(db).toFixed(1);
+      s += `<line x1="${METER_X}" y1="${y}" x2="${METER_X+METER_W}" y2="${y}" stroke="${grid}"/>`;
+    });
+    const yIn = meterY(-12), pIn = meterY(-8);
+    s += `<rect x="${b1}" y="${yIn.toFixed(1)}" width="${barW}" height="${(588-yIn).toFixed(1)}" fill="${infill}" opacity="0.35"/>`;
+    s += `<rect x="${b1}" y="${(pIn-2).toFixed(1)}" width="${barW}" height="2" fill="${C('--light')==='1'?infill:'#ffffff'}"/>`;
+    const yOut = meterY(-6), pOut = meterY(-3.5);
+    s += `<rect x="${b2}" y="${yOut.toFixed(1)}" width="${barW}" height="${(588-yOut).toFixed(1)}" fill="url(#outg)"/>`;
+    s += `<rect x="${b2}" y="${(pOut-2).toFixed(1)}" width="${barW}" height="2" fill="${C('--light')==='1'?infill:'#ffffff'}"/>`;
+    /* ③ 顶部标签 9px SemiBold + 描边（压任何填色都完整可读） */
+    const haloAttr = `paint-order="stroke" stroke="${halo}" stroke-width="2.5" stroke-linejoin="round"`;
+    s += `<text x="${b1+barW/2}" y="13" fill="${text}" font-size="9" font-weight="600" text-anchor="middle" ${haloAttr}>IN</text>`;
+    s += `<text x="${b2+barW/2}" y="13" fill="${text}" font-size="9" font-weight="600" text-anchor="middle" ${haloAttr}>OUT</text>`;
+    /* ③ 底部读数 11.5px SemiBold 醒目（紧凑整数 dB，不互叠） */
+    s += `<text x="${b1+barW/2}" y="581" fill="${text}" font-size="11.5" font-weight="600" text-anchor="middle" ${haloAttr}>−12</text>`;
+    s += `<text x="${b2+barW/2}" y="581" fill="${text}" font-size="11.5" font-weight="600" text-anchor="middle" ${haloAttr}>−6</text>`;
+  }
+
+  svg.innerHTML = s;
+}
+
+function drawPopKnobs(){
+  const K = [
+    ['THRESHOLD','−20.00 dB','−60…0',    0.667],
+    ['ATTACK',   '10 ms',    '0.1…200',  0.37 ],
+    ['RELEASE',  '100 ms',   '10…1000',  0.35 ],
+    ['MAKEUP',   '0.00 dB',  '−36…36',   0.5  ],
+    ['MIX',      '100 %',    '0…100',    1.0  ],
+  ];
+  document.getElementById('popKnobs').innerHTML = K.map(([n,v,r,f]) =>
+    `<div style="text-align:center; width:84px;">
+       <div class="cap">${n}</div>
+       <div style="margin:1px 0;">${knobSVG(48, f)}</div>
+       <div style="font-size:10.5px; color:var(--text);">${v}</div>
+       <div style="font-size:8px; color:var(--dim); opacity:.75;">${r}</div>
+     </div>`).join('');
+}
+
+function linkKnobsHTML(){
+  const L = [
+    ['Threshold','Δ +0.00 dB'],['Attack','Δ +0.0 ms'],['Release','Δ +0.0 ms'],
+    ['Makeup','Δ +0.00 dB'],['Mix','Δ +0 %'],
+  ];
+  return L.map(([n,v]) =>
+    `<div class="lk-cell">
+       <div class="cap">${n}<span class="grip"><i></i><i></i><i></i><i></i></span></div>
+       <div style="margin:1px 0;">${knobSVG(52, 0.5)}</div>
+       <div style="font-size:10.5px; color:var(--accent);">${v}</div>
+     </div>`).join('');
+}
+
+function drawAll(){
+  drawScope(); drawPopKnobs();
+  const html = linkKnobsHTML();
+  document.getElementById('linkKnobs').innerHTML = html;
+  document.getElementById('linkKnobs2').innerHTML = html;
+}
+drawAll();
+</script>
+</body>
+</html>

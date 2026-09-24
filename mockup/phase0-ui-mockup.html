@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Crunch MB — Phase 0 UI 视觉稿 v1</title>
+<style>
+/* ============ Poppins（引用兄弟项目字体；浏览器 file:// 若拦截 CORS 则回退系统无衬线 ============ */
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Regular.ttf');   font-weight:400; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Medium.ttf');    font-weight:500; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-SemiBold.ttf');  font-weight:600; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Bold.ttf');      font-weight:700; }
+
+/* ============ 三主题（CrunchPalette 精确色值） ============ */
+body.theme-blue  { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --track:#2a2e33; --knob:#f2efe8;
+                   --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b; --gridz:#3c4249; --meterbg:#16181b;
+                   --infill:#6a7076; --accent:#2f9dff; }
+body.theme-red   { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --track:#2a2e33; --knob:#f2efe8;
+                   --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b; --gridz:#3c4249; --meterbg:#16181b;
+                   --infill:#6a7076; --accent:#e05b5b; }
+body.theme-cream { --bg:#f6f0e7; --panel:#efe8db; --surface:#fffdf8; --track:#ded4c4; --knob:#ffffff;
+                   --text:#463f38; --dim:#8d8375; --grid:#e7dfcf; --gridz:#c8bdac; --meterbg:#f2ebdf;
+                   --infill:#b5aa98; --accent:#e07856; }
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Poppins','Segoe UI',sans-serif; background:#0a0c0e; color:#ccc; padding:28px 34px 80px; }
+h1 { font-size:20px; font-weight:700; color:#fff; }
+.sub { font-size:12.5px; color:#8a9; margin:6px 0 18px; line-height:1.7; }
+.themesw { margin:0 0 26px; display:flex; gap:8px; align-items:center; }
+.themesw span { font-size:12px; color:#8a9; margin-right:6px; }
+.tbtn { font-family:inherit; font-size:12px; font-weight:600; padding:6px 18px; border-radius:14px;
+        border:none; cursor:pointer; background:#2a2e33; color:#d8d8d8; }
+.tbtn.on { color:#fff8f8; }
+.tbtn[data-theme=blue].on  { background:#2f9dff; }
+.tbtn[data-theme=red].on   { background:#e05b5b; }
+.tbtn[data-theme=cream].on { background:#e07856; }
+.screen-title { font-size:15px; font-weight:600; color:#e8eaed; margin:34px 0 6px; }
+.screen-title small { color:#8a9; font-weight:400; margin-left:10px; font-size:11.5px; }
+.winframe { border:1px solid #333; border-radius:10px; overflow:hidden; display:inline-block;
+            box-shadow:0 10px 34px rgba(0,0,0,.45); }
+.note { font-size:11.5px; color:#7a8; margin:8px 0 0; line-height:1.8; }
+.note b { color:#9c8; }
+
+/* ================= 屏幕公共 ================= */
+.screen { background:var(--bg); color:var(--text); position:relative; }
+#screenA { width:920px; height:340px; }   /* 显示区完整态：920×340（620−280 面板） */
+#screenB { width:920px; height:280px; }   /* 控制面板完整态：920×280 */
+
+/* 顶栏 */
+.topstrip { height:30px; background:var(--panel); display:flex; align-items:center; position:relative; }
+.bdot { width:8px; height:8px; border-radius:50%; background:var(--accent); margin:0 8px 0 10px; }
+.bname { font-size:13.5px; font-weight:600; color:var(--accent); }
+.modeinfo { font-size:11px; font-weight:500; color:var(--dim); margin-left:26px; }
+.tbtn-ui { position:absolute; font-family:inherit; border:none; cursor:pointer;
+           font-size:10px; font-weight:600; letter-spacing:.4px; border-radius:14px; }
+#curveBtn { right:38px; top:3px; width:86px; height:24px; background:var(--track); color:var(--dim); }
+#gearBtn  { right:6px;  top:3px; width:24px; height:24px; background:var(--track); color:var(--text);
+            border-radius:12px; font-size:13px; }
+
+/* 面板控件通用 */
+.pill { font-family:inherit; font-size:12px; font-weight:600; border:none; cursor:pointer;
+        border-radius:14px; background:var(--track); color:var(--dim); }
+.pill.on { background:var(--accent); color:#fff8f8; }
+.combo { height:24px; border:1px solid var(--track); border-radius:8px; background:var(--surface);
+         display:flex; align-items:center; position:relative; padding:0 22px 0 9px;
+         font-size:12px; font-weight:400; color:var(--text); }
+.combo::after { content:''; position:absolute; right:8px; top:9px; border:4.5px solid transparent;
+                border-top-color:var(--accent); transform:translateY(2px); }
+.cap { font-size:11.5px; font-weight:600; color:var(--dim); margin-bottom:3px; }
+.sec  { font-size:14px; font-weight:700; color:var(--accent); letter-spacing:.6px; }
+.tab  { font-family:inherit; font-size:12px; font-weight:600; border:none; cursor:pointer;
+        border-radius:14px; background:var(--track); color:var(--dim); height:27px; }
+.tab.on { background:var(--accent); color:#fff8f8; }
+
+/* ⊞ 握柄 */
+.grip { width:18px; height:18px; border-radius:6px; background:var(--track); display:inline-flex;
+        align-items:center; justify-content:center; flex-wrap:wrap; gap:1.6px;
+        padding:3.5px; vertical-align:middle; cursor:ns-resize; }
+.grip i { width:4px; height:4px; border-radius:1px; background:var(--dim); display:block; }
+
+/* 标注徽标 */
+.badge { position:absolute; width:20px; height:20px; border-radius:50%; background:var(--accent);
+         color:#fff; font-size:11.5px; font-weight:700; display:flex; align-items:center;
+         justify-content:center; box-shadow:0 0 0 2px var(--bg); z-index:9; }
+.legend { margin:10px 0 0; font-size:11.5px; color:#bbc; line-height:2; max-width:930px; }
+.legend b { display:inline-block; width:22px; height:20px; border-radius:50%; background:var(--accent);
+            color:#fff; text-align:center; line-height:20px; font-size:11px; margin-right:8px;
+            vertical-align:middle; }
+
+/* 细节放大卡 */
+.details { display:flex; gap:16px; margin:14px 0 0; }
+.dcard { background:var(--panel); border:1px solid var(--track); border-radius:10px;
+         padding:14px 16px 10px; text-align:center; }
+.dcard .cap { margin-bottom:10px; }
+.dscale { transform:scale(2.4); transform-origin:center; margin:18px 0 26px; }
+
+/* 审查清单 */
+.checklist { background:#12151a; border:1px solid #2a2e33; border-radius:10px; padding:22px 28px;
+             margin:14px 0 0; max-width:940px; }
+.checklist h2 { font-size:15px; color:#fff; margin-bottom:12px; }
+.checklist ol { margin-left:18px; font-size:12.5px; color:#bcc; line-height:2.1; }
+.checklist input { margin-right:10px; accent-color:#2f9dff; }
+.gate { margin-top:16px; padding:12px 16px; border-left:3px solid #e07856; background:#181b21;
+        font-size:12.5px; color:#dcb; line-height:1.9; }
+</style>
+</head>
+<body class="theme-blue">
+
+<h1>Crunch MB — Phase 0 UI 视觉稿 <span style="color:#e07856">v1</span></h1>
+<div class="sub">
+  920×620 窗口（上 340px 显示区 / 下 280px 控制面板，按实际像素 1:1 渲染）。
+  参考基准：分区骨架 = Clarity Vx Pro 截图 · 曲线/分频交互 = Pro-MB / Future MB · 控件/字体/主题 = Crunch 家族。
+</div>
+
+<div class="themesw"><span>主题切换（三主题，对应插件 ⚙ 菜单）：</span>
+  <button class="tbtn on" data-theme="blue">Blue</button>
+  <button class="tbtn" data-theme="red">Red</button>
+  <button class="tbtn" data-theme="cream">Cream</button>
+</div>
+
+<!-- ===================== 屏幕 1：显示区完整态 ===================== -->
+<div class="screen-title">屏幕 1 · DisplayView 显示区完整态 <small>双层频谱 + 四分区（统一 accent）+ 仿 EQ 动态曲线 + 交互元素 + 电平表</small></div>
+<div class="winframe"><div class="screen" id="screenA">
+  <!-- 顶栏 -->
+  <div class="topstrip">
+    <div class="bdot"></div><div class="bname">HIGH MID</div>
+    <div class="modeinfo">Natural Phase · 24 dB/oct · LA Off</div>
+    <button class="tbtn-ui" id="curveBtn">CURVE</button>
+    <button class="tbtn-ui" id="gearBtn">⚙</button>
+  </div>
+  <!-- 主绘图区 SVG（含频谱/曲线/分割线/按钮/状态点/手柄/传输曲线 inset/频率输入演示） -->
+  <svg id="plot" width="920" height="286" style="position:absolute; left:0; top:30px;"></svg>
+  <!-- 频率刻度 -->
+  <svg id="freqscale" width="920" height="24" style="position:absolute; left:0; top:316px;"></svg>
+  <!-- 标注 -->
+  <div class="badge" style="left:150px; top:56px;">1</div>
+  <div class="badge" style="left:436px; top:212px;">2</div>
+  <div class="badge" style="left:304px; top:282px;">3</div>
+  <div class="badge" style="left:486px; top:36px;">4</div>
+  <div class="badge" style="left:670px; top:36px;">5</div>
+  <div class="badge" style="left:710px; top:276px;">6</div>
+  <div class="badge" style="left:284px; top:66px;">7</div>
+  <div class="badge" style="left:846px; top:44px;">8</div>
+  <div class="badge" style="left:52px;  top:204px;">9</div>
+</div></div>
+<div class="legend" id="legendA"></div>
+
+<!-- ===================== 屏幕 2：控制面板完整态 ===================== -->
+<div class="screen-title">屏幕 2 · BandControlPanel 控制面板完整态 <small>段 Tab + 主旋钮行（⊞ 握柄）+ SIDECHAIN EXT + 底条 + 全局选择器 + Bypass —— 无 S/M/BYP/Δ 镜像按钮</small></div>
+<div class="winframe"><div class="screen" id="screenB"></div></div>
+<div class="note">
+  <b>对照说明：</b>⊞ 握柄共 5 个（Threshold / Attack / Release / Makeup / Mix），Ratio / In / Out 无握柄——
+  按住握柄上下拖动 = 四段该参数<strong>线性恒定偏移</strong>（非比例缩放）。
+</div>
+
+<!-- ===================== 细节放大 ===================== -->
+<div class="screen-title">细节放大 <small>L4 对齐用：曲线粗细 / 按钮尺寸 / 握柄图标 / 抓取带几何</small></div>
+<div class="details" id="details"></div>
+
+<!-- ===================== Gate P0 审查清单 ===================== -->
+<div class="checklist">
+  <h2>Gate P0 · 逐项审查清单（14 项已锁定决策映射）</h2>
+  <ol id="checks"></ol>
+  <div class="gate">
+    <b>Gate P0 放行条件（PLAN.md §4）：</b><br>
+    ① 你逐屏确认以上视觉稿（勾选清单 / 提修改意见均可）；<br>
+    ② 请同时提供<b>你的 UI 视觉稿 / 参考截图</b>（PLAN L4 要求，哪怕粗糙手绘）——若与本稿冲突，<b>以你的图为准</b>；<br>
+    ③ 两项齐备后才进入 Phase 1（骨架 + 参数系统）编写代码。
+  </div>
+</div>
+
+<script>
+/* ==================== 主题切换 ==================== */
+document.querySelectorAll('.tbtn').forEach(btn => btn.addEventListener('click', () => {
+  document.body.className = 'theme-' + btn.dataset.theme;
+  document.querySelectorAll('.tbtn').forEach(b => b.classList.toggle('on', b === btn));
+  drawAll();
+}));
+
+const CS = () => getComputedStyle(document.body);
+const C  = n => CS().getPropertyValue(n).trim();
+
+/* ==================== 坐标（与 DESIGN §7.3 / 显示区规格一致） ==================== */
+const PLOT = { x: 36, y: 0, w: 824, h: 286 };   // 绘图区（顶栏之下 286px 高）
+const meterX = 860;                              // 电平表条带起点（60px）
+const freqToX = f => PLOT.x + Math.log(f / 20) / Math.log(1000) * PLOT.w;
+const specDbToY = db => PLOT.y + PLOT.h - (db + 100) / 100 * PLOT.h;
+const gainToY  = g  => PLOT.y + PLOT.h - (g + 36) / 48 * PLOT.h;
+const XOVER = [200, 1000, 6000];   // 默认交叉点
+const NX = XOVER.map(freqToX);
+
+/* ==================== 频谱数据（种子噪声，粉噪斜率） ==================== */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function specPoints(offset, rng, jitter){
+  const pts = [];
+  for (let i = 0; i <= 300; i++){
+    const t = i / 300, f = 20 * Math.pow(1000, t);
+    let db = -34 - 17 * Math.log10(f / 20) + (rng() - 0.5) * jitter;
+    if (f > 8000) db -= 6 * Math.log10(f / 8000);   // 高频滚降
+    pts.push([freqToX(f), specDbToY(db + offset)]);
+  }
+  return pts;
+}
+function toPath(pts, closeBottom){
+  let d = 'M ' + pts[0][0].toFixed(1) + ' ' + (closeBottom ? PLOT.y + PLOT.h : pts[0][1].toFixed(1));
+  if (!closeBottom) d = 'M ' + pts[0][0].toFixed(1) + ' ' + pts[0][1].toFixed(1);
+  for (const p of pts) d += ' L ' + p[0].toFixed(1) + ' ' + p[1].toFixed(1);
+  if (closeBottom) d += ' L ' + pts[pts.length-1][0].toFixed(1) + ' ' + (PLOT.y + PLOT.h) + ' Z';
+  return d;
+}
+
+/* ==================== 仿 EQ 动态曲线（独立增益刻度 +12…−36 dB） ==================== */
+/* 四段目标增益：L 0 / LM +1.2(Makeup) / HM −4.5(压缩凹陷) / H −0.8 —— 体现 8A 动态语义 */
+const BAND_GAIN = [0, 1.2, -4.5, -0.8];
+function gainAt(f){
+  const l2 = Math.log2(f), soft = 0.30;
+  let g = BAND_GAIN[0];
+  for (let i = 0; i < 3; i++){
+    const t = 1 / (1 + Math.exp(-(l2 - Math.log2(XOVER[i])) / soft * 4));
+    g = g * (1 - t) + BAND_GAIN[i + 1] * t;
+  }
+  return g;
+}
+
+/* ==================== 屏幕 1 绘制 ==================== */
+function drawPlot(){
+  const svg = document.getElementById('plot');
+  const acc = C('--accent'), panel = C('--panel'), track = C('--track'), dim = C('--dim'),
+        text = C('--text'), grid = C('--grid'), gridz = C('--gridz'), infill = C('--infill'),
+        meterbg = C('--meterbg'), surface = C('--surface');
+  let s = '';
+
+  // 网格（简化：水平 dB 线 + 垂直频率线）
+  for (let db = 0; db >= -100; db -= 20){
+    const y = specDbToY(db).toFixed(1);
+    s += `<line x1="${PLOT.x}" y1="${y}" x2="${PLOT.x+PLOT.w}" y2="${y}" stroke="${db===0?gridz:grid}" stroke-width="1"/>`;
+    s += `<text x="${PLOT.x-6}" y="${+y+4}" fill="${dim}" font-size="10.5" font-weight="400" text-anchor="end">${db}</text>`;
+  }
+  [[50,0],[100,0],[500,0],[2000,0],[5000,0],[10000,0]].forEach(([f]) => {
+    const x = freqToX(f);
+    s += `<line x1="${x.toFixed(1)}" y1="${PLOT.y}" x2="${x.toFixed(1)}" y2="${PLOT.y+PLOT.h}" stroke="${grid}" stroke-width="1"/>`;
+  });
+
+  // 四分区底块（统一 accent 低 alpha；选中段 HM 更深 + accent 描边）
+  const edges = [PLOT.x, NX[0], NX[1], NX[2], PLOT.x + PLOT.w];
+  const names = ['LOW', 'LOW MID', 'HIGH MID', 'HIGH'];
+  for (let b = 0; b < 4; b++){
+    const sel = (b === 2);   // 演示：HM 选中
+    const bw = edges[b+1] - edges[b];
+    s += `<rect x="${edges[b]+1}" y="${PLOT.y+1}" width="${bw-2}" height="${PLOT.h-2}" fill="${acc}" opacity="${sel?0.10:0.05}"/>`;
+    if (sel) s += `<rect x="${edges[b]+1}" y="${PLOT.y+1}" width="${bw-2}" height="${PLOT.h-2}" fill="none" stroke="${acc}" stroke-width="1.5" opacity="0.9"/>`;
+    s += `<text x="${edges[b]+8}" y="${PLOT.y+34}" fill="${acc}" font-size="12" font-weight="600" opacity="0.85">${names[b]}</text>`;
+  }
+
+  // 双层频谱（Pre 灰 + Post accent/白描边）
+  const rng1 = mulberry32(7), rng2 = mulberry32(7);
+  const pre  = specPoints(0, rng1, 5), post = specPoints(3, rng2, 5);
+  s += `<path d="${toPath(pre, true)}"  fill="${infill}" opacity="0.22"/>`;
+  s += `<path d="${toPath(pre, false)}" fill="none" stroke="${infill}" stroke-width="1" opacity="0.55"/>`;
+  s += `<path d="${toPath(post, true)}" fill="${acc}"  opacity="0.33"/>`;
+  s += `<path d="${toPath(post, false)}" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.95"/>`;
+
+  // 仿 EQ 动态总曲线（统一 accent，独立增益刻度）
+  let eqd = '';
+  for (let i = 0; i <= 240; i++){
+    const t = i / 240, f = 20 * Math.pow(1000, t);
+    const x = freqToX(f), y = gainToY(gainAt(f));
+    eqd += (i === 0 ? 'M ' : ' L ') + x.toFixed(1) + ' ' + y.toFixed(1);
+  }
+  s += `<line x1="${PLOT.x}" y1="${gainToY(0).toFixed(1)}" x2="${PLOT.x+PLOT.w}" y2="${gainToY(0).toFixed(1)}" stroke="${gridz}" stroke-width="1" opacity="0.7"/>`;
+  s += `<path d="${eqd}" fill="none" stroke="${acc}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+
+  // 全高分割线 + 抓取带演示（xover2 加亮 hover 态）+ 顶部频率读数
+  const ftxt = ['200', '1.0k', '6.0k'];
+  for (let e = 0; e < 3; e++){
+    const x = NX[e], hv = (e === 1);
+    s += `<line x1="${x.toFixed(1)}" y1="${PLOT.y}" x2="${x.toFixed(1)}" y2="${PLOT.y+PLOT.h}" stroke="${hv?acc:gridz}" stroke-width="${hv?2:1.5}" opacity="${hv?0.7:1}"/>`;
+    // 底部拖拽手柄 12×26
+    s += `<rect x="${(x-6).toFixed(1)}" y="${PLOT.y+PLOT.h-30}" width="12" height="26" rx="4" fill="${hv?acc:track}" stroke="${gridz}" stroke-width="1"/>`;
+    // 顶部频率读数
+    s += `<text x="${x.toFixed(1)}" y="${PLOT.y+14}" fill="${text}" font-size="11" font-weight="600" text-anchor="middle">${ftxt[e]}</text>`;
+  }
+
+  // 状态点（每段右边界列，常驻；演示：LM 的 S 点亮、H 的 M 点亮）
+  for (let b = 0; b < 4; b++){
+    const edgeX = (b < 3) ? NX[b] : PLOT.x + PLOT.w;
+    const cx = edgeX - 28;
+    const on = { 0: 0, 1: 1, 2: 0, 3: 2 }[b] !== 0 ? [1,0,0,0] : [0,0,0,0];
+    const lit = [ (b===1?1:0), (b===3?1:0), 0, 0 ];  // 演示点亮位
+    for (let j = 0; j < 4; j++){
+      const y = PLOT.y + 6 + j * 9;
+      s += `<circle cx="${cx.toFixed(1)}" cy="${y}" r="3" fill="${lit[j]?acc:track}"/>`;
+    }
+  }
+
+  // hover 按钮列（HM 段右边界线 xover3 左侧 [线−40, 线−16]；24px，间距 6px；演示 S 激活）
+  {
+    const x = NX[2] - 40, y0 = PLOT.y + 28, lbl = ['S','M','B','Δ'], act = [1,0,0,0];
+    for (let j = 0; j < 4; j++){
+      const y = y0 + j * 30;
+      s += `<rect x="${x.toFixed(1)}" y="${y}" width="24" height="24" rx="6" fill="${act[j]?acc:track}" opacity="0.95"/>`;
+      s += `<text x="${x+12}" y="${y+16}" fill="${act[j]?'#fff8f8':dim}" font-size="11.5" font-weight="600" text-anchor="middle">${lbl[j]}</text>`;
+    }
+    s += `<text x="${x+12}" y="${y0-6}" fill="${dim}" font-size="9" font-weight="500" text-anchor="middle" opacity="0.8">HOVER</text>`;
+  }
+
+  // 双击频率输入演示（xover1 顶部）
+  {
+    const x = NX[0] - 36, y = PLOT.y + 22;
+    s += `<rect x="${x}" y="${y}" width="72" height="22" rx="4" fill="#22262b" stroke="#ffffff" stroke-width="1"/>`;
+    s += `<text x="${x+36}" y="${y+15}" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">200</text>`;
+  }
+
+  // 传输曲线 inset（CURVE 开启态演示；家族白/金配色）
+  {
+    const bx = PLOT.x + 8, by = PLOT.y + PLOT.h - 128, bw = 158, bh = 120;
+    s += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="8" fill="${surface}" opacity="0.92" stroke="${gridz}"/>`;
+    const ix = bx + 14, iy = by + 18, iw = bw - 28, ih = bh - 32;
+    const mx = d => ix + (d + 60) / 66 * iw, my = d => iy + ih - (d + 60) / 66 * ih;
+    s += `<line x1="${mx(-60)}" y1="${my(-60)}" x2="${mx(6)}" y2="${my(6)}" stroke="${grid}" stroke-width="1"/>`;
+    let td = `M ${mx(-60)} ${my(-60)}`;
+    for (let d = -60; d <= 6; d += 2){
+      const o = d > -20 ? -(d + 20) / 4 : 0;   // −20 以上开始弯曲（threshold/ratio 示意）
+      td += ` L ${mx(d).toFixed(1)} ${my(d + o).toFixed(1)}`;
+    }
+    s += `<path d="${td}" fill="none" stroke="${C('--knob')}" stroke-width="1.6" opacity="0.7"/>`;
+    s += `<path d="M ${mx(-60)} ${my(-60)} L ${mx(-38)} ${my(-41.5)}" fill="none" stroke="#e0a95a" stroke-width="2.4"/>`;
+    s += `<text x="${bx+8}" y="${by+12}" fill="${dim}" font-size="9.5" font-weight="600">TRANSFER · HIGH MID</text>`;
+  }
+
+  // 电平表（IN/OUT，60px 条带 + 峰值保持线）
+  {
+    const mx0 = meterX + 4, my0 = PLOT.y + 22, mw = 52, mh = PLOT.h - 32;
+    s += `<rect x="${mx0}" y="${my0-18}" width="${mw}" height="${mh+22}" rx="6" fill="${meterbg}"/>`;
+    const lvl2y = lv => my0 + mh - (lv + 60) / 66 * mh;   // +6…−60 dB
+    const inB  = { x: mx0 + 8,  w: mw * 0.34 }, outB = { x: mx0 + mw - mw * 0.34 - 8, w: mw * 0.34 };
+    s += `<rect x="${inB.x}" y="${my0}" width="${inB.w}" height="${mh}" rx="3" fill="${infill}" opacity="0.35"/>`;
+    s += `<rect x="${inB.x}" y="${lvl2y(-12).toFixed(1)}" width="${inB.w}" height="${(my0+mh-lvl2y(-12)).toFixed(1)}" rx="3" fill="${infill}" opacity="0.75"/>`;
+    s += `<line x1="${inB.x}" y1="${lvl2y(-8).toFixed(1)}" x2="${inB.x+inB.w}" y2="${lvl2y(-8).toFixed(1)}" stroke="#fff" stroke-width="2" opacity="0.9"/>`;
+    s += `<rect x="${outB.x}" y="${my0}" width="${outB.w}" height="${mh}" rx="3" fill="${infill}" opacity="0.15"/>`;
+    s += `<rect x="${outB.x}" y="${lvl2y(-6).toFixed(1)}" width="${outB.w}" height="${(my0+mh-lvl2y(-6)).toFixed(1)}" rx="3" fill="${acc}" opacity="0.8"/>`;
+    s += `<line x1="${outB.x}" y1="${lvl2y(-3).toFixed(1)}" x2="${outB.x+outB.w}" y2="${lvl2y(-3).toFixed(1)}" stroke="#fff" stroke-width="2" opacity="0.9"/>`;
+    s += `<text x="${inB.x + inB.w/2}" y="${my0-5}" fill="${dim}" font-size="10" font-weight="600" text-anchor="middle">IN</text>`;
+    s += `<text x="${outB.x + outB.w/2}" y="${my0-5}" fill="${dim}" font-size="10" font-weight="600" text-anchor="middle">OUT</text>`;
+  }
+
+  svg.innerHTML = s;
+
+  // 频率刻度
+  const fs = document.getElementById('freqscale');
+  let f2 = '';
+  [[50,'50'],[100,'100'],[200,'200'],[500,'500'],[1000,'1k'],[2000,'2k'],[5000,'5k'],[10000,'10k']]
+    .forEach(([f, t]) => {
+      f2 += `<text x="${freqToX(f).toFixed(1)}" y="16" fill="${dim}" font-size="10.5" text-anchor="middle">${t}</text>`;
+    });
+  fs.innerHTML = f2;
+}
+
+/* ==================== 屏幕 2 绘制 ==================== */
+function knobSVG(size, frac, valTxt){
+  const r = size * 0.40, ringW = Math.max(3, r * 0.17), ringR = r - ringW / 2 - 1;
+  const capR = ringR - ringW / 2 - 1.5, cx = size / 2, cy = size / 2;
+  const pol = deg => [cx + ringR * Math.sin(deg * Math.PI / 180), cy - ringR * Math.cos(deg * Math.PI / 180)];
+  const arc = (a0, a1) => { const p0 = pol(a0), p1 = pol(a1), la = (a1 - a0) > 180 ? 1 : 0;
+    return `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${ringR.toFixed(1)} ${ringR.toFixed(1)} 0 ${la} 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`; };
+  const acc = C('--accent'), track = C('--track'), knob = C('--knob');
+  const a0 = -135, a1 = 135, av = a0 + (a1 - a0) * frac;
+  const pp = pol(av);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <path d="${arc(a0, a1)}" fill="none" stroke="${track}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <path d="${arc(a0, av)}" fill="none" stroke="${acc}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy+1.5}" r="${capR}" fill="rgba(0,0,0,0.18)"/>
+    <circle cx="${cx}" cy="${cy}" r="${capR}" fill="${knob}" stroke="rgba(0,0,0,0.06)"/>
+    <line x1="${cx}" y1="${cy}" x2="${(cx + (pp[0]-cx)*capR/ringR*0.9).toFixed(1)}" y2="${(cy + (pp[1]-cy)*capR/ringR*0.9).toFixed(1)}"
+          stroke="#463f38" stroke-width="${Math.max(2, capR*0.1).toFixed(1)}" stroke-linecap="round"/>
+  </svg>`;
+}
+const gripHTML = () => `<span class="grip"><i></i><i></i><i></i><i></i></span>`;
+
+function knobCell(label, val, frac, grip, ksize){
+  return `<div style="text-align:center; flex:1;">
+    <div class="cap" style="display:flex; align-items:center; justify-content:center; gap:5px;">
+      ${label}${grip ? gripHTML() : ''}
+    </div>
+    ${knobSVG(ksize, frac, val)}
+    <div style="font-size:12.5px; color:var(--text); margin-top:1px;">${val}</div>
+  </div>`;
+}
+function comboCell(cap, val, w){
+  return `<div style="flex:${w||1};"><div class="cap">${cap}</div><div class="combo">${val}</div></div>`;
+}
+
+function drawPanel(){
+  const p = document.getElementById('screenB');
+  p.innerHTML = `
+  <div style="display:flex; height:100%; padding:8px 12px; gap:10px;">
+    <!-- 左列 -->
+    <div style="width:270px; display:flex; flex-direction:column;">
+      <div class="sec" style="height:15px;">BANDS</div>
+      <div style="display:flex; gap:4px; margin-top:5px;">
+        <button class="tab" style="flex:1;">Low</button><button class="tab" style="flex:1;">Low Mid</button>
+        <button class="tab on" style="flex:1;">High Mid</button><button class="tab" style="flex:1;">High</button>
+      </div>
+      <div class="sec" style="margin-top:8px; height:15px;">GLOBAL</div>
+      <div style="margin-top:5px;">${comboCell('PHASE MODE','Natural Phase')}</div>
+      <div style="display:flex; gap:8px; margin-top:7px;">${comboCell('SLOPE','24 dB/oct')}${comboCell('LINEAR QUALITY','Medium')}</div>
+      <div style="margin-top:7px;">${comboCell('LOOKAHEAD','Off')}</div>
+      <div style="display:flex; gap:8px; margin-top:7px;">${comboCell('KNEE','Soft')}${comboCell('DETECTOR','Peak')}</div>
+    </div>
+    <!-- 右区 -->
+    <div style="flex:1; display:flex; flex-direction:column;">
+      <!-- 主旋钮行 -->
+      <div style="display:flex; height:118px; align-items:stretch;">
+        ${knobCell('Threshold','−20.00 dB',0.667,true,96)}
+        ${knobCell('Ratio','4.00 : 1',0.158,false,96)}
+        ${knobCell('Attack','10 ms',0.37,true,96)}
+        ${knobCell('Release','100 ms',0.35,true,96)}
+        <div style="width:88px; display:flex; align-items:center; justify-content:center;">
+          <button class="pill" style="width:82px; height:30px;">Bypass</button>
+        </div>
+      </div>
+      <!-- SIDECHAIN 行（原 S/M/BYP/Δ 镜像行已删，仅 EXT） -->
+      <div style="display:flex; align-items:center; height:46px; gap:12px;">
+        <div class="cap" style="margin:0 2px 0 4px;">SIDECHAIN</div>
+        <button class="pill" style="width:64px; height:26px;">EXT</button>
+        <div style="font-size:10.5px; color:var(--dim); opacity:0.7; margin-left:6px;">（S / M / B / Δ 唯一入口在显示区 hover 按钮列）</div>
+      </div>
+      <!-- 底条 -->
+      <div style="display:flex; flex:1; align-items:stretch;">
+        ${knobCell('In','0.00 dB',0.5,false,80)}
+        ${knobCell('Makeup','0.00 dB',0.5,true,80)}
+        ${knobCell('Mix','100 %',1.0,true,80)}
+        ${knobCell('Out','0.00 dB',0.5,false,80)}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ==================== 细节放大 ==================== */
+function drawDetails(){
+  const box = (title, inner) => `<div class="dcard"><div class="cap">${title}</div><div class="dscale">${inner}</div></div>`;
+  const btns = ['S','M','B','Δ'].map((t, j) =>
+    `<span style="display:inline-flex; width:24px; height:24px; border-radius:6px; margin:0 3px;
+      background:${j===0?'var(--accent)':'var(--track)'}; color:${j===0?'#fff8f8':'var(--dim)'};
+      align-items:center; justify-content:center; font-size:11.5px; font-weight:600;">${t}</span>`).join('');
+  document.getElementById('details').innerHTML =
+    box('按钮列 24×24px（间距 6px；S 激活态 = accent 填充）', `<div>${btns}</div>`) +
+    box('⊞ 统一控制握柄 18×18px（按住拖动 = 四段线性偏移）', `<span class="grip"><i></i><i></i><i></i><i></i></span>`) +
+    box('抓取带几何：按钮列 [线−40,线−16] / 抓取带 [线±4] / 区域=其余',
+        `<svg width="230" height="60"><rect x="10" y="6" width="24" height="48" fill="var(--track)" rx="4"/>
+         <rect x="150" y="6" width="8" height="48" fill="var(--accent)" opacity="0.55"/>
+         <rect x="146" y="30" width="16" height="24" fill="var(--track)" rx="3"/>
+         <line x1="154" y1="2" x2="154" y2="58" stroke="var(--accent)" stroke-width="2"/>
+         <text x="22" y="58" fill="#9a9" font-size="8" text-anchor="middle">按钮列</text>
+         <text x="154" y="26" fill="#9a9" font-size="8" text-anchor="middle">抓取带+手柄</text></svg>`) +
+    box('状态点 6px（激活亮 accent，常驻）',
+        `<span style="display:inline-flex; flex-direction:column; gap:5px;">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent)"></span>
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--track)"></span>
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--track)"></span>
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--accent)"></span>
+        </span>`);
+}
+
+/* ==================== 审查清单 ==================== */
+const CHECKS = [
+  'D1  三相位模式：面板 PHASE MODE 下拉（Natural / Minimal / Linear），顶栏信息行显示当前模式',
+  'D2  四固定分区：LOW / LOW MID / HIGH MID / HIGH，全高分割线（Clarity Vx 骨架）',
+  'D3  最小带宽 1 八度：交叉点拖拽钳制（交互项，编码期断言验证）',
+  'D4  统一控制五握柄 ⊞：Threshold / Attack / Release / Makeup / Mix——线性恒定偏移',
+  'D5  斜率 12/24/36/48 dB/oct：SLOPE 下拉',
+  'D6  Lookahead 三档 Off / 1 ms / 3 ms：LOOKAHEAD 下拉',
+  'D7  每段 Makeup + 总 Out Gain，无 Auto Gain',
+  'D8  显示区 S / M / B / Δ 四按钮（24px，hover 展开）+ 6px 状态点常驻',
+  'D9  Bypass = Mix 记忆宏（显示区 B 按钮；面板无镜像按钮）',
+  'D10 侧链：面板 SIDECHAIN EXT 唯一按钮（显示区无 EXT）',
+  'D11 每段独立平行 Mix + Mix 统一握柄（底条右侧一、三号握柄）',
+  'D12 双层频谱（Pre 灰 / Post accent）；无滚动历史、无 GR 曲线、无 GR 读数',
+  'D13 仿 EQ 动态总曲线：统一 accent、独立增益刻度（+12…−36），压缩时频段凹陷（HM 示意 −4.5dB）',
+  'D14 手势分区三带零重叠 / 双击输频率 / 280px 面板 / 统一 accent 色（无四色）/ 三主题一致',
+];
+document.getElementById('checks').innerHTML =
+  CHECKS.map(c => `<li><input type="checkbox">${c}</li>`).join('');
+
+document.getElementById('legendA').innerHTML = `
+  <b>1</b>双层频谱（Pre 灰层 / Post accent 层 + 白描边）　
+  <b>2</b>仿 EQ 动态总曲线（统一 accent；HM 段 −4.5dB 压缩凹陷 + LM 段 Makeup 小凸起）　
+  <b>3</b>全高分割线 + 底部拖拽手柄（12×26px）<br>
+  <b>4</b>状态点常驻（6px×4；演示：LM 的 S 亮、H 的 M 亮）　
+  <b>5</b>hover 按钮列 S/M/B/Δ（24px，[线−40,线−16]；演示 HM 段 hover，S 激活）　
+  <b>6</b>抓取带 hover 态（accent 加粗）+ 手柄高亮<br>
+  <b>7</b>双击抓取带 = 精确频率输入框　
+  <b>8</b>IN/OUT 电平表（60px 条带 + 白色峰值保持线）　
+  <b>9</b>传输曲线 inset（CURVE 开启时；白静态 + 金动态层）`;
+
+/* ==================== 初始化 ==================== */
+function drawAll(){ drawPlot(); drawPanel(); drawDetails(); }
+drawAll();
+</script>
+</body>
+</html>

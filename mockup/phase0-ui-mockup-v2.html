@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Crunch MB — UI 稿（O1-A / O2-A / O3-B / O4-无）</title>
+<style>
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Regular.ttf');   font-weight:400; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Medium.ttf');    font-weight:500; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-SemiBold.ttf');  font-weight:600; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Bold.ttf');      font-weight:700; }
+
+body.theme-blue  { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --track:#2a2e33; --knob:#f2efe8;
+                   --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b; --gridz:#3c4249; --meterbg:#16181b;
+                   --infill:#6a7076; --accent:#2f9dff; --shadow:rgba(0,0,0,.55); }
+body.theme-red   { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --track:#2a2e33; --knob:#f2efe8;
+                   --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b; --gridz:#3c4249; --meterbg:#16181b;
+                   --infill:#6a7076; --accent:#e05b5b; --shadow:rgba(0,0,0,.55); }
+body.theme-cream { --bg:#f6f0e7; --panel:#efe8db; --surface:#fffdf8; --track:#ded4c4; --knob:#ffffff;
+                   --text:#463f38; --dim:#8d8375; --grid:#e7dfcf; --gridz:#c8bdac; --meterbg:#f2ebdf;
+                   --infill:#b5aa98; --accent:#e07856; --shadow:rgba(80,60,40,.30); }
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Poppins','Segoe UI',sans-serif; background:#0a0c0e; color:#ccc; padding:26px 32px 70px; }
+h1 { font-size:19px; font-weight:700; color:#fff; }
+.sub { font-size:12px; color:#8a9; margin:5px 0 16px; line-height:1.7; }
+.themesw { margin:0 0 22px; display:flex; gap:8px; align-items:center; }
+.themesw span { font-size:12px; color:#8a9; margin-right:6px; }
+.tbtn { font-family:inherit; font-size:12px; font-weight:600; padding:6px 18px; border-radius:14px;
+        border:none; cursor:pointer; background:#2a2e33; color:#d8d8d8; }
+.tbtn.on { color:#fff8f8; }
+.tbtn[data-theme=blue].on  { background:#2f9dff; }
+.tbtn[data-theme=red].on   { background:#e05b5b; }
+.tbtn[data-theme=cream].on { background:#e07856; }
+
+.win { position:relative; width:920px; height:620px; background:var(--bg); color:var(--text);
+       border:1px solid #333; border-radius:10px; overflow:hidden;
+       box-shadow:0 12px 40px rgba(0,0,0,.5); }
+
+/* ── 顶栏 30px ── */
+.topstrip { height:30px; background:var(--panel); display:flex; align-items:center; position:relative; z-index:5; }
+.bdot { width:8px; height:8px; border-radius:50%; background:var(--accent); margin:0 8px 0 10px; }
+.bname { font-size:13.5px; font-weight:600; color:var(--accent); }
+.modeinfo { font-size:11px; font-weight:500; color:var(--dim); margin-left:26px; }
+.tbtn-ui { position:absolute; font-family:inherit; border:none; cursor:pointer;
+           font-size:10px; font-weight:600; letter-spacing:.4px; border-radius:14px; }
+#curveBtn { right:38px; top:3px; width:86px; height:24px; background:var(--track); color:var(--dim); }
+#gearBtn  { right:6px;  top:3px; width:24px; height:24px; background:var(--track); color:var(--text);
+            border-radius:12px; font-size:13px; }
+
+/* ── 显示区 310px（plot 286 + 频率刻度 24） ── */
+.display { position:relative; height:310px; z-index:1; }
+
+/* ── 底部控制区 280px ── */
+.bottom { height:280px; background:var(--bg); border-top:1px solid var(--gridz);
+          display:flex; padding:12px; gap:12px; position:relative; z-index:4; }
+.blk { background:var(--panel); border:1px solid var(--gridz); border-radius:12px; padding:12px 14px; }
+.sec  { font-size:13.5px; font-weight:700; color:var(--accent); letter-spacing:.6px; }
+.hint { font-size:10.5px; color:var(--dim); opacity:.75; }
+.cap  { font-size:11px; font-weight:600; color:var(--dim); }
+.pill { font-family:inherit; font-size:12px; font-weight:600; border:none; cursor:pointer;
+        border-radius:14px; background:var(--track); color:var(--dim); }
+.pill.on { background:var(--accent); color:#fff8f8; }
+.combo { height:26px; border:1px solid var(--track); border-radius:8px; background:var(--surface);
+         display:flex; align-items:center; position:relative; padding:0 22px 0 10px;
+         font-size:12px; color:var(--text); }
+.combo::after { content:''; position:absolute; right:8px; top:10px; border:4.5px solid transparent;
+                border-top-color:var(--accent); transform:translateY(2px); }
+.grip { width:16px; height:16px; border-radius:5px; background:var(--track); display:inline-flex;
+        align-items:center; justify-content:center; flex-wrap:wrap; gap:1.4px; padding:3px;
+        vertical-align:middle; }
+.grip i { width:3.5px; height:3.5px; border-radius:1px; background:var(--dim); display:block; }
+
+/* ── Popover（Pro-MB 式浮层） ── */
+.popover { position:absolute; width:566px; background:var(--surface); border:1px solid var(--gridz);
+           border-radius:14px; box-shadow:0 14px 44px var(--shadow); z-index:9; padding:10px 18px 14px; }
+.pop-head { display:flex; align-items:center; height:30px; gap:10px; }
+.pop-pw { width:24px; height:24px; border-radius:50%; background:var(--track); color:var(--accent);
+          font-size:12px; border:none; cursor:pointer; }
+.pop-title { font-size:13px; font-weight:600; color:var(--accent); }
+.pop-range { font-size:10.5px; color:var(--dim); margin-left:2px; }
+.pop-ic { margin-left:auto; width:24px; height:24px; border-radius:6px; background:var(--track);
+          color:var(--text); border:none; cursor:pointer; font-size:11px; }
+.pop-knobrow { display:flex; justify-content:space-between; margin-top:8px; }
+.pop-sl { display:flex; align-items:center; gap:12px; margin-top:10px; }
+.sl { flex:1; height:6px; border-radius:3px; background:var(--track); position:relative; }
+.sl .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:3px; }
+.sl .knobdot { position:absolute; top:50%; width:14px; height:14px; border-radius:50%;
+               background:var(--knob); transform:translate(-50%,-50%);
+               box-shadow:0 1px 4px rgba(0,0,0,.4); }
+.slval { font-size:11.5px; color:var(--text); min-width:58px; text-align:right; }
+.expert-tab { position:absolute; right:-1px; top:56px; width:22px; height:92px;
+              background:var(--track); border-radius:0 12px 12px 0; display:flex;
+              align-items:center; justify-content:center; cursor:pointer; }
+.expert-tab span { font-size:9.5px; font-weight:700; letter-spacing:1.2px; color:var(--dim);
+                   writing-mode:vertical-rl; transform:rotate(180deg); }
+
+.knobcell { text-align:center; }
+.knobval { font-size:11.5px; color:var(--text); margin-top:1px; }
+.knobrng { font-size:9px; color:var(--dim); opacity:.75; margin-top:1px; }
+</style>
+</head>
+<body class="theme-blue">
+
+<h1>Crunch MB — 完整 UI 稿 <span style="color:#e07856">（O1-A · O2-A · O3-B · O4-无）</span></h1>
+<div class="sub">
+  920×620 全窗口三层一次成型：L1 显示区四分区（Clarity Vx 骨架，含每段 Makeup 快捷旋钮）·
+  L2 底部控制区（全局 + 5 统一控制旋钮）· L3 频段 Popover（Pro-MB 式二级菜单，5 旋钮 + RATIO 滑杆）。
+  当前演示态：HIGH MID 段选中（Popover 打开）+ LM 段 hover（按钮列展开）。
+</div>
+<div class="themesw"><span>主题：</span>
+  <button class="tbtn on" data-theme="blue">Blue</button>
+  <button class="tbtn" data-theme="red">Red</button>
+  <button class="tbtn" data-theme="cream">Cream</button>
+</div>
+
+<div class="win" id="win">
+  <!-- 顶栏 -->
+  <div class="topstrip">
+    <div class="bdot"></div><div class="bname">HIGH MID</div>
+    <div class="modeinfo">Natural Phase · 24 dB/oct · LA Off</div>
+    <button class="tbtn-ui" id="curveBtn">CURVE</button>
+    <button class="tbtn-ui" id="gearBtn">⚙</button>
+  </div>
+
+  <!-- 显示区 -->
+  <div class="display" id="display">
+    <svg id="plot" width="920" height="286" style="position:absolute; left:0; top:0;"></svg>
+    <svg id="freqscale" width="920" height="24" style="position:absolute; left:0; top:286px;"></svg>
+
+    <!-- Popover：LM 段下方偏左浮出（Pro-MB 位置感），演示选中 HM 内容 -->
+    <div class="popover" id="popover" style="left:264px; top:96px;">
+      <div class="pop-head">
+        <button class="pop-pw">⚡</button>
+        <span class="pop-title">HIGH MID</span>
+        <span class="pop-range">· 1000–6000 Hz</span>
+        <button class="pop-ic">▼</button>
+        <button class="pop-ic" style="margin-left:6px;">✕</button>
+      </div>
+      <div class="pop-knobrow" id="popKnobs"></div>
+      <div class="pop-sl">
+        <span class="cap" style="width:64px;">RATIO</span>
+        <span class="sl"><span class="fill" style="width:38%;"></span><span class="knobdot" style="left:38%;"></span></span>
+        <span class="slval">4.00 : 1</span>
+      </div>
+      <div class="pop-sl">
+        <span class="cap" style="width:64px;">KNEE</span>
+        <span class="sl"><span class="fill" style="width:65%;"></span><span class="knobdot" style="left:65%;"></span></span>
+        <span class="slval">SOFT</span>
+      </div>
+      <div class="pop-sl">
+        <span class="cap" style="width:64px;">SIDECHAIN</span>
+        <span class="sl"><span class="fill" style="width:12%;"></span><span class="knobdot" style="left:12%;"></span></span>
+        <span class="slval">INT</span>
+      </div>
+      <div class="expert-tab"><span>EXPERT</span></div>
+    </div>
+  </div>
+
+  <!-- 底部控制区 -->
+  <div class="bottom">
+    <!-- 全局块 -->
+    <div class="blk" style="width:368px; display:flex; flex-direction:column;">
+      <div class="sec">GLOBAL</div>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:8px;" id="ioRow"></div>
+      <div style="display:flex; gap:10px; margin-top:12px;">
+        <div style="flex:1;"><div class="cap" style="margin-bottom:3px;">PHASE MODE</div><div class="combo">Natural Phase</div></div>
+        <div style="flex:1;"><div class="cap" style="margin-bottom:3px;">SLOPE</div><div class="combo">24 dB/oct</div></div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <div style="flex:1;"><div class="cap" style="margin-bottom:3px;">LINEAR QUALITY</div><div class="combo">Medium</div></div>
+        <div style="flex:1;"><div class="cap" style="margin-bottom:3px;">LOOKAHEAD</div><div class="combo">Off</div></div>
+      </div>
+    </div>
+    <!-- 统一控制块 -->
+    <div class="blk" style="flex:1; display:flex; flex-direction:column;">
+      <div style="display:flex; align-items:baseline; gap:12px;">
+        <div class="sec">LINKED CONTROL <span style="font-weight:500; font-size:11px;">四段联动</span></div>
+        <div class="hint">每个旋钮 → 四分区同名参数<b style="color:var(--accent)">线性恒定偏移</b>（读数 = 偏移量）</div>
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-top:14px; padding:0 6px;" id="linkKnobs"></div>
+      <div class="hint" style="margin-top:auto; text-align:center;">⊞ = 联动标识　·　按住拖动 / 双击输入 / 滚轮</div>
+    </div>
+  </div>
+</div>
+
+<div class="sub" style="margin-top:14px; max-width:920px;">
+  <b style="color:#9c8;">对照裁定：</b>
+  O1-A 每段顶部 = Makeup 快捷旋钮（44px + 读数）　|　O2-A 底座 = 5 统一旋钮（Threshold/Attack/Release/Makeup/Mix，⊞ 联动）　|
+  O3-B Popover = 5 旋钮 + RATIO 滑杆（Pro-MB 同构，另含 KNEE / SIDECHAIN / EXPERT）　|　O4 = 仿 EQ 曲线无拖拽点（干净曲线）。
+  <br><b style="color:#9c8;">回退机制：</b>不满意任一裁定 → 回 UI_SPEC §10 重新选择，仅影响 UI 层，不动 D1–D14 核心决策。
+</div>
+
+<script>
+document.querySelectorAll('.tbtn').forEach(btn => btn.addEventListener('click', () => {
+  document.body.className = 'theme-' + btn.dataset.theme;
+  document.querySelectorAll('.tbtn').forEach(b => b.classList.toggle('on', b === btn));
+  drawAll();
+}));
+const C = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+
+/* ══════════ 坐标 ══════════ */
+const PLOT = { x:36, y:0, w:824, h:286 };
+const meterX = 860;
+const CURVE_TOP = 72;                    // 曲线区从 y=72 起（顶部留给每段 header）
+const freqToX = f => PLOT.x + Math.log(f/20)/Math.log(1000) * PLOT.w;
+const NX = [200, 1000, 6000].map(freqToX);
+const bandEdge = b => b < 3 ? NX[b] : PLOT.x + PLOT.w;
+const specDbToY = db => CURVE_TOP + (PLOT.h - CURVE_TOP) * (1 - (db+100)/100 * 0.82 - 0.02);
+const gainToY  = g  => CURVE_TOP + (PLOT.h - CURVE_TOP) * (1 - (g+36)/48);
+
+/* ══════════ 频谱 / 曲线数据 ══════════ */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function specPts(off, rng, jit){
+  const pts = [];
+  for (let i = 0; i <= 320; i++){
+    const t = i/320, f = 20 * Math.pow(1000, t);
+    let db = -32 - 16*Math.log10(f/20) + (rng()-0.5)*jit;
+    if (f > 8000) db -= 7*Math.log10(f/8000);
+    pts.push([freqToX(f), specDbToY(db + off)]);
+  }
+  return pts;
+}
+const pathOf = (pts, close) => {
+  let d = 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
+  if (close) d += ` L${pts[pts.length-1][0].toFixed(1)} ${PLOT.h} L${pts[0][0].toFixed(1)} ${PLOT.h} Z`;
+  return d;
+};
+const BAND_GAIN = [0, 1.2, -4.5, -0.8];   // L 0 / LM +1.2 Makeup / HM −4.5 压缩 / H −0.8
+function gainAt(f){
+  const l2 = Math.log2(f); let g = BAND_GAIN[0];
+  for (let i = 0; i < 3; i++){
+    const t = 1/(1 + Math.exp(-(l2 - Math.log2([200,1000,6000][i]))/0.30*4));
+    g = g*(1-t) + BAND_GAIN[i+1]*t;
+  }
+  return g;
+}
+
+/* ══════════ 旋钮 SVG（家族样式） ══════════ */
+function knobSVG(size, frac){
+  const r = size*0.40, ringW = Math.max(3, r*0.17), ringR = r - ringW/2 - 1;
+  const capR = ringR - ringW/2 - 1.5, cx = size/2, cy = size/2;
+  const pol = d => [cx + ringR*Math.sin(d*Math.PI/180), cy - ringR*Math.cos(d*Math.PI/180)];
+  const arc = (a0,a1) => { const p0 = pol(a0), p1 = pol(a1);
+    return `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${ringR.toFixed(1)} ${ringR.toFixed(1)} 0 ${(a1-a0)>180?1:0} 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`; };
+  const a0 = -135, a1 = 135, av = a0 + 270*frac, pp = pol(av);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <path d="${arc(a0,a1)}" fill="none" stroke="${C('--track')}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <path d="${arc(a0,av)}" fill="none" stroke="${C('--accent')}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy+1.5}" r="${capR}" fill="rgba(0,0,0,0.18)"/>
+    <circle cx="${cx}" cy="${cy}" r="${capR}" fill="${C('--knob')}" stroke="rgba(0,0,0,0.06)"/>
+    <line x1="${cx}" y1="${cy}" x2="${(cx+(pp[0]-cx)*capR/ringR*0.9).toFixed(1)}" y2="${(cy+(pp[1]-cy)*capR/ringR*0.9).toFixed(1)}"
+          stroke="#463f38" stroke-width="${Math.max(2, capR*0.1).toFixed(1)}" stroke-linecap="round"/>
+  </svg>`;
+}
+
+/* ══════════ 显示区绘制 ══════════ */
+function drawPlot(){
+  const svg = document.getElementById('plot');
+  const acc = C('--accent'), panel = C('--panel'), track = C('--track'), dim = C('--dim'),
+        text = C('--text'), grid = C('--grid'), gridz = C('--gridz'), infill = C('--infill'),
+        meterbg = C('--meterbg');
+  let s = '';
+
+  // 网格
+  for (let db = 0; db >= -100; db -= 20){
+    const y = specDbToY(db).toFixed(1);
+    s += `<line x1="${PLOT.x}" y1="${y}" x2="${PLOT.x+PLOT.w}" y2="${y}" stroke="${db===0?gridz:grid}"/>`;
+    s += `<text x="${PLOT.x-6}" y="${+y+4}" fill="${dim}" font-size="10" text-anchor="end">${db}</text>`;
+  }
+  [50,100,500,2000,5000,10000].forEach(f => {
+    const x = freqToX(f).toFixed(1);
+    s += `<line x1="${x}" y1="0" x2="${x}" y2="${PLOT.h}" stroke="${grid}"/>`;
+  });
+
+  // 四分区底块（HM 选中）
+  const edges = [PLOT.x, NX[0], NX[1], NX[2], PLOT.x+PLOT.w];
+  const names = ['LOW','LOW MID','HIGH MID','HIGH'];
+  for (let b = 0; b < 4; b++){
+    const sel = b === 2, w = edges[b+1]-edges[b];
+    s += `<rect x="${edges[b]+1}" y="1" width="${w-2}" height="${PLOT.h-2}" fill="${acc}" opacity="${sel?0.10:0.05}"/>`;
+    if (sel) s += `<rect x="${edges[b]+1}" y="1" width="${w-2}" height="${PLOT.h-2}" fill="none" stroke="${acc}" stroke-width="1.5" opacity="0.9"/>`;
+  }
+
+  // 双层频谱
+  const rng1 = mulberry32(7), rng2 = mulberry32(7);
+  const pre = specPts(0, rng1, 5), post = specPts(3, rng2, 5);
+  s += `<path d="${pathOf(pre,true)}"  fill="${infill}" opacity="0.22"/>`;
+  s += `<path d="${pathOf(pre,false)}" fill="none" stroke="${infill}" stroke-width="1" opacity="0.55"/>`;
+  s += `<path d="${pathOf(post,true)}" fill="${acc}" opacity="0.33"/>`;
+  s += `<path d="${pathOf(post,false)}" fill="none" stroke="#fff" stroke-width="2" opacity="0.95"/>`;
+
+  // 仿 EQ 动态曲线（统一 accent；O4-无拖拽点）
+  let eqd = '';
+  for (let i = 0; i <= 240; i++){
+    const t = i/240, f = 20*Math.pow(1000,t);
+    eqd += (i?' L':'M') + freqToX(f).toFixed(1) + ' ' + gainToY(gainAt(f)).toFixed(1);
+  }
+  s += `<line x1="${PLOT.x}" y1="${gainToY(0).toFixed(1)}" x2="${PLOT.x+PLOT.w}" y2="${gainToY(0).toFixed(1)}" stroke="${gridz}" opacity="0.7"/>`;
+  s += `<path d="${eqd}" fill="none" stroke="${acc}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+
+  // 全高分割线 + 底部手柄 + 频率读数
+  ['200','1.0k','6.0k'].forEach((t, e) => {
+    const x = NX[e];
+    s += `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${PLOT.h}" stroke="${gridz}" stroke-width="1.5"/>`;
+    s += `<rect x="${(x-6).toFixed(1)}" y="${PLOT.h-30}" width="12" height="26" rx="4" fill="${track}" stroke="${gridz}"/>`;
+  });
+
+  // 每段 header（O1-A：Makeup 快捷旋钮）+ 状态点 + 段名
+  for (let b = 0; b < 4; b++){
+    const cx = (edges[b] + edges[b+1]) / 2;
+    s += `<text x="${edges[b]+8}" y="14" fill="${acc}" font-size="11.5" font-weight="600" opacity="0.9">${names[b]}</text>`;
+    // Makeup 44px 旋钮 + 读数
+    const kx = cx - 22, ky = 20;
+    const frac = [0.5, 0.62, 0.42, 0.52][b];
+    s += `<g transform="translate(${kx},${ky})">${knobSVG(44, frac)}</g>`;
+    s += `<text x="${cx}" y="${ky+54}" fill="${dim}" font-size="9" font-weight="600" text-anchor="middle">MAKEUP</text>`;
+    s += `<text x="${cx}" y="${ky+65}" fill="${text}" font-size="10.5" text-anchor="middle">${['0.00','+3.20','−1.60','+0.80'][b]} dB</text>`;
+    // 状态点 4 个（右缘竖排）
+    const sx = bandEdge(b) - 28, lit = [(b===1?1:0),(b===3?1:0),0,0];
+    for (let j = 0; j < 4; j++)
+      s += `<circle cx="${sx.toFixed(1)}" cy="${8 + j*9}" r="3" fill="${lit[j]?acc:track}"/>`;
+  }
+
+  // hover 按钮列（LM 段演示：其右边界 = xover2 = NX[1]）
+  {
+    const x = NX[1] - 40, y0 = 76;
+    ['S','M','B','Δ'].forEach((t, j) => {
+      const y = y0 + j*30, on = j === 0;
+      s += `<rect x="${x.toFixed(1)}" y="${y}" width="24" height="24" rx="6" fill="${on?acc:track}" opacity="0.95"/>`;
+      s += `<text x="${x+12}" y="${y+16}" fill="${on?'#fff8f8':dim}" font-size="11.5" font-weight="600" text-anchor="middle">${t}</text>`;
+    });
+    s += `<text x="${x+12}" y="${y0-5}" fill="${dim}" font-size="8.5" text-anchor="middle" opacity="0.75">HOVER · LOW MID</text>`;
+  }
+
+  // 双击频率输入演示（xover1 顶部）
+  {
+    const x = NX[0]-36;
+    s += `<rect x="${x.toFixed(1)}" y="22" width="72" height="22" rx="4" fill="${panel}" stroke="#fff"/>`;
+    s += `<text x="${x+36}" y="37" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">200</text>`;
+  }
+
+  // 电平表
+  {
+    const mx0 = meterX+4, my0 = 22, mw = 52, mh = PLOT.h - 32;
+    s += `<rect x="${mx0}" y="${my0-18}" width="${mw}" height="${mh+22}" rx="6" fill="${meterbg}"/>`;
+    const lv = v => my0 + mh - (v+60)/66*mh;
+    const ibx = mx0+8, ibw = mw*0.34, obx = mx0+mw-mw*0.34-8;
+    s += `<rect x="${ibx}" y="${my0}" width="${ibw}" height="${mh}" rx="3" fill="${infill}" opacity="0.35"/>`;
+    s += `<rect x="${ibx}" y="${lv(-12).toFixed(1)}" width="${ibw}" height="${(my0+mh-lv(-12)).toFixed(1)}" rx="3" fill="${infill}" opacity="0.75"/>`;
+    s += `<line x1="${ibx}" y1="${lv(-8).toFixed(1)}" x2="${ibx+ibw}" y2="${lv(-8).toFixed(1)}" stroke="#fff" stroke-width="2" opacity="0.9"/>`;
+    s += `<rect x="${obx}" y="${my0}" width="${ibw}" height="${mh}" rx="3" fill="${infill}" opacity="0.15"/>`;
+    s += `<rect x="${obx}" y="${lv(-6).toFixed(1)}" width="${ibw}" height="${(my0+mh-lv(-6)).toFixed(1)}" rx="3" fill="${acc}" opacity="0.8"/>`;
+    s += `<line x1="${obx}" y1="${lv(-3).toFixed(1)}" x2="${obx+ibw}" y2="${lv(-3).toFixed(1)}" stroke="#fff" stroke-width="2" opacity="0.9"/>`;
+    s += `<text x="${ibx+ibw/2}" y="${my0-5}" fill="${dim}" font-size="10" font-weight="600" text-anchor="middle">IN</text>`;
+    s += `<text x="${obx+ibw/2}" y="${my0-5}" fill="${dim}" font-size="10" font-weight="600" text-anchor="middle">OUT</text>`;
+    // 右侧刻度：增益（accent）+ 频谱（dim）
+    s += `<text x="${meterX+2}" y="${gainToY(12)+4}" fill="${acc}" font-size="9.5" text-anchor="start">+12</text>`;
+    s += `<text x="${meterX+2}" y="${gainToY(0)+4}" fill="${acc}" font-size="9.5" text-anchor="start">0</text>`;
+    s += `<text x="${meterX+2}" y="${gainToY(-12)+4}" fill="${acc}" font-size="9.5" text-anchor="start">−12</text>`;
+    s += `<text x="${meterX+2}" y="${gainToY(-24)+4}" fill="${acc}" font-size="9.5" text-anchor="start">−24</text>`;
+  }
+
+  svg.innerHTML = s;
+
+  // 频率刻度
+  let f2 = '';
+  [[50,'50'],[100,'100'],[200,'200'],[500,'500'],[1000,'1k'],[2000,'2k'],[5000,'5k'],[10000,'10k']]
+    .forEach(([f,t]) => f2 += `<text x="${freqToX(f).toFixed(1)}" y="16" fill="${dim}" font-size="10.5" text-anchor="middle">${t}</text>`);
+  // 分割线频率读数（Clarity Vx 式，挂分割线底）
+  [['200',NX[0]],['1.0k',NX[1]],['6.0k',NX[2]]].forEach(([t,x]) =>
+    f2 += `<text x="${x.toFixed(1)}" y="8" fill="${text}" font-size="10.5" font-weight="600" text-anchor="middle">${t}</text>`);
+  document.getElementById('freqscale').innerHTML = f2;
+}
+
+/* ══════════ Popover 旋钮行（O3-B：5 旋钮 + 范围标注） ══════════ */
+function drawPopKnobs(){
+  const K = [
+    ['THRESHOLD','−20.00 dB','−60…0',      0.667],
+    ['ATTACK',   '10 ms',    '0.1…200',    0.37 ],
+    ['RELEASE',  '100 ms',   '10…1000',    0.35 ],
+    ['MAKEUP',   '0.00 dB',  '−36…36',     0.5  ],
+    ['MIX',      '100 %',    '0…100',      1.0  ],
+  ];
+  document.getElementById('popKnobs').innerHTML = K.map(([n,v,r,f]) =>
+    `<div class="knobcell" style="width:96px;">
+       <div class="cap">${n}</div>
+       <div style="margin:2px 0;">${knobSVG(52, f)}</div>
+       <div class="knobval">${v}</div>
+       <div class="knobrng">${r}</div>
+     </div>`).join('');
+}
+
+/* ══════════ 底部：全局 In/Out/Bypass + 统一控制 5 旋钮（O2-A） ══════════ */
+function drawBottom(){
+  document.getElementById('ioRow').innerHTML = `
+    <div class="knobcell" style="width:84px;"><div class="cap">IN</div>${knobSVG(56, 0.5)}<div class="knobval">0.00 dB</div></div>
+    <div class="knobcell" style="width:84px;"><div class="cap">OUT</div>${knobSVG(56, 0.5)}<div class="knobval">0.00 dB</div></div>
+    <button class="pill" style="width:84px; height:30px; margin-left:auto; margin-right:6px;">Bypass</button>`;
+
+  const L = [
+    ['Threshold','Δ +0.00 dB', 0.5],
+    ['Attack',   'Δ +0.0 ms',  0.5],
+    ['Release',  'Δ +0.0 ms',  0.5],
+    ['Makeup',   'Δ +0.00 dB', 0.5],
+    ['Mix',      'Δ +0 %',     0.5],
+  ];
+  document.getElementById('linkKnobs').innerHTML = L.map(([n,v,f]) =>
+    `<div class="knobcell" style="width:100px;">
+       <div class="cap" style="display:flex; align-items:center; justify-content:center; gap:5px;">
+         ${n}<span class="grip"><i></i><i></i><i></i><i></i></span>
+       </div>
+       ${knobSVG(64, f)}
+       <div class="knobval" style="color:var(--accent);">${v}</div>
+     </div>`).join('');
+}
+
+function drawAll(){ drawPlot(); drawPopKnobs(); drawBottom(); }
+drawAll();
+</script>
+</body>
+</html>

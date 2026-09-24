@@ -1,0 +1,84 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+#include <complex>
+#include <vector>
+
+// ============================================================
+// SpectrumAnalyzer — FFT 频谱分析器（Crunch EQ 移植，PLAN Phase 4.1）
+// 帧生产由外部驱动（processPendingFrame），使分析帧率与宿主块大小解耦。
+// 与 EQ 版差异：tilt 默认 0（MB 的双层频谱不加 Pink 倾斜，UI_SPEC §4.4）。
+// ============================================================
+class SpectrumAnalyzer
+{
+public:
+    void prepare (double sampleRate, int fftSize);
+    void reset();
+    void pushSamples (const float* mono, int numSamples);
+    bool processPendingFrame();
+    void setTilt (float dbPerOct);
+    int  getFftSize() const noexcept { return fftSize_; }   // SpectrumEngine 饥饿检测用
+    void getLevels (juce::Array<float>& freqs, juce::Array<float>& levelsDb, int numPoints);
+
+    juce::uint32 getFrameCounter() const noexcept { return frameCounter_; }
+    float getLastFrameDeltaDb() const noexcept    { return lastFrameDeltaDb_; }
+
+private:
+    void processFrame (const float* data);
+    void rebuildLookup (int numPoints);
+
+    double sampleRate_ = 48000.0;
+    int    fftSize_    = 4096;
+    float  tilt_       = 0.0f;      // MB：不加倾斜（EQ 版默认 4.5）
+
+    // FIFO 改环形缓冲：物理索引 read/write ∈ [0,cap)，水位 avail ∈ [0,cap]
+    // （只存物理索引 + 独立水位计数，杜绝"绝对计数回绕"类错误；
+    //  早期 vector insert/erase 版每块一次 O(n) 搬移且 capacity 不收缩）
+    static constexpr int kFifoExtra = 4096;        // 容纳单个宿主块 + 余量
+    std::vector<float> fifo_;
+    int fifoRead_ = 0, fifoWrite_ = 0, fifoAvail_ = 0, fifoCap_ = 0;
+
+    inline void fifoAdvance (int n) noexcept
+    {
+        n = juce::jmin (n, fifoAvail_);
+        fifoRead_ = (fifoRead_ + n) % fifoCap_;
+        fifoAvail_ -= n;
+    }
+    inline void fifoPush (const float* src, int n) noexcept
+    {
+        n = juce::jmin (n, fifoCap_ - fifoAvail_);     // 满则丢弃最新样本（保命）
+        for (int i = 0; i < n; ++i)
+        {
+            fifo_[(size_t) fifoWrite_] = src[i];
+            if (++fifoWrite_ >= fifoCap_) fifoWrite_ = 0;
+        }
+        fifoAvail_ += n;
+    }
+    int    hop_            = 512;
+
+    std::vector<float> windowLinear_;   // 跨回绕点时的线性窗口缓冲（容量 = fftSize_）
+
+    std::vector<float> window_;
+    std::vector<std::complex<float>> fftBuf_;
+    std::vector<std::complex<float>> fftTmp_;
+    std::unique_ptr<juce::dsp::FFT> fft_;
+
+    std::vector<float> binLevelsDb_;
+    std::vector<float> prevLevelsDb_;
+    bool hasFrame_ = false;
+
+    static constexpr double kReleaseMs = 20.0;
+    float fadeIn_ = 0.0f;      // B1：起始软启动进度 0→1（每帧按 1−exp(−dt/τ) 推进）
+    juce::uint32 lastFrameMs_ = 0;
+
+    juce::uint32 frameCounter_ = 0;
+    float lastFrameDeltaDb_ = 0.0f;
+
+    std::vector<int>   lutK0_, lutK1_;
+    std::vector<float> lutFreq_, lutFrac_;
+    std::vector<uint8_t> lutAvg_;
+    int    lutPoints_ = -1;
+    double lutSampleRate_ = 0.0;
+    int    lutFftSize_ = 0;
+};

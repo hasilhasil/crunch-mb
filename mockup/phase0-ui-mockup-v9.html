@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Crunch MB — UI 稿 v9（RANGE 基准吸附 EQ 曲线）</title>
+<style>
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Regular.ttf');   font-weight:400; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Medium.ttf');    font-weight:500; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-SemiBold.ttf');  font-weight:600; }
+@font-face { font-family:'Poppins'; src:url('../../260916 Crunch Compressor/src/ui/Fonts/Poppins-Bold.ttf');      font-weight:700; }
+
+body.theme-blue  { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --surfaceA:rgba(34,38,43,.84); --popA:rgba(34,38,43,.62);
+                   --track:#2a2e33; --knob:#f2efe8; --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b;
+                   --gridz:#3c4249; --meterbg:#16181b; --infill:#6a7076; --outlevel:#e8eaed;
+                   --accent:#2f9dff; --shadow:rgba(0,0,0,.55); --light:0; --halo:rgba(0,0,0,.65); }
+body.theme-red   { --bg:#101214; --panel:#1a1d20; --surface:#22262b; --surfaceA:rgba(34,38,43,.84); --popA:rgba(34,38,43,.62);
+                   --track:#2a2e33; --knob:#f2efe8; --text:#d8d8d8; --dim:#9aa0a6; --grid:#22262b;
+                   --gridz:#3c4249; --meterbg:#16181b; --infill:#6a7076; --outlevel:#e8eaed;
+                   --accent:#e05b5b; --shadow:rgba(0,0,0,.55); --light:0; --halo:rgba(0,0,0,.65); }
+body.theme-cream { --bg:#f6f0e7; --panel:#efe8db; --surface:#fffdf8; --surfaceA:rgba(255,253,248,.86); --popA:rgba(255,253,248,.68);
+                   --track:#ded4c4; --knob:#ffffff; --text:#463f38; --dim:#8d8375; --grid:#e7dfcf;
+                   --gridz:#c8bdac; --meterbg:#f2ebdf; --infill:#b5aa98; --outlevel:#703c2b;
+                   --accent:#e07856; --shadow:rgba(80,60,40,.30); --light:1; --halo:rgba(255,255,255,.7); }
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Poppins','Segoe UI',sans-serif; background:#0a0c0e; color:#ccc; padding:24px 30px 60px; }
+h1 { font-size:19px; font-weight:700; color:#fff; }
+.sub { font-size:12px; color:#8a9; margin:5px 0 14px; line-height:1.7; }
+.themesw { margin:0 0 18px; display:flex; gap:8px; align-items:center; }
+.themesw span { font-size:12px; color:#8a9; margin-right:6px; }
+.tbtn { font-family:inherit; font-size:12px; font-weight:600; padding:6px 18px; border-radius:14px;
+        border:none; cursor:pointer; background:#2a2e33; color:#d8d8d8; }
+.tbtn.on { color:#fff8f8; }
+.tbtn[data-theme=blue].on  { background:#2f9dff; }
+.tbtn[data-theme=red].on   { background:#e05b5b; }
+.tbtn[data-theme=cream].on { background:#e07856; }
+
+.win { position:relative; width:920px; height:620px; background:var(--bg); color:var(--text);
+       border:1px solid #333; border-radius:10px; overflow:hidden; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+#scope { position:absolute; left:0; top:0; z-index:0; cursor:ns-resize; }
+
+.topstrip { height:30px; background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+            display:flex; align-items:center; position:absolute; left:0; top:0; width:100%; z-index:5; }
+.bdot { width:8px; height:8px; border-radius:50%; background:var(--accent); margin:0 8px 0 10px; }
+.bname { font-size:13.5px; font-weight:600; color:var(--accent); }
+.modeinfo { font-size:11px; font-weight:500; color:var(--dim); margin-left:26px; }
+.tbtn-ui { position:absolute; font-family:inherit; border:none; cursor:pointer;
+           font-size:10px; font-weight:600; letter-spacing:.4px; border-radius:14px; }
+#curveBtn { right:38px; top:3px; width:86px; height:24px; background:var(--track); color:var(--dim); }
+#gearBtn  { right:6px;  top:3px; width:24px; height:24px; background:var(--track); color:var(--text);
+            border-radius:12px; font-size:13px; }
+
+.globalbar { height:32px; background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+             border-top:1px solid var(--gridz); display:flex; align-items:center; padding:0 56px 0 14px; gap:24px;
+             font-family:inherit; position:absolute; left:0; bottom:0; width:100%; z-index:5; }
+.gitem { font-size:11.5px; color:var(--text); cursor:pointer; white-space:nowrap; }
+.gitem i { font-style:normal; color:var(--dim); font-size:10.5px; margin-right:5px; }
+.gitem em { font-style:normal; color:var(--dim); font-size:8.5px; margin-left:5px; }
+.gitem:hover { color:var(--accent); }
+.gval { font-size:11.5px; color:var(--text); cursor:ew-resize; white-space:nowrap; }
+.gval i { font-style:normal; color:var(--dim); font-size:10.5px; margin-right:5px; }
+.gsep { width:1px; height:14px; background:var(--gridz); }
+.grow { margin-left:auto; }
+.pill { font-family:inherit; font-size:10px; font-weight:600; border:none; cursor:pointer;
+        letter-spacing:.5px; border-radius:11px; background:var(--track); color:var(--dim); padding:5px 14px; }
+
+.drawer-wrap { position:absolute; left:232px; top:560px; width:456px; height:28px; z-index:6;
+               filter:drop-shadow(0 6px 16px var(--shadow)); cursor:pointer; }
+.drawer { position:absolute; inset:0; background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+          clip-path:path("M 44 2 L 412 2 C 434 2 422 26 444 26 L 12 26 C 34 26 22 2 44 2 Z"); transition:.22s; }
+.drawer-wrap:hover .drawer { background:var(--surface); }
+.drawer-stroke { position:absolute; inset:0; pointer-events:none; }
+.drawer-content { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:9px;
+                  pointer-events:none; }
+.dl-name { font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--accent); }
+.dl-sub  { font-size:9px; color:var(--dim); }
+.dl-arrow{ font-size:9px; color:var(--dim); transition:.22s; }
+.drawer-wrap.open .dl-arrow { transform:rotate(180deg); color:var(--accent); }
+.drawer-wrap:hover .dl-name, .drawer-wrap:hover .dl-arrow { color:var(--accent); }
+
+.linkedpop { position:absolute; left:80px; top:424px; width:760px; height:112px; z-index:8;
+             background:var(--surfaceA); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+             border:1px solid var(--gridz); border-radius:14px; box-shadow:0 14px 40px var(--shadow);
+             display:flex; align-items:center; padding:6px 14px; gap:10px;
+             opacity:0; transform:translateY(14px); pointer-events:none; transition:.25s ease; }
+.linkedpop.open { opacity:1; transform:none; pointer-events:auto; }
+.lk-side { width:128px; text-align:center; flex:none; }
+.lk-side .t1 { font-size:12px; font-weight:700; color:var(--accent); letter-spacing:.5px; line-height:1.25; }
+.lk-side .t2 { font-size:9px; color:var(--dim); margin-top:3px; }
+.lk-cell { flex:1; text-align:center; }
+.grip { width:14px; height:14px; border-radius:4px; background:var(--track); display:inline-flex;
+        align-items:center; justify-content:center; flex-wrap:wrap; gap:1.2px; padding:2.5px;
+        vertical-align:middle; margin-left:3px; }
+.grip i { width:3px; height:3px; border-radius:1px; background:var(--dim); display:block; }
+
+.popover { position:absolute; width:508px; background:var(--popA);
+           backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+           border:1px solid var(--gridz); border-radius:14px;
+           box-shadow:0 14px 44px var(--shadow); z-index:9; padding:6px 14px 10px; }
+.pop-head { display:flex; align-items:center; height:26px; gap:8px; }
+.pop-pw { width:22px; height:22px; border-radius:50%; background:var(--track); color:var(--accent);
+          font-size:11px; border:none; cursor:pointer; }
+.pop-title { font-size:12.5px; font-weight:600; color:var(--accent); }
+.pop-range { font-size:9.5px; color:var(--dim); }
+.pop-ic { margin-left:auto; width:22px; height:22px; border-radius:6px; background:var(--track);
+          color:var(--text); border:none; cursor:pointer; font-size:10px; }
+.pop-knobrow { display:flex; justify-content:space-between; margin-top:4px; }
+.pop-sl { display:flex; align-items:center; gap:10px; margin-top:5px; }
+.cap  { font-size:10.5px; font-weight:600; color:var(--dim); }
+.sl { flex:1; height:5px; border-radius:3px; background:var(--track); position:relative; }
+.sl .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); border-radius:3px; }
+.sl .kdot { position:absolute; top:50%; width:12px; height:12px; border-radius:50%;
+            background:var(--knob); transform:translate(-50%,-50%); box-shadow:0 1px 4px rgba(0,0,0,.4); }
+.slval { font-size:10.5px; color:var(--text); min-width:50px; text-align:right; }
+.seg { display:inline-flex; background:var(--track); border-radius:8px; padding:2px; gap:2px; }
+.seg button { border:none; background:transparent; color:var(--dim); font-family:inherit;
+              font-size:10px; font-weight:600; letter-spacing:.4px; padding:4px 14px;
+              border-radius:6px; cursor:pointer; }
+.seg button.on { background:var(--accent); color:#fff8f8; }
+.expert-tab { position:absolute; right:-1px; top:48px; width:20px; height:84px;
+              background:var(--track); border-radius:0 12px 12px 0; display:flex;
+              align-items:center; justify-content:center; cursor:pointer; }
+.expert-tab span { font-size:8.5px; font-weight:700; letter-spacing:1px; color:var(--dim);
+                   writing-mode:vertical-rl; transform:rotate(180deg); }
+
+.screen-title { font-size:14px; font-weight:600; color:#e8eaed; margin:26px 0 10px; }
+.screen-title small { color:#8a9; font-weight:400; margin-left:10px; font-size:11px; }
+.preview { background:var(--bg); border:1px solid #333; border-radius:10px; padding:14px; width:940px; }
+</style>
+</head>
+<body class="theme-blue">
+
+<h1>Crunch MB — UI 稿 <span style="color:#e07856">v9</span> <span style="font-size:13px; color:#8a9;">（RANGE 基准修正：吸附 EQ 曲线）</span></h1>
+<div class="sub">
+  <b style="color:#9c8;">本次修正：</b>RANGE 钟型 layer 的基准从 0dB 线改为<b>吸附仿 EQ 动态曲线</b>——
+  Range 边缘 = EQ(f) + 钟型·Range，填充介于<b> EQ 曲线 ↔ Range 边缘</b>之间；
+  <b>拖动 EQ 曲线（Makeup）时 Range layer 实时跟随</b>（试试拖 HIGH MID 段的曲线，看钟型跟着上下走）。
+  其余保持 v8：每分区独立钟型、S 边抽屉、Popover 5 旋钮、柱底读数无描边、互斥弹出。
+</div>
+<div class="themesw"><span>主题：</span>
+  <button class="tbtn on" data-theme="blue">Blue</button>
+  <button class="tbtn" data-theme="red">Red</button>
+  <button class="tbtn" data-theme="cream">Cream</button>
+</div>
+
+<div class="win" id="win">
+  <svg id="scope" width="920" height="620"></svg>
+
+  <div class="topstrip">
+    <div class="bdot"></div><div class="bname">HIGH MID</div>
+    <div class="modeinfo">Natural Phase · 24 dB/oct · LA Off</div>
+    <button class="tbtn-ui" id="curveBtn">CURVE</button>
+    <button class="tbtn-ui" id="gearBtn">⚙</button>
+  </div>
+
+  <div class="popover" id="popover" style="left:50px; top:280px;">
+    <div class="pop-head">
+      <button class="pop-pw">⚡</button>
+      <span class="pop-title">HIGH MID</span>
+      <span class="pop-range">· 1000–6000 Hz</span>
+      <button class="pop-ic">▼</button>
+      <button class="pop-ic" id="popClose" style="margin-left:5px;">✕</button>
+    </div>
+    <div class="pop-knobrow" id="popKnobs"></div>
+    <div class="pop-sl">
+      <span class="cap" style="width:56px;">RATIO</span>
+      <span class="sl"><span class="fill" style="width:38%;"></span><span class="kdot" style="left:38%;"></span></span>
+      <span class="slval">4.00 : 1</span>
+    </div>
+    <div class="pop-sl" style="margin-top:7px;">
+      <span class="cap" style="width:56px;">KNEE</span>
+      <span class="seg"><button>HARD</button><button class="on">SOFT</button></span>
+      <span class="cap" style="margin-left:14px;">SIDECHAIN</span>
+      <span class="seg"><button class="on">INT</button><button>EXT</button></span>
+    </div>
+    <div class="expert-tab"><span>EXPERT</span></div>
+  </div>
+
+  <div class="linkedpop" id="linkedPop">
+    <div class="lk-side">
+      <div class="t1">LINKED<br>CONTROL</div>
+      <div class="t2">四段联动 · 线性偏移</div>
+    </div>
+    <div style="flex:1; display:flex; justify-content:space-between; padding:0 8px;" id="linkKnobs"></div>
+  </div>
+
+  <div class="drawer-wrap" id="drawer">
+    <div class="drawer"></div>
+    <svg class="drawer-stroke" width="456" height="28" viewBox="0 0 456 28">
+      <path d="M 44 2 L 412 2 C 434 2 422 26 444 26 L 12 26 C 34 26 22 2 44 2 Z"
+            fill="none" stroke="var(--gridz)" stroke-width="1"/>
+    </svg>
+    <div class="drawer-content">
+      <span class="grip"><i></i><i></i><i></i><i></i></span>
+      <span class="dl-name">LINKED CONTROL</span>
+      <span class="dl-sub">四段联动 · 线性偏移</span>
+      <span class="dl-arrow">▾</span>
+    </div>
+  </div>
+
+  <div class="globalbar">
+    <span class="gitem"><i>Phase:</i>Natural Phase<em>▾</em></span>
+    <span class="gsep"></span>
+    <span class="gitem"><i>Slope:</i>24 dB/oct<em>▾</em></span>
+    <span class="gsep"></span>
+    <span class="gitem"><i>Quality:</i>Medium<em>▾</em></span>
+    <span class="gsep"></span>
+    <span class="gitem"><i>Lookahead:</i>Off<em>▾</em></span>
+    <span class="grow"></span>
+    <span class="gval"><i>IN</i>0.00 dB</span>
+    <span class="gsep"></span>
+    <span class="gval"><i>OUT</i>0.00 dB</span>
+    <span class="gsep"></span>
+    <button class="pill">BYPASS</button>
+  </div>
+</div>
+
+<div class="screen-title">抽屉开启态预览 <small>S 型曲边特写（点窗口内抽屉实时开合）</small></div>
+<div class="preview">
+  <div class="linkedpop open" style="position:relative; left:0; top:0; margin:0 auto; width:760px;">
+    <div class="lk-side">
+      <div class="t1">LINKED<br>CONTROL</div>
+      <div class="t2">四段联动 · 线性偏移</div>
+    </div>
+    <div style="flex:1; display:flex; justify-content:space-between; padding:0 8px;" id="linkKnobs2"></div>
+  </div>
+  <div class="drawer-wrap open" style="position:relative; left:0; top:0; margin:10px auto 0;">
+    <div class="drawer"></div>
+    <svg class="drawer-stroke" width="456" height="28" viewBox="0 0 456 28">
+      <path d="M 44 2 L 412 2 C 434 2 422 26 444 26 L 12 26 C 34 26 22 2 44 2 Z"
+            fill="none" stroke="var(--gridz)" stroke-width="1"/>
+    </svg>
+    <div class="drawer-content">
+      <span class="grip"><i></i><i></i><i></i><i></i></span>
+      <span class="dl-name">LINKED CONTROL</span>
+      <span class="dl-sub">四段联动 · 线性偏移</span>
+      <span class="dl-arrow">▾</span>
+    </div>
+  </div>
+</div>
+
+<div class="sub" style="margin-top:14px; max-width:940px;">
+  <b style="color:#9c8;">实操：</b>在 HIGH MID 段按住曲线纵向拖动 → EQ 曲线移动、<b>RANGE 钟型跟随</b>、顶部 Makeup 旋钮同步（三者联动）。
+  点频谱 ↔ 点抽屉 = 互斥弹出。S 边弧度如需调整（更弯/更直/反向）报一声。
+</div>
+
+<script>
+document.querySelectorAll('.tbtn').forEach(btn => btn.addEventListener('click', () => {
+  document.body.className = 'theme-' + btn.dataset.theme;
+  document.querySelectorAll('.tbtn').forEach(b => b.classList.toggle('on', b === btn));
+  drawAll();
+}));
+const C = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+
+const bandMakeup = [0, 3.2, -1.6, 0.8];
+const bandGR     = [0, 0, -2.9, 0];
+const gainOf     = i => bandMakeup[i] + bandGR[i];
+const fmtDb  = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+const knobFracOf = i => (bandMakeup[i] + 36) / 72;
+
+const drawer = document.getElementById('drawer'), linkedPop = document.getElementById('linkedPop');
+const popover = document.getElementById('popover');
+const showPopover = on => popover.style.display = on ? 'block' : 'none';
+drawer.addEventListener('click', e => {
+  e.stopPropagation();
+  const open = drawer.classList.toggle('open');
+  linkedPop.classList.toggle('open', open);
+  if (open) showPopover(false);
+});
+document.getElementById('popClose').addEventListener('click', e => { e.stopPropagation(); showPopover(false); });
+
+const METER_X = 886, METER_W = 32;
+const freqToX = f => Math.log(f/20)/Math.log(1000) * 920;
+const NX = [200, 1000, 6000].map(freqToX);
+const bandEdge = b => b < 3 ? NX[b] : 920;
+const specDbToY = db => 596 - ((db+100)/100) * 556;
+const gainToY  = g  => 596 - ((g+36)/48) * 556;
+const meterY   = db => 588 - Math.min(1, Math.max(0, (db+60)/60)) * 588;
+
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function specPts(off, rng, jit){
+  const pts = [];
+  for (let i = 0; i <= 320; i++){
+    const t = i/320, f = 20 * Math.pow(1000, t);
+    let db = -32 - 16*Math.log10(f/20) + (rng()-0.5)*jit;
+    if (f > 8000) db -= 7*Math.log10(f/8000);
+    pts.push([freqToX(f), specDbToY(db + off)]);
+  }
+  return pts;
+}
+const pathOf = (pts, close) => {
+  let d = 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
+  if (close) d += ` L${pts[pts.length-1][0].toFixed(1)} 596 L${pts[0][0].toFixed(1)} 596 Z`;
+  return d;
+};
+function bandBell(b, f){                   /* 每分区独立钟型：区内 sin²、带缘归零 */
+  const el = Math.log2(b === 0 ? 20   : [20,200,1000,6000][b]);
+  const eh = Math.log2(b === 3 ? 20000 : [200,1000,6000,20000][b]);
+  const u = (Math.log2(f) - el) / (eh - el);
+  if (u <= 0 || u >= 1) return 0;
+  const s = Math.sin(Math.PI * u);
+  return s * s;
+}
+function gainAt(f){
+  const l2 = Math.log2(f); let g = gainOf(0);
+  for (let i = 0; i < 3; i++){
+    const t = 1/(1 + Math.exp(-(l2 - Math.log2([200,1000,6000][i]))/0.30*4));
+    g = g*(1-t) + gainOf(i+1)*t;
+  }
+  return g;
+}
+
+function knobSVG(size, frac){
+  const r = size*0.40, ringW = Math.max(3, r*0.17), ringR = r - ringW/2 - 1;
+  const capR = ringR - ringW/2 - 1.5, cx = size/2, cy = size/2;
+  const pol = d => [cx + ringR*Math.sin(d*Math.PI/180), cy - ringR*Math.cos(d*Math.PI/180)];
+  const arc = (a0,a1) => { const p0 = pol(a0), p1 = pol(a1);
+    return `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${ringR.toFixed(1)} ${ringR.toFixed(1)} 0 ${(a1-a0)>180?1:0} 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`; };
+  const a0 = -135, a1 = 135, av = a0 + 270*Math.max(0, Math.min(1, frac)), pp = pol(av);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <path d="${arc(a0,a1)}" fill="none" stroke="${C('--track')}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <path d="${arc(a0,av)}" fill="none" stroke="${C('--accent')}" stroke-width="${ringW}" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy+1.5}" r="${capR}" fill="rgba(0,0,0,0.18)"/>
+    <circle cx="${cx}" cy="${cy}" r="${capR}" fill="${C('--knob')}" stroke="rgba(0,0,0,0.06)"/>
+    <line x1="${cx}" y1="${cy}" x2="${(cx+(pp[0]-cx)*capR/ringR*0.9).toFixed(1)}" y2="${(cy+(pp[1]-cy)*capR/ringR*0.9).toFixed(1)}"
+          stroke="#463f38" stroke-width="${Math.max(2, capR*0.1).toFixed(1)}" stroke-linecap="round"/>
+  </svg>`;
+}
+
+function drawScope(){
+  const svg = document.getElementById('scope');
+  const acc = C('--accent'), track = C('--track'), dim = C('--dim'),
+        text = C('--text'), grid = C('--grid'), gridz = C('--gridz'), infill = C('--infill'),
+        meterbg = C('--meterbg'), outlevel = C('--outlevel'), halo = C('--halo');
+  let s = '';
+
+  s += `<g opacity="0.8">`;
+  [+12, 0, -12, -24, -36].forEach(g =>
+    s += `<text x="28" y="${gainToY(g)+4}" fill="${acc}" font-size="10" text-anchor="end">${g>0?'+':''}${g}</text>`);
+  [0, -20, -40, -60, -80, -100].forEach(db =>
+    s += `<text x="878" y="${specDbToY(db)+4}" fill="${dim}" font-size="10" text-anchor="end">${db}</text>`);
+  s += `</g>`;
+
+  for (let db = 0; db >= -100; db -= 20)
+    s += `<line x1="0" y1="${specDbToY(db)}" x2="920" y2="${specDbToY(db)}" stroke="${db===0?gridz:grid}"/>`;
+  [50,100,500,2000,5000,10000].forEach(f =>
+    s += `<line x1="${freqToX(f).toFixed(1)}" y1="0" x2="${freqToX(f).toFixed(1)}" y2="588" stroke="${grid}"/>`);
+
+  const edges = [0, NX[0], NX[1], NX[2], 920];
+  const names = ['LOW','LOW MID','HIGH MID','HIGH'];
+  for (let b = 0; b < 4; b++){
+    const sel = b === 2, w = edges[b+1]-edges[b];
+    s += `<rect x="${edges[b]+1}" y="0" width="${w-2}" height="620" fill="${acc}" opacity="${sel?0.10:0.05}"/>`;
+    if (sel) s += `<rect x="${edges[b]+1}" y="0" width="${w-2}" height="620" fill="none" stroke="${acc}" stroke-width="1.5" opacity="0.9"/>`;
+  }
+
+  const rng1 = mulberry32(7), rng2 = mulberry32(7);
+  const pre = specPts(0, rng1, 5), post = specPts(3, rng2, 5);
+  s += `<path d="${pathOf(pre,true)}"  fill="${infill}" opacity="0.22"/>`;
+  s += `<path d="${pathOf(pre,false)}" fill="none" stroke="${infill}" stroke-width="1" opacity="0.55"/>`;
+  s += `<path d="${pathOf(post,true)}" fill="${acc}" opacity="0.33"/>`;
+  s += `<path d="${pathOf(post,false)}" fill="none" stroke="#fff" stroke-width="2" opacity="0.95"/>`;
+
+  /* ══ RANGE 钟型 layer（v9 修正：基准吸附 EQ 曲线，随 Makeup 拖动跟随） ══ */
+  {
+    const R = -12, f0 = 1000, f1 = 6000, N = 80;
+    const top = [], bot = [];
+    for (let i = 0; i <= N; i++){
+      const f = f0 * Math.pow(f1/f0, i/N);
+      const g = gainAt(f);                                  // ← 基准 = EQ 动态曲线
+      top.push([freqToX(f), gainToY(g)]);
+      bot.push([freqToX(f), gainToY(g + bandBell(2,f) * R)]); // Range 边缘 = EQ + 钟型·Range
+    }
+    const mapPts = a => a.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1));
+    const dTop = 'M' + mapPts(top).join(' L');
+    const dBot = 'M' + mapPts(bot).join(' L');
+    const dFill = 'M' + mapPts(top).join(' L') + ' L' + mapPts(bot.slice().reverse()).join(' L') + ' Z';
+    s += `<path d="${dFill}" fill="${acc}" opacity="0.14"/>`;       // EQ 曲线 ↔ Range 边缘之间
+    s += `<path d="${dBot}"  fill="none" stroke="${acc}" stroke-width="1.2" opacity="0.55"/>`;
+    const fc = Math.sqrt(f0*f1), lab = gainAt(fc) + bandBell(2,fc) * R;
+    s += `<text x="${freqToX(fc).toFixed(1)}" y="${(gainToY(lab)+13).toFixed(1)}" fill="${acc}" font-size="9.5" font-weight="600" text-anchor="middle" opacity="0.85">RANGE −12.00 dB</text>`;
+  }
+
+  let eqd = '';
+  for (let i = 0; i <= 240; i++){
+    const t = i/240, f = 20*Math.pow(1000,t);
+    eqd += (i?' L':'M') + freqToX(f).toFixed(1) + ' ' + gainToY(gainAt(f)).toFixed(1);
+  }
+  s += `<line x1="0" y1="${gainToY(0).toFixed(1)}" x2="920" y2="${gainToY(0).toFixed(1)}" stroke="${gridz}" opacity="0.7"/>`;
+  s += `<path d="${eqd}" fill="none" stroke="${acc}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+
+  ['200','1.0k','6.0k'].forEach((t, e) => {
+    const x = NX[e], dragging = (e === 2);
+    s += `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="588" stroke="${dragging?acc:gridz}" stroke-width="${dragging?2:1.5}" opacity="${dragging?0.8:1}"/>`;
+    s += `<rect x="${(x-6).toFixed(1)}" y="500" width="12" height="26" rx="4" fill="${dragging?acc:track}" stroke="${gridz}"/>`;
+    if (dragging){
+      s += `<rect x="${(x-24).toFixed(1)}" y="470" width="48" height="22" rx="6" fill="${acc}"/>`;
+      s += `<text x="${x.toFixed(1)}" y="485" fill="#fff8f8" font-size="11" font-weight="600" text-anchor="middle">${t}</text>`;
+    }
+  });
+
+  for (let b = 0; b < 4; b++){
+    const cx = (edges[b] + edges[b+1]) / 2;
+    s += `<text x="${edges[b]+10}" y="44" fill="${acc}" font-size="11.5" font-weight="600" opacity="0.9">${names[b]}</text>`;
+    s += `<g transform="translate(${cx-20},52)">${knobSVG(40, knobFracOf(b))}</g>`;
+    s += `<text x="${cx}" y="106" fill="${text}" font-size="10" text-anchor="middle">MAKEUP ${fmtDb(bandMakeup[b])} dB</text>`;
+    const sx = bandEdge(b) - 28, lit = [(b===1?1:0),(b===3?1:0),0,0];
+    for (let j = 0; j < 4; j++)
+      s += `<circle cx="${sx.toFixed(1)}" cy="${42 + j*9}" r="3" fill="${lit[j]?acc:track}"/>`;
+  }
+
+  {
+    const x = NX[1] - 40, y0 = 118;
+    ['S','M','B','Δ'].forEach((t, j) => {
+      const y = y0 + j*30, on = j === 0;
+      s += `<rect x="${x.toFixed(1)}" y="${y}" width="24" height="24" rx="6" fill="${on?acc:track}" opacity="0.95"/>`;
+      s += `<text x="${x+12}" y="${y+16}" fill="${on?'#fff8f8':dim}" font-size="11.5" font-weight="600" text-anchor="middle">${t}</text>`;
+    });
+    s += `<text x="${freqToX(170).toFixed(1)}" y="330" fill="${acc}" font-size="10" font-weight="600" text-anchor="middle" opacity="0.8">↕ 纵向拖曲线 = MAKEUP</text>`;
+  }
+
+  [[50,'50'],[100,'100'],[200,'200'],[500,'500'],[1000,'1k'],[2000,'2k'],[5000,'5k'],[10000,'10k']]
+    .forEach(([f,t]) => s += `<text x="${freqToX(f).toFixed(1)}" y="554" fill="${dim}" font-size="10.5" text-anchor="middle" opacity="0.8">${t}</text>`);
+
+  {
+    const barW = 13, b1 = METER_X + 2, b2 = METER_X + 4 + barW;
+    s += `<defs><linearGradient id="outg" x1="0" y1="0" x2="0" y2="588" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="${acc}"/><stop offset="1" stop-color="${outlevel}"/></linearGradient></defs>`;
+    s += `<rect x="${METER_X}" y="0" width="${METER_W}" height="588" fill="${meterbg}"/>`;
+    [0,-20,-40,-60].forEach(db => {
+      const y = meterY(db).toFixed(1);
+      s += `<line x1="${METER_X}" y1="${y}" x2="${METER_X+METER_W}" y2="${y}" stroke="${grid}"/>`;
+    });
+    const yIn = meterY(-12), pIn = meterY(-8);
+    s += `<rect x="${b1}" y="${yIn.toFixed(1)}" width="${barW}" height="${(588-yIn).toFixed(1)}" fill="${infill}" opacity="0.35"/>`;
+    s += `<rect x="${b1}" y="${(pIn-2).toFixed(1)}" width="${barW}" height="2" fill="${C('--light')==='1'?infill:'#ffffff'}"/>`;
+    const yOut = meterY(-6), pOut = meterY(-3.5);
+    s += `<rect x="${b2}" y="${yOut.toFixed(1)}" width="${barW}" height="${(588-yOut).toFixed(1)}" fill="url(#outg)"/>`;
+    s += `<rect x="${b2}" y="${(pOut-2).toFixed(1)}" width="${barW}" height="2" fill="${C('--light')==='1'?infill:'#ffffff'}"/>`;
+    const haloAttr = `paint-order="stroke" stroke="${halo}" stroke-width="2.5" stroke-linejoin="round"`;
+    s += `<text x="${b1+barW/2}" y="13" fill="${text}" font-size="9" font-weight="600" text-anchor="middle" ${haloAttr}>IN</text>`;
+    s += `<text x="${b2+barW/2}" y="13" fill="${text}" font-size="9" font-weight="600" text-anchor="middle" ${haloAttr}>OUT</text>`;
+    s += `<text x="893" y="581" fill="${text}" font-size="8" font-weight="500" text-anchor="middle">−12.0</text>`;
+    s += `<text x="912" y="581" fill="${text}" font-size="8" font-weight="500" text-anchor="middle">−6.0</text>`;
+  }
+
+  svg.innerHTML = s;
+}
+
+function drawPopKnobs(){
+  const K = [
+    ['THRESHOLD','−20.00 dB','−60…0',    0.667],
+    ['RANGE',    '−12.00 dB','−30…+30',  0.3  ],
+    ['ATTACK',   '10 ms',    '0.1…200',  0.37 ],
+    ['RELEASE',  '100 ms',   '10…1000',  0.35 ],
+    ['MIX',      '100 %',    '0…100',    1.0  ],
+  ];
+  document.getElementById('popKnobs').innerHTML = K.map(([n,v,r,f]) =>
+    `<div style="text-align:center; width:88px;">
+       <div class="cap"${n==='RANGE'?' style="color:var(--accent);"':''}>${n}</div>
+       <div style="margin:1px 0;">${knobSVG(48, f)}</div>
+       <div style="font-size:10.5px; color:var(--text);">${v}</div>
+       <div style="font-size:8px; color:var(--dim); opacity:.75;">${r}</div>
+     </div>`).join('');
+}
+
+function linkKnobsHTML(){
+  const L = [
+    ['Threshold','Δ +0.00 dB', 0.5], ['Attack','Δ +0.0 ms', 0.5], ['Release','Δ +0.0 ms', 0.5],
+    ['Makeup','Δ +0.00 dB', 0.5], ['Mix','100 %', 1.0],
+  ];
+  return L.map(([n,v,f]) =>
+    `<div class="lk-cell">
+       <div class="cap">${n}<span class="grip"><i></i><i></i><i></i><i></i></span></div>
+       <div style="margin:1px 0;">${knobSVG(52, f)}</div>
+       <div style="font-size:10.5px; color:var(--accent);">${v}</div>
+     </div>`).join('');
+}
+
+function drawAll(){
+  drawScope(); drawPopKnobs();
+  const html = linkKnobsHTML();
+  document.getElementById('linkKnobs').innerHTML = html;
+  document.getElementById('linkKnobs2').innerHTML = html;
+}
+drawAll();
+
+/* O5-A：曲线纵向拖 = Makeup（顶部旋钮 + RANGE 钟型同步跟随）；O6：互斥弹出 */
+const scopeEl = document.getElementById('scope');
+let drag = null;
+function bandAtX(x){ return x < NX[0] ? 0 : x < NX[1] ? 1 : x < NX[2] ? 2 : 3; }
+function inNoDragZone(x, y){
+  if (y < 112 || y > 552) return true;
+  for (const nx of NX) if (Math.abs(x - nx) < 8) return true;
+  const b = bandAtX(x), e = bandEdge(b);
+  if (x > e - 46 && x < e - 10 && y < 260) return true;
+  if (y > 462 && y < 535) return true;
+  return false;
+}
+scopeEl.addEventListener('mousedown', e => {
+  const r = scopeEl.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (inNoDragZone(x, y)) return;
+  drag = { band: bandAtX(x), y0: e.clientY, m0: bandMakeup[bandAtX(x)], moved: false };
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const dy = e.clientY - drag.y0;
+  if (Math.abs(dy) > 2) drag.moved = true;
+  bandMakeup[drag.band] = Math.max(-36, Math.min(36, drag.m0 - dy * 0.10));
+  drawScope();
+});
+window.addEventListener('mouseup', () => {
+  const wasClick = drag && !drag.moved;
+  drag = null;
+  if (wasClick){ showPopover(true); linkedPop.classList.remove('open'); drawer.classList.remove('open'); }
+});
+</script>
+</body>
+</html>
