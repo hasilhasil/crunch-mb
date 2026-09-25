@@ -18,6 +18,12 @@ public:
     void pushSamples (const float* mono, int numSamples);
     bool processPendingFrame();
     void setTilt (float dbPerOct);
+    // Pro-MB Analyzer 面板对标：
+    //   Speed     — release 时间常数（Pro-MB：fast/medium/slow；无 attack 参数）
+    //   Freeze    — 停止下落，显示历史最大包络（Pro-MB: "stop falling, max over time"）
+    void setReleaseMs (double ms) noexcept { releaseMs_.store (juce::jmax (1.0, ms)); }
+    void setFrozen (bool f)        noexcept { frozen_.store (f); }
+    bool isFrozen() const          noexcept { return frozen_.load(); }
     int  getFftSize() const noexcept { return fftSize_; }   // SpectrumEngine 饥饿检测用
     void getLevels (juce::Array<float>& freqs, juce::Array<float>& levelsDb, int numPoints);
 
@@ -68,7 +74,9 @@ private:
     std::vector<float> prevLevelsDb_;
     bool hasFrame_ = false;
 
-    static constexpr double kReleaseMs = 20.0;
+    static constexpr double kReleaseMs = 20.0;    // 默认 = Medium（Pro-MB 默认档）
+    std::atomic<double> releaseMs_ { kReleaseMs };
+    std::atomic<bool>  frozen_    { false };     // Pro-MB Freeze
     float fadeIn_ = 0.0f;      // B1：起始软启动进度 0→1（每帧按 1−exp(−dt/τ) 推进）
     juce::uint32 lastFrameMs_ = 0;
 

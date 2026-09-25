@@ -596,7 +596,27 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     item ("Quality:", "Medium");
     item ("Lookahead:", "Off");
 
-    // IN/OUT 读数（B5：与电平表同步做 250ms 节流，避免数字跳动无法阅读）
+    // Analyzer 按钮（Pro-MB 底栏 Analyzer 对标）——占据原 IN 读数位置；
+    // 点击弹出二级菜单（Resolution / Speed / Tilt / Freeze / Pre-Post）。
+    // 视觉样式（图标+高亮态）留到 global bar 流程统一做，这里先给可点的胶囊。
+    auto anBtn = juce::Rectangle<float> (W * 0.5f - sx (150.0f), y0 + sy (5.0f),
+                                         sx (104.0f), sy (22.0f));
+    g.setColour (analyzerFreeze_ ? pal_.accent : pal_.track);
+    g.fillRoundedRectangle (anBtn, sx (11.0f));
+    g.setColour (analyzerFreeze_ ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+    {
+        juce::String resTag = (analyzerFftSize_ == 1024) ? "1024"
+                           : (analyzerFftSize_ == 2048) ? "2048"
+                           : (analyzerFftSize_ == 4096) ? "4096" : "8192";
+        static const char* kSpd[3] = { "FAST", "MED", "SLOW" };
+        g.drawText (juce::String ("ANALYZER ") + resTag + " " + kSpd[juce::jlimit (0, 2, analyzerSpeed_)]
+                    + (analyzerTilt_ > 0.01f ? " TILT" : "")
+                    + (analyzerFreeze_ ? " FRZ" : ""),
+                    anBtn, juce::Justification::centred);
+    }
+
+    // OUT 读数（保留）
     g.setColour (pal_.dim);
     g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
     const juce::uint32 nowMs = juce::Time::getMillisecondCounter();
@@ -606,11 +626,8 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
         labelOutDb_ = meterOutDb_;
         nextMeterLabelMs_ = nowMs + 250;
     }
-    const juce::String inTxt = "IN " + juce::String (labelInDb_, 2) + " dB";
-    const juce::String outTxt = "OUT " + juce::String (labelOutDb_, 2) + " dB";
-    g.drawText (inTxt,  juce::Rectangle<float> (W - sx (250.0f), y0 + sy (8.0f), sx (110.0f), sy (16.0f)),
-                juce::Justification::centredRight);
-    g.drawText (outTxt, juce::Rectangle<float> (W - sx (130.0f), y0 + sy (8.0f), sx (110.0f), sy (16.0f)),
+    g.drawText ("OUT " + juce::String (labelOutDb_, 2) + " dB",
+                juce::Rectangle<float> (W - sx (130.0f), y0 + sy (8.0f), sx (110.0f), sy (16.0f)),
                 juce::Justification::centredRight);
 
     // BYPASS 胶囊（C10：可点按；命中区与绘制严格一致）
@@ -1040,15 +1057,21 @@ void DisplayView::drawSpectrum (juce::Graphics& g)
         return;
 
     // B1（用户验收指定）：主题色(accent) = Pre，灰(inFill) = Post
-    g.setColour (pal_.accent.withAlpha (0.30f));
-    g.fillPath (spectrumPreFill_);
-    g.setColour (pal_.accent.withAlpha (0.95f));
-    g.strokePath (spectrumPreStroke_, juce::PathStrokeType (2.0f));
-
-    g.setColour (pal_.inFill.withAlpha (0.20f));
-    g.fillPath (spectrumPostFill_);
-    g.setColour (pal_.inFill.withAlpha (0.80f));
-    g.strokePath (spectrumPostStroke_, juce::PathStrokeType (1.5f));
+    // Pro-MB Analyzer 面板：Pre/Post 可独立开关
+    if (analyzerPreOn_)
+    {
+        g.setColour (pal_.accent.withAlpha (0.30f));
+        g.fillPath (spectrumPreFill_);
+        g.setColour (pal_.accent.withAlpha (0.95f));
+        g.strokePath (spectrumPreStroke_, juce::PathStrokeType (2.0f));
+    }
+    if (analyzerPostOn_)
+    {
+        g.setColour (pal_.inFill.withAlpha (0.20f));
+        g.fillPath (spectrumPostFill_);
+        g.setColour (pal_.inFill.withAlpha (0.80f));
+        g.strokePath (spectrumPostStroke_, juce::PathStrokeType (1.5f));
+    }
 }
 
 void DisplayView::drawRangeBell (juce::Graphics& g)
@@ -1554,6 +1577,13 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     if (popoverOpen_ && hitTestPopoverClose (p))
     {
         togglePopover (false);
+        return;
+    }
+
+    // 0a) Analyzer 按钮（Pro-MB 底栏 Analyzer 对标，当前占原 IN 读数位）
+    if (hitTestAnalyzerButton (p))
+    {
+        openAnalyzerMenu();
         return;
     }
 
@@ -2182,6 +2212,74 @@ void DisplayView::drawPopoverKnobs (juce::Graphics& g)
                 juce::Rectangle<float> (r.getX() + sx (10.0f), r.getBottom() - sy (18.0f),
                                         sx (120.0f), 12.0f),
                 juce::Justification::centredLeft);
+}
+
+// ============================================================
+// Analyzer 设置面板（Pro-MB "Spectrum analyzer" 对标）
+//   Resolution: Low 1024 / Medium 2048 / High 4096 / Maximum 8192
+//   Speed:      release 时间常数 fast 10ms / medium 20ms / slow 60ms
+//   Tilt:       绕 1kHz 的 dB/oct（Pro-MB 默认 4.5；MB 版默认 0）
+//   Freeze:     停止下落，显示历史最大包络
+//   Pre/Post:   双层频谱开关
+// ============================================================
+bool DisplayView::hitTestAnalyzerButton (juce::Point<float> p) const
+{
+    // global bar 中部（原 IN 读数区域）
+    const float W = (float) getWidth();
+    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
+    const float x = W * 0.5f - sx (150.0f);
+    return juce::Rectangle<float> (x, y0, sx (104.0f), sy (22.0f)).contains (p);
+}
+
+void DisplayView::applyAnalyzerSettings()
+{
+    auto& eng = proc_.getSpectrumEngine();
+    eng.setResolution (analyzerFftSize_);
+    static const double kSpeedTauMs[3] = { 10.0, 20.0, 60.0 };   // fast / medium / slow
+    eng.setReleaseMs (kSpeedTauMs[juce::jlimit (0, 2, analyzerSpeed_)]);
+    eng.setTilt (analyzerTilt_);
+    eng.setFrozen (analyzerFreeze_);
+}
+
+void DisplayView::openAnalyzerMenu()
+{
+    juce::PopupMenu m;
+
+    m.addItem ("Pre spectrum",  true, analyzerPreOn_,  [this] { analyzerPreOn_  = ! analyzerPreOn_; });
+    m.addItem ("Post spectrum", true, analyzerPostOn_, [this] { analyzerPostOn_ = ! analyzerPostOn_; });
+    m.addSeparator();
+
+    juce::PopupMenu res;
+    res.addItem ("Low (1024)",     true, analyzerFftSize_ == 1024, [this] { analyzerFftSize_ = 1024; });
+    res.addItem ("Medium (2048)",  true, analyzerFftSize_ == 2048, [this] { analyzerFftSize_ = 2048; });
+    res.addItem ("High (4096)",    true, analyzerFftSize_ == 4096, [this] { analyzerFftSize_ = 4096; });
+    res.addItem ("Maximum (8192)", true, analyzerFftSize_ == 8192, [this] { analyzerFftSize_ = 8192; });
+    m.addSubMenu ("Resolution", res);
+
+    juce::PopupMenu spd;
+    spd.addItem ("Fast",   true, analyzerSpeed_ == 0, [this] { analyzerSpeed_ = 0; });
+    spd.addItem ("Medium", true, analyzerSpeed_ == 1, [this] { analyzerSpeed_ = 1; });
+    spd.addItem ("Slow",   true, analyzerSpeed_ == 2, [this] { analyzerSpeed_ = 2; });
+    m.addSubMenu ("Speed", spd);
+
+    juce::PopupMenu tilt;
+    tilt.addItem ("Off (0 dB/oct)", true, std::abs (analyzerTilt_) < 0.01f,
+                  [this] { analyzerTilt_ = 0.0f; });
+    tilt.addItem ("1.5 dB/oct", true, std::abs (analyzerTilt_ - 1.5f) < 0.01f,
+                  [this] { analyzerTilt_ = 1.5f; });
+    tilt.addItem ("3.0 dB/oct", true, std::abs (analyzerTilt_ - 3.0f) < 0.01f,
+                  [this] { analyzerTilt_ = 3.0f; });
+    tilt.addItem ("4.5 dB/oct (default)", true, std::abs (analyzerTilt_ - 4.5f) < 0.01f,
+                  [this] { analyzerTilt_ = 4.5f; });
+    tilt.addItem ("6.0 dB/oct", true, std::abs (analyzerTilt_ - 6.0f) < 0.01f,
+                  [this] { analyzerTilt_ = 6.0f; });
+    m.addSubMenu ("Tilt", tilt);
+
+    m.addItem ("Freeze (max over time)", true, analyzerFreeze_,
+               [this] { analyzerFreeze_ = ! analyzerFreeze_; });
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+        [this] (int) { applyAnalyzerSettings(); repaint(); });
 }
 
 // ---------------- 入口 ----------------

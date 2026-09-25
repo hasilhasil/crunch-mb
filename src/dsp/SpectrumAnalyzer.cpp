@@ -91,14 +91,15 @@ void SpectrumAnalyzer::processFrame (const float* data)
                         : juce::jlimit (0.001, 0.100, (double) (nowMs - lastFrameMs_) / 1000.0);
     lastFrameMs_ = nowMs;
 
-    const float kRelease = (float) (1.0 - std::exp (-dt / (kReleaseMs * 0.001)));
+    const float kRelease = (float) (1.0 - std::exp (-dt / (releaseMs_.load() * 0.001)));
     // B1：起始软启动——编辑器刚打开时从绘图区底部按同一时间常数升起，
     // 避免频谱"突然跳满"。（release 曲线与 Crunch EQ 完全一致，均为 τ 计算）
     if (! hasFrame_)
         fadeIn_ = 0.0f;
     else
-        fadeIn_ = juce::jmin (1.0f, fadeIn_ + (float) (1.0 - std::exp (-dt / (kReleaseMs * 0.001))));
+        fadeIn_ = juce::jmin (1.0f, fadeIn_ + (float) (1.0 - std::exp (-dt / (releaseMs_.load() * 0.001))));
 
+    const bool frozen = frozen_.load();
     float maxDelta = 0.0f;
 
     for (int k = 0; k <= fftSize_ / 2; ++k)
@@ -113,10 +114,12 @@ void SpectrumAnalyzer::processFrame (const float* data)
         float& current = binLevelsDb_[(size_t) k];
         const float prev = hasFrame_ ? prevLevelsDb_[(size_t) k] : db;
 
-        if (db >= prev)
-            current = db;
+        if (frozen)
+            current = juce::jmax (prev, db);          // Pro-MB Freeze：只升不降 = 历史最大包络
+        else if (db >= prev)
+            current = db;                             // attack = 瞬时（无独立参数，与 Pro-MB 同）
         else
-            current = prev + (db - prev) * kRelease;
+            current = prev + (db - prev) * kRelease;   // release = 一阶指数（τ 可调）
 
         prevLevelsDb_[(size_t) k] = current;
         maxDelta = juce::jmax (maxDelta, std::abs (current - prev));

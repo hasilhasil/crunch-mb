@@ -103,6 +103,20 @@ public:
     void syncPopoverFromParamsForTest() { syncPopoverFromParams(); }
     void openLinkedDrawerForTest() { toggleLinkedDrawer (true); }
     juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
+    // T38 Analyzer 测试钩子
+    bool hitTestAnalyzerButtonForTest (float x, float y) const
+    { return hitTestAnalyzerButton (juce::Point<float> (x, y)); }
+    int   getAnalyzerFftSizeForTest() const { return analyzerFftSize_; }
+    int   getAnalyzerSpeedForTest()   const { return analyzerSpeed_; }
+    float getAnalyzerTiltForTest()    const { return analyzerTilt_; }
+    bool  getAnalyzerFreezeForTest()  const { return analyzerFreeze_; }
+    bool  getAnalyzerPreOnForTest()   const { return analyzerPreOn_; }
+    bool  getAnalyzerPostOnForTest()  const { return analyzerPostOn_; }
+    void  setAnalyzerFftSizeForTest (int v)   { analyzerFftSize_ = v; }
+    void  setAnalyzerSpeedForTest (int v)     { analyzerSpeed_ = v; }
+    void  setAnalyzerTiltForTest (float v)    { analyzerTilt_ = v; }
+    void  setAnalyzerFreezeForTest (bool v)   { analyzerFreeze_ = v; }
+    void  applyAnalyzerSettingsForTest()      { applyAnalyzerSettings(); }
     float curveYAtFreqForTest (float f) const { return gainToY (curveDbAtFreq (f)); }
     float rangeEdgeYForTest (int b) const
     {
@@ -302,6 +316,16 @@ private:
 
     void openFreqEditor (int index, int band);
     void closeFreqEditor (bool apply);
+    // ---- Analyzer 设置（Pro-MB 面板对标） ----
+    int   analyzerFftSize_ = 2048;      // 1024/2048/4096/8192
+    int   analyzerSpeed_   = 1;         // 0=fast 1=medium 2=slow
+    float analyzerTilt_    = 0.0f;      // dB/oct（Pro-MB 默认 4.5；MB 版默认 0 = 不加）
+    bool  analyzerFreeze_  = false;
+    bool  analyzerPreOn_   = true;
+    bool  analyzerPostOn_  = true;
+    void openAnalyzerMenu();
+    void applyAnalyzerSettings();
+    bool hitTestAnalyzerButton (juce::Point<float> p) const;
     bool isAllBypassed() const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;

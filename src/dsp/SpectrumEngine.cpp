@@ -80,10 +80,14 @@ void SpectrumEngine::analyseTick()
     if (sr != currentRate_)
     {
         currentRate_ = sr;
-        analyzerPre_.prepare (sr, 2048);
-        analyzerPost_.prepare (sr, 2048);
+        analyzerPre_.prepare (sr, currentFftSize_.load());
+        analyzerPost_.prepare (sr, currentFftSize_.load());
         analyzerPre_.setTilt (tilt_.load());
         analyzerPost_.setTilt (tilt_.load());
+        analyzerPre_.setReleaseMs (releaseMs_.load());
+        analyzerPost_.setReleaseMs (releaseMs_.load());
+        analyzerPre_.setFrozen (frozen_.load());
+        analyzerPost_.setFrozen (frozen_.load());
         publishedSlot_.store (-1);      // 采样率变化后旧数据不得显示
         writeSlot_ = 0;
         uiSlot_    = -1;
@@ -91,6 +95,35 @@ void SpectrumEngine::analyseTick()
         lastFrameMs_ = 0;
         return;
     }
+
+    // Pro-MB Resolution 热切换（分析线程内 safe-point 重建）
+    const int wantFft = wantFftSize_.load();
+    if (wantFft != currentFftSize_.load())
+    {
+        currentFftSize_.store (wantFft);
+        analyzerPre_.prepare (sr, wantFft);
+        analyzerPost_.prepare (sr, wantFft);
+        analyzerPre_.setTilt (tilt_.load());
+        analyzerPost_.setTilt (tilt_.load());
+        analyzerPre_.setReleaseMs (releaseMs_.load());
+        analyzerPost_.setReleaseMs (releaseMs_.load());
+        analyzerPre_.setFrozen (frozen_.load());
+        analyzerPost_.setFrozen (frozen_.load());
+        publishedSlot_.store (-1);         // 旧分辨率数据不得显示
+        writeSlot_ = 0;
+        uiSlot_    = -1;
+        freqs_.clear();
+        lastFrameMs_ = 0;
+        return;
+    }
+
+    // 速度/冻结实时下发（每 tick 都转发，开销可忽略）
+    analyzerPre_.setReleaseMs  (releaseMs_.load());
+    analyzerPost_.setReleaseMs (releaseMs_.load());
+    analyzerPre_.setFrozen     (frozen_.load());
+    analyzerPost_.setFrozen    (frozen_.load());
+    analyzerPre_.setTilt       (tilt_.load());
+    analyzerPost_.setTilt      (tilt_.load());
 
     // 始终排空（MB 恒双层：Pre + Post）
     drain (fifoPre_,  ringPre_,  analyzerPre_);

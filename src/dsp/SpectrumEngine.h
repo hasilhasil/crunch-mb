@@ -33,6 +33,11 @@ public:
     // processor prepareToPlay / UI 线程
     void setSampleRate (double rate)  noexcept { sampleRate_.store (rate); }
     void setTilt (float dbPerOct)     noexcept { tilt_.store (dbPerOct); }
+    // Pro-MB Analyzer 面板对标项
+    void setResolution (int fftSize)  noexcept { wantFftSize_.store (fftSize); }   // 1024/2048/4096/8192
+    void setReleaseMs (double ms)     noexcept { releaseMs_.store (ms); }
+    void setFrozen (bool f)           noexcept { frozen_.store (f); }
+    int  getResolution() const        noexcept { return currentFftSize_.load(); }
     void setUIActive (bool isActive)  noexcept;
     // 彻底停线程（Editor 析构时调；之后 setUIActive(true) 可复活）
     void suspend() noexcept;
@@ -55,6 +60,10 @@ private:
 
     std::atomic<double> sampleRate_ { 48000.0 };
     std::atomic<float>  tilt_      { 0.0f };
+    std::atomic<int>    wantFftSize_    { 2048 };   // Pro-MB Medium（默认）
+    std::atomic<int>    currentFftSize_ { 2048 };
+    std::atomic<double> releaseMs_ { 20.0 };        // Pro-MB Speed=Medium
+    std::atomic<bool>   frozen_    { false };       // Pro-MB Freeze
     std::atomic<bool>   uiActive_  { false };
     std::atomic<bool>   running_   { true };   // false = 线程挂起（长睡眠，不耗调度）
     juce::uint32 lastHeartbeatMs_ = 0;         // #8：衰减帧时间步进基准

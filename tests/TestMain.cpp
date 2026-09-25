@@ -3853,6 +3853,58 @@ static void testKnobGeometry()
     }
 }
 
+// ------------------------------------------------------------
+// T38 Analyzer 设置面板接线回归（Pro-MB 对标：Resolution/Speed/Tilt/Freeze/Pre-Post）
+// ------------------------------------------------------------
+static void testAnalyzerSettings()
+{
+    std::cout << "\n--- T38 Analyzer 设置（Pro-MB 对标）---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T38.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+
+    {
+        const float bx = 920.0f * 0.5f - 150.0f + 52.0f;
+        const float by = 620.0f - 32.0f + 16.0f;
+        check (dv.hitTestAnalyzerButtonForTest (bx, by), "T38.1 Analyzer 按钮可命中", "");
+        check (! dv.hitTestAnalyzerButtonForTest (10.0f, 300.0f), "T38.2 绘图区不误触 Analyzer 按钮", "");
+    }
+
+    check (dv.getAnalyzerFftSizeForTest() == 2048, "T38.3 默认 Resolution = Medium 2048",
+           juce::String (dv.getAnalyzerFftSizeForTest()));
+    dv.setAnalyzerFftSizeForTest (8192);
+    dv.applyAnalyzerSettingsForTest();
+    check (dv.getAnalyzerFftSizeForTest() == 8192, "T38.4 Resolution → Maximum 8192",
+           juce::String (dv.getAnalyzerFftSizeForTest()));
+
+    for (int s = 0; s < 3; ++s)
+    {
+        dv.setAnalyzerSpeedForTest (s);
+        dv.applyAnalyzerSettingsForTest();
+        check (dv.getAnalyzerSpeedForTest() == s, "T38.5 Speed 档位可设",
+               juce::String (dv.getAnalyzerSpeedForTest()));
+    }
+
+    check (std::abs (dv.getAnalyzerTiltForTest()) < 0.01f, "T38.6 默认 Tilt = 0（MB 版）", "");
+    dv.setAnalyzerTiltForTest (4.5f);
+    dv.applyAnalyzerSettingsForTest();
+    check (std::abs (dv.getAnalyzerTiltForTest() - 4.5f) < 0.01f, "T38.7 Tilt → 4.5 dB/oct",
+           juce::String (dv.getAnalyzerTiltForTest()));
+
+    check (! dv.getAnalyzerFreezeForTest(), "T38.8 默认 Freeze off", "");
+    dv.setAnalyzerFreezeForTest (true);
+    dv.applyAnalyzerSettingsForTest();
+    check (dv.getAnalyzerFreezeForTest(), "T38.9 Freeze on → 峰值包络保持", "");
+
+    check (dv.getAnalyzerPreOnForTest() && dv.getAnalyzerPostOnForTest(), "T38.10 Pre/Post 默认开", "");
+}
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -3899,6 +3951,7 @@ int main()
     testLinkedDrawer();             // T35 Phase 5.2 LINKED 抽屉
     testPopover();                  // T36 Phase 5.3 Popover 交互
     testKnobGeometry();             // T37 Knob 弧心/帽心同心
+    testAnalyzerSettings();         // T38 Analyzer 设置（Pro-MB 对标）
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
