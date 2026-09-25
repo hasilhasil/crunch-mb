@@ -112,11 +112,18 @@ public:
     bool  getAnalyzerFreezeForTest()  const { return analyzerFreeze_; }
     bool  getAnalyzerPreOnForTest()   const { return analyzerPreOn_; }
     bool  getAnalyzerPostOnForTest()  const { return analyzerPostOn_; }
+    void  setAnalyzerPreOnForTest (bool v)  { analyzerPreOn_ = v; }
+    void  setAnalyzerPostOnForTest (bool v) { analyzerPostOn_ = v; }
     void  setAnalyzerFftSizeForTest (int v)   { analyzerFftSize_ = v; }
     void  setAnalyzerSpeedForTest (int v)     { analyzerSpeed_ = v; }
     void  setAnalyzerTiltForTest (float v)    { analyzerTilt_ = v; }
     void  setAnalyzerFreezeForTest (bool v)   { analyzerFreeze_ = v; }
     void  applyAnalyzerSettingsForTest()      { applyAnalyzerSettings(); }
+    bool  hasSpectrumFrameForTest() const     { return spectrumHasFrame_; }
+    bool  spectrumPathsReadyForTest() const
+    {
+        return ! spectrumPreFill_.isEmpty() && ! spectrumPreStroke_.isEmpty();
+    }
     float curveYAtFreqForTest (float f) const { return gainToY (curveDbAtFreq (f)); }
     float rangeEdgeYForTest (int b) const
     {

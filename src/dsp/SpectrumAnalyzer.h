@@ -30,6 +30,13 @@ public:
     juce::uint32 getFrameCounter() const noexcept { return frameCounter_; }
     float getLastFrameDeltaDb() const noexcept    { return lastFrameDeltaDb_; }
 
+    // 诊断/测试钩子：直接读仓级 dB（避开 fadeIn 与对数轴插值，便于验证平滑公式）
+    int   getNumBins() const noexcept { return (int) binLevelsDb_.size(); }
+    float getBinLevelDb (int bin) const
+    {
+        return binLevelsDb_[(size_t) juce::jlimit (0, getNumBins() - 1, bin)];
+    }
+
 private:
     void processFrame (const float* data);
     void rebuildLookup (int numPoints);

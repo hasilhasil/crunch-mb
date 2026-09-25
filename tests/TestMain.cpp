@@ -3905,6 +3905,290 @@ static void testAnalyzerSettings()
 
     check (dv.getAnalyzerPreOnForTest() && dv.getAnalyzerPostOnForTest(), "T38.10 Pre/Post 默认开", "");
 }
+// ------------------------------------------------------------
+// T39 Analyzer 内部测试（用户指定）：单选项独立验证 + 组合验证
+//   A. 单选项：Speed(τ) / Tilt / Freeze / Resolution / Pre-Post 视觉
+//   B. 组合：Speed×Resolution / Freeze×Speed / Freeze×Tilt / Pre/Post×Resolution / 默认复位
+// ------------------------------------------------------------
+namespace {
+
+// 推入一个整窗正弦并处理一帧（dt 由调用方的 sleep 控制）
+void feedSineFrame (SpectrumAnalyzer& an, double sr, float freq, float amp, int fftSize)
+{
+    std::vector<float> buf ((size_t) fftSize);
+    for (int i = 0; i < fftSize; ++i)
+        buf[(size_t) i] = amp * (float) std::sin (6.283185307 * freq * (double) i / sr);
+    an.pushSamples (buf.data(), fftSize);
+    an.processPendingFrame();
+}
+
+// 目标频率附近的最高仓级 dB
+float peakBinDbNear (const SpectrumAnalyzer& an, double sr, float freq, float tol = 0.30f)
+{
+    const double binHz = sr / (double) an.getFftSize();
+    const int k0 = juce::jmax (0, (int) ((freq * (1.0f - tol)) / binHz));
+    const int k1 = juce::jmin (an.getNumBins() - 1, (int) ((freq * (1.0f + tol)) / binHz));
+    float best = -300.0f;
+    for (int k = k0; k <= k1; ++k)
+        best = juce::jmax (best, an.getBinLevelDb (k));
+    return best;
+}
+
+const double kTauMs[3] = { 10.0, 20.0, 60.0 };   // fast / medium / slow
+
+} // namespace
+
+static void testAnalyzerOptions()
+{
+    std::cout << "\n--- T39 Analyzer 单选项 + 组合（内部测试）---\n";
+    const double sr = 48000.0;
+    const int    fft = 2048;
+
+    // ============ A. 单选项 ============
+
+    // ---- A1 Speed（release τ）----
+    // 1000Hz 从 0.5 → 0.05 阶跃。注意两点：
+    //   · 分析器 FIFO 有 hop 滞后（advance < push），需多推几帧轻样本才能灌满窗口
+    //   · 紧凑循环使 dt 被钳到 1ms（确定性），三档 τ 分离度最高
+    {
+        float lv[3] = { 0, 0, 0 };
+        for (int s = 0; s < 3; ++s)
+        {
+            SpectrumAnalyzer an;
+            an.prepare (sr, fft);
+            an.setReleaseMs (kTauMs[s]);
+            for (int i = 0; i < 6; ++i)  feedSineFrame (an, sr, 1000.0f, 0.5f, fft);
+            const float loud = peakBinDbNear (an, sr, 1000.0f);
+            for (int i = 0; i < 40; ++i) feedSineFrame (an, sr, 1000.0f, 0.05f, fft);
+            lv[s] = peakBinDbNear (an, sr, 1000.0f);
+            std::cout << "  Speed[" << s << "] tau=" << kTauMs[s] << "ms: loud=" << loud
+                      << "dB 阶跃后=" << lv[s] << "dB" << std::endl;
+            check (loud > -20.0f, "T39.1 响帧仓级正常", juce::String (loud));
+            check (lv[s] < loud - 2.0f, "T39.1b 阶跃后确实下落", juce::String (lv[s]));
+        }
+        check (lv[0] < lv[1] && lv[1] < lv[2],
+               "T39.2 Speed 三档下落速度递增（fast < medium < slow）",
+               juce::String (lv[0]) + " / " + juce::String (lv[1]) + " / " + juce::String (lv[2]));
+        check (lv[2] - lv[0] > 1.0f, "T39.3 fast 与 slow 差 ≥1dB（档位可感知）",
+               juce::String (lv[2] - lv[0]));
+    }
+
+    // ---- A2 Tilt（绕 1kHz）----
+    {
+        SpectrumAnalyzer an;
+        an.prepare (sr, fft);
+        an.setReleaseMs (20.0);
+        an.setTilt (0.0f);
+        feedSineFrame (an, sr, 4000.0f, 0.5f, fft);
+        juce::Thread::sleep (16);
+        const float t0 = peakBinDbNear (an, sr, 4000.0f);
+        an.setTilt (4.5f);                       // attack 瞬时，下一帧即生效
+        feedSineFrame (an, sr, 4000.0f, 0.5f, fft);
+        juce::Thread::sleep (16);
+        const float t1 = peakBinDbNear (an, sr, 4000.0f);
+        std::cout << "  Tilt 4kHz: 0dB/oct=" << t0 << " → 4.5dB/oct=" << t1
+                  << " (Δ=" << (t1 - t0) << "dB)" << std::endl;
+        check (std::abs ((t1 - t0) - 9.0f) < 2.0f, "T39.4 Tilt 4.5dB/oct 在 4kHz 处 +9dB",
+               juce::String (t1 - t0));
+    }
+
+    // ---- A3 Freeze（只升不降 = 历史最大包络）----
+    {
+        SpectrumAnalyzer an;
+        an.prepare (sr, fft);
+        an.setReleaseMs (20.0);
+        an.setFrozen (true);
+        for (int i = 0; i < 6; ++i) feedSineFrame (an, sr, 1000.0f, 0.5f, fft);
+        const float held = peakBinDbNear (an, sr, 1000.0f);
+        for (int i = 0; i < 20; ++i) feedSineFrame (an, sr, 1000.0f, 0.05f, fft);
+        const float afterQuiet = peakBinDbNear (an, sr, 1000.0f);
+        std::cout << "  Freeze: held=" << held << " 静音后=" << afterQuiet << std::endl;
+        check (std::abs (afterQuiet - held) < 0.3f, "T39.5 Freeze 开 → 静音不掉（峰值保持）",
+               juce::String (afterQuiet) + " vs " + juce::String (held));
+
+        // 关掉 Freeze → 应当重新下落
+        an.setFrozen (false);
+        for (int i = 0; i < 40; ++i) feedSineFrame (an, sr, 1000.0f, 0.05f, fft);
+        const float resumed = peakBinDbNear (an, sr, 1000.0f);
+        std::cout << "  Freeze 关 → " << resumed << std::endl;
+        check (resumed < held - 3.0f, "T39.6 Freeze 关 → 恢复下落", juce::String (resumed));
+    }
+
+    // ---- A4 Resolution（FFT 点数 + 仓数）----
+    {
+        SpectrumAnalyzer an;
+        an.prepare (sr, 1024);
+        check (an.getFftSize() == 1024 && an.getNumBins() == 513, "T39.7 Low 1024 → 513 仓", "");
+        an.prepare (sr, 8192);
+        check (an.getFftSize() == 8192 && an.getNumBins() == 4097, "T39.8 Maximum 8192 → 4097 仓", "");
+        // 功能：切换后仍能出帧
+        feedSineFrame (an, sr, 1000.0f, 0.5f, 8192);
+        juce::Thread::sleep (16);
+        check (peakBinDbNear (an, sr, 1000.0f) > -20.0f, "T39.9 8192 档仍能出帧", "");
+    }
+
+    // ============ B. 组合 ============
+
+    // ---- B1 Speed=Slow + Resolution=Maximum ----
+    {
+        SpectrumAnalyzer an;
+        an.prepare (sr, 8192);
+        an.setReleaseMs (60.0);
+        for (int i = 0; i < 6;  ++i) feedSineFrame (an, sr, 1000.0f, 0.5f, 8192);
+        const float loud = peakBinDbNear (an, sr, 1000.0f);
+        for (int i = 0; i < 40; ++i) feedSineFrame (an, sr, 1000.0f, 0.05f, 8192);
+        const float afterStep = peakBinDbNear (an, sr, 1000.0f);
+        std::cout << "  Slow+8192: loud=" << loud << " 阶跃后=" << afterStep << std::endl;
+        check (loud > -20.0f && afterStep < loud - 2.0f,
+               "T39.10 Slow + Maximum 8192：出帧正常且下落变慢", juce::String (afterStep));
+    }
+
+    // ---- B2 Freeze + Slow（Freeze 优先，不应下落）----
+    {
+        SpectrumAnalyzer an;
+        an.prepare (sr, 2048);
+        an.setReleaseMs (60.0);
+        an.setFrozen (true);
+        for (int i = 0; i < 3; ++i) { feedSineFrame (an, sr, 1000.0f, 0.5f, fft); juce::Thread::sleep (16); }
+        const float held = peakBinDbNear (an, sr, 1000.0f);
+        for (int i = 0; i < 5; ++i) { feedSineFrame (an, sr, 1000.0f, 0.02f, fft); juce::Thread::sleep (16); }
+        const float afterQuiet = peakBinDbNear (an, sr, 1000.0f);
+        std::cout << "  Freeze+Slow: held=" << held << " 静音后=" << afterQuiet << std::endl;
+        check (std::abs (afterQuiet - held) < 0.3f, "T39.11 Freeze + Slow：Freeze 优先（不掉）",
+               juce::String (afterQuiet));
+    }
+
+    // ---- B3 Freeze + Tilt（冻结包络保留 tilt 偏移）----
+    // 正确预期：Freeze 锁住的是"当时的包络"，所以 tilt 开/关两个都冻结的实例，
+    // 开 tilt 的应高 ~9dB（4kHz 处）。关 tilt 不能把已冻结的包络拉低。
+    {
+        SpectrumAnalyzer anOn, anOff;
+        anOn.prepare  (sr, fft); anOff.prepare  (sr, fft);
+        anOn.setReleaseMs (20.0); anOff.setReleaseMs (20.0);
+        anOn.setFrozen (true);    anOff.setFrozen (true);
+        anOn.setTilt (4.5f);      anOff.setTilt (0.0f);
+        for (int i = 0; i < 6; ++i)
+        {
+            feedSineFrame (anOn,  sr, 4000.0f, 0.5f, fft);
+            feedSineFrame (anOff, sr, 4000.0f, 0.5f, fft);
+        }
+        const float withTilt = peakBinDbNear (anOn,  sr, 4000.0f);
+        const float noTilt   = peakBinDbNear (anOff, sr, 4000.0f);
+        std::cout << "  Freeze+Tilt: with4.5=" << withTilt << " tilt0=" << noTilt
+                  << " (Δ=" << (withTilt - noTilt) << "dB)" << std::endl;
+        check (std::abs ((withTilt - noTilt) - 9.0f) < 2.5f,
+               "T39.12 Freeze + Tilt：冻结包络保留 tilt 偏移（+9dB @4kHz）",
+               juce::String (withTilt - noTilt));
+
+        // 冻结后关 tilt → 包络不得下降（max 语义）
+        anOn.setTilt (0.0f);
+        for (int i = 0; i < 4; ++i) feedSineFrame (anOn, sr, 4000.0f, 0.5f, fft);
+        const float afterOff = peakBinDbNear (anOn, sr, 4000.0f);
+        check (std::abs (afterOff - withTilt) < 0.3f,
+               "T39.12b 冻结后关 tilt 不拉低已保持包络",
+               juce::String (afterOff) + " vs " + juce::String (withTilt));
+    }
+
+    // ---- B4 Fast + Tilt 同时生效 ----（见上）
+
+    // ============ C. 视觉层：Pre/Post 开关真的影响画面 ============
+    // 走真实引擎（后台线程 + 无锁三缓冲），喂 1kHz 正弦，出帧后离屏渲染数像素
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        mb->setEditorActive (true);          // 唤醒频谱分析线程
+
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+
+        // 边喂边等帧（B1 fadeIn + #8 保持/衰减：必须持续喂）。
+        // ⚠️ tickForTest() 内部的 timerCallback 会消费引擎帧（getLatest），
+        //    所以这里只能观察 DisplayView 自己的帧状态/路径，不能重复调 getLatest。
+        const int nn = 512;
+        juce::AudioBuffer<float> buf (4, nn);
+        juce::MidiBuffer midi;
+        bool got = false;
+        for (int t = 0; t < 400 && ! got; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                const float v = 0.5f * (float) std::sin (6.283185 * 1000.0 * kk / 48000.0);
+                buf.setSample (0, i, v); buf.setSample (1, i, v);
+            }
+            proc->processBlock (buf, midi);
+            dv.tickForTest();                      // 拾取帧 + 重建路径
+            if (dv.hasSpectrumFrameForTest() && dv.spectrumPathsReadyForTest())
+                got = true;
+            if (! got) juce::Thread::sleep (20);
+        }
+        check (got, "T39.14 引擎帧到达 UI 层（频谱可见性前置）", "");
+
+        if (got)
+        {
+            // 用"渲染差分"度量每个开关的视觉贡献（与颜色语义无关，不受 EQ 曲线/
+            // Range 钟型同色干扰）：基线渲染一次，切换后再渲染一次，数变化像素。
+            auto render = [&] ()
+            {
+                juce::Image img (juce::Image::ARGB, 920, 620, true);
+                { juce::Graphics g (img); dv.paintForTest (g); }
+                return img;
+            };
+            auto diffCount = [] (const juce::Image& a, const juce::Image& b) -> int
+            {
+                int n = 0;
+                for (int y = 34; y < 586; ++y)
+                    for (int x = 2; x < 880; ++x)
+                    {
+                        const juce::Colour ca = a.getPixelAt (x, y);
+                        const juce::Colour cb = b.getPixelAt (x, y);
+                        const int d = std::abs (ca.getRed()   - cb.getRed())
+                                    + std::abs (ca.getGreen() - cb.getGreen())
+                                    + std::abs (ca.getBlue()  - cb.getBlue());
+                        if (d > 24) ++n;
+                    }
+                return n;
+            };
+
+            dv.setAnalyzerPreOnForTest (true);
+            dv.setAnalyzerPostOnForTest (true);
+            for (int s = 0; s < 4; ++s) dv.tickForTest();
+            const juce::Image base = render();
+
+            dv.setAnalyzerPreOnForTest (false);
+            for (int s = 0; s < 4; ++s) dv.tickForTest();
+            const int dPreOff = diffCount (base, render());
+
+            dv.setAnalyzerPreOnForTest (true);
+            dv.setAnalyzerPostOnForTest (false);
+            for (int s = 0; s < 4; ++s) dv.tickForTest();
+            const int dPostOff = diffCount (base, render());
+
+            dv.setAnalyzerPreOnForTest (false);
+            for (int s = 0; s < 4; ++s) dv.tickForTest();
+            const int dBothOff = diffCount (base, render());
+
+            std::cout << "  渲染差分: 关Pre=" << dPreOff << "px  关Post=" << dPostOff
+                      << "px  全关=" << dBothOff << "px" << std::endl;
+
+            check (dPreOff  > 400, "T39.15 关 Pre → 画面明显变化（Pre 层视觉生效）",
+                   juce::String (dPreOff));
+            check (dPostOff > 200, "T39.16 关 Post → 画面明显变化（Post 层视觉生效）",
+                   juce::String (dPostOff));
+            check (dBothOff > dPreOff && dBothOff > dPostOff,
+                   "T39.17 Pre/Post 全关 → 变化量大于单关任一层（两层叠加生效）",
+                   juce::String (dBothOff));
+
+            // 还原开关，避免影响后续用例
+            dv.setAnalyzerPreOnForTest (true);
+            dv.setAnalyzerPostOnForTest (true);
+        }
+        mb->setEditorActive (false);
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -3952,6 +4236,7 @@ int main()
     testPopover();                  // T36 Phase 5.3 Popover 交互
     testKnobGeometry();             // T37 Knob 弧心/帽心同心
     testAnalyzerSettings();         // T38 Analyzer 设置（Pro-MB 对标）
+    testAnalyzerOptions();          // T39 Analyzer 单选项 + 组合（内部测试）
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
