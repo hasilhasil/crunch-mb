@@ -1587,6 +1587,32 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // 0b) Popover 内部控制：滑杆行 + EXPERT（旋钮由 Knob 子组件自行处理命中）
+    if (popoverOpen_)
+    {
+        int sk = -1;
+        if (hitTestPopSlider (p, sk))
+        {
+            popSliderDrag_ = sk;
+            popSliderDragX0_ = p.x;
+            popSliderDragV0_ = popoverSliders_[(size_t) sk];
+            // 二态项（KNEE/EXT）：点击即翻转，不进入拖动
+            if (sk >= 1)
+            {
+                applyPopSlider (sk, popoverSliders_[(size_t) sk] > 0.5f ? 0.0 : 1.0);
+                popSliderDrag_ = -1;
+            }
+            repaint();
+            return;
+        }
+        if (popExpertRect().contains (p))
+        {
+            popoverExpertOpen_ = ! popoverExpertOpen_;
+            repaint();
+            return;
+        }
+    }
+
     // 0) LINKED 抽屉梯形按钮（§5.2）：点开/收起
     if (hitTestDrawerButton (p))
     {
@@ -1723,6 +1749,17 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 {
     const auto p = e.position;
 
+    // Popover 滑杆拖动（仅连续项：RATIO）
+    if (popSliderDrag_ == 0)
+    {
+        const float w = popSliderRect (0).getWidth();
+        float frac = popSliderDragV0_ + (p.x - popSliderDragX0_) / juce::jmax (1.0f, w);
+        frac = juce::jlimit (0.0f, 1.0f, frac);
+        applyPopSlider (0, 1.0 + frac * 19.0);      // ratio 1..20
+        repaint();
+        return;
+    }
+
     // O5-A：曲线上按下 → 真正发生位移才接管为 Makeup 拖拽，并收起 Popover
     if (curvePending_)
     {
@@ -1818,6 +1855,7 @@ void DisplayView::mouseUp (const juce::MouseEvent&)
     dragAxisLocked_ = false;
     curvePending_ = false;
     rangePending_ = false;
+    popSliderDrag_ = -1;      // ⚠️ 必须复位：否则滑杆拖拽状态会吞掉后续所有拖拽
 }
 void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 {
@@ -2020,8 +2058,13 @@ void DisplayView::togglePopover (bool open)
     popoverOpen_ = open;
     popoverBand_ = open ? selectedBand_ : -1;
     if (open)
+    {
         toggleLinkedDrawer (false);               // O6 方案1：互斥
-    syncPopoverFromParams();
+        ensurePopoverKnobs();
+        syncPopoverFromParams();
+        syncPopoverSliders();
+    }
+    layoutPopoverKnobs();
     repaint();
 }
 
@@ -2057,6 +2100,28 @@ void DisplayView::syncPopoverFromParams()
             (float) ((popoverValues_[(size_t) k] - paramRangeMinOf (ids[k]))
                    / (double) juce::jmax (1.0e-6f, paramRangeMaxOf (ids[k]) - paramRangeMinOf (ids[k]))));
     }
+    // 旋钮控件同步（不触发回调）
+    for (int k = 0; k < kPopKnobs; ++k)
+        if (popKnobs_[(size_t) k] != nullptr)
+            popKnobs_[(size_t) k]->setValue (popoverValues_[(size_t) k], false);
+}
+
+void DisplayView::syncPopoverSliders()
+{
+    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
+    popoverSliders_[0] = getParamPhysical (Param::bandRatio (b));
+    popoverSliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");
+    popoverSliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");
+    popoverSliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");
+}
+
+float DisplayView::getParamNorm (const juce::String& id) const
+{
+    for (auto* p : proc_.getParameters())
+        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            if (pw->getParameterID() == id)
+                return pw->getValue();
+    return 0.0f;
 }
 
 float DisplayView::paramRangeMinOf (const juce::String& id) const
@@ -2137,81 +2202,204 @@ void DisplayView::drawPopoverKnobs (juce::Graphics& g)
     const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
     const auto r = popoverRect();
 
-    static const char* kLabels[5] = { "THRESHOLD", "RANGE", "ATTACK", "RELEASE", "MIX" };
     static const char* kRange [5] = { "-60..0 dB", "-30..30 dB", "0..200 ms", "10..1000 ms", "0..100 %" };
+    const float unitW = (r.getWidth() - sx (16.0f)) / (float) kPopKnobs;
 
-    const float unitW = (r.getWidth() - sx (16.0f)) / 5.0f;
-    for (int k = 0; k < 5; ++k)
+    // ---- 5 旋钮：弧/帽/指针/标签/数值由 Knob 子组件绘制，这里只补底板与范围标注 ----
+    for (int k = 0; k < kPopKnobs; ++k)
     {
-        const float cx = r.getX() + sx (8.0f) + unitW * (float) k + unitW * 0.5f;
-        const float knobD = sy (46.0f);
-        const float cy = r.getY() + sy (52.0f) + knobD * 0.5f;
+        const auto kr = popKnobRect (k);
+        const float cx = kr.getCentreX();
+        const bool hot = kr.contains (lastMousePos_);
+        g.setColour (pal_.track.withAlpha ((hot ? 0.50f : 0.28f) * a));
+        g.fillRoundedRectangle (kr.expanded (sx (2.0f)), sx (6.0f));
 
-        // 旋钮弧（与 Knob 同一角度约定：12 点起顺时针）
-        const float norm = juce::jlimit (0.0f, 1.0f, popoverNormalisedValue_ [(size_t) k]);
-        const float a0 = juce::MathConstants<float>::pi * 1.25f;      // 7:30
-        const float a1 = juce::MathConstants<float>::pi * 3.75f;      // 4:30
-        const float av = a0 + norm * (a1 - a0);
-        const float thick = juce::jmax (2.0f, knobD * 0.11f);
-        const float ringR = knobD * 0.5f - thick * 0.5f;
-        juce::Path track, val;
-        track.addCentredArc (cx, cy, ringR, ringR, 0.0f, a0, a1, true);
-        g.setColour (pal_.track.withMultipliedAlpha (a));
-        g.strokePath (track, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
-                                                   juce::PathStrokeType::rounded));
-        val.addCentredArc (cx, cy, ringR, ringR, 0.0f, a0, av, true);
-        g.setColour (pal_.accent.withMultipliedAlpha (a));
-        g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
-                                                 juce::PathStrokeType::rounded));
-        // 帽 + 指针（延伸到弧内缘，与蓝弧头对头）
-        const float capR = knobD * 0.5f - thick - 1.0f;
-        g.setColour (pal_.knob.withMultipliedAlpha (a));
-        g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.8f * a));
-        g.drawLine (cx + std::sin (av) * capR * 0.22f, cy - std::cos (av) * capR * 0.22f,
-                    cx + std::sin (av) * ringR,          cy - std::cos (av) * ringR,
-                    juce::jmax (1.5f, knobD * 0.07f));
-
-        // 标签 + 范围标注 + 数值
         g.setColour (pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
-        g.drawText (kLabels[k],
-                    juce::Rectangle<float> (cx - unitW * 0.5f, r.getY() + sy (36.0f), unitW, 12.0f),
-                    juce::Justification::centredTop);
+        g.setFont (MBTheme::font (MBTheme::regular(), 8.5f));
         g.drawText (kRange[k],
-                    juce::Rectangle<float> (cx - unitW * 0.5f, r.getY() + sy (36.0f) + sy (11.0f), unitW, 11.0f),
-                    juce::Justification::centredTop);
-        g.setColour (pal_.text.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
-        g.drawText (juce::String (popoverValues_[(size_t) k], 1),
-                    juce::Rectangle<float> (cx - unitW * 0.5f, r.getY() + sy (104.0f), unitW, 12.0f),
+                    juce::Rectangle<float> (cx - unitW * 0.5f, kr.getBottom() - sy (12.0f),
+                                            unitW, 11.0f),
                     juce::Justification::centredTop);
     }
 
-    // 滑杆行：RATIO + KNEE(HARD/SOFT) + EXT(INT/EXT)（§6.2）
-    const float rowY = r.getY() + sy (142.0f);
-    const float rowW = (r.getWidth() - sx (20.0f)) / 3.0f;
+    // ---- 滑杆行：RATIO / KNEE(HARD-SOFT) / EXT(INT-EXT) ----
     for (int k = 0; k < 3; ++k)
     {
-        const float x0 = r.getX() + sx (10.0f) + rowW * (float) k;
-        const float bw = rowW - sx (10.0f);
-        g.setColour (pal_.track.withMultipliedAlpha (a));
-        g.fillRoundedRectangle (x0, rowY, bw, sy (22.0f), sx (11.0f));
-        g.setColour (pal_.dim.withMultipliedAlpha (a));
+        const auto sr = popSliderRect (k);
+        const bool hot = (popSliderDrag_ == k) || sr.contains (lastMousePos_);
+        g.setColour (pal_.track.withAlpha ((hot ? 0.75f : 0.50f) * a));
+        g.fillRoundedRectangle (sr, sx (11.0f));
+
+        float frac = 0.0f;
+        if (k == 0)      frac = (float) ((popoverSliders_[0] - 1.0) / 19.0);
+        else if (k == 1) frac = (float) popoverSliders_[1];
+        else             frac = (float) popoverSliders_[2];
+        frac = juce::jlimit (0.0f, 1.0f, frac);
+        g.setColour (pal_.accent.withAlpha (0.30f * a));
+        g.fillRoundedRectangle (sr.withWidth (juce::jmax (2.0f, sr.getWidth() * frac)), sx (11.0f));
+
+        g.setColour (hot ? pal_.text.withMultipliedAlpha (a) : pal_.dim.withMultipliedAlpha (a));
         g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-        const juce::String txt = (k == 0) ? "RATIO  4.0 : 1"
-                              : (k == 1) ? "KNEE  SOFT" : "EXT  INT";
-        g.drawText (txt, juce::Rectangle<float> (x0, rowY, bw, sy (22.0f)),
-                    juce::Justification::centred);
+        const juce::String txt = (k == 0) ? ("RATIO  " + juce::String (popoverSliders_[0], 1) + " : 1")
+                              : (k == 1) ? (popoverSliders_[1] > 0.5f ? "KNEE  SOFT" : "KNEE  HARD")
+                                         : (popoverSliders_[2] > 0.5f ? "EXT  SIDECHAIN" : "EXT  INTERNAL");
+        g.drawText (txt, sr, juce::Justification::centred);
+
+        if (hot)
+        {
+            g.setColour (pal_.accent.withMultipliedAlpha (a));
+            g.setFont (MBTheme::font (MBTheme::regular(), 8.0f));
+            g.drawText (juce::String::fromUTF8 ("\xE2\x9F\x95"), sr.withTrimmedLeft (sr.getWidth() - sx (16.0f)),
+                        juce::Justification::centred);
+        }
     }
 
-    // EXPERT 折叠区入口（§6.2/§6.3，放 DETECTOR/LOOKAHEAD 等低频操作项）
+    // ---- EXPERT 折叠区（§6.2/§6.3：DETECTOR / LOOKAHEAD 低频操作项） ----
+    const auto er = popExpertRect();
     g.setColour (pal_.dim.withMultipliedAlpha (a));
-    g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
-    g.drawText ("EXPERT  " + juce::String::fromUTF8 ("\xE2\x96\xB6"),
-                juce::Rectangle<float> (r.getX() + sx (10.0f), r.getBottom() - sy (18.0f),
-                                        sx (120.0f), 12.0f),
-                juce::Justification::centredLeft);
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.0f));
+    g.drawText (juce::String ("EXPERT  ") + (popoverExpertOpen_ ? "\xE2\x96\xBC" : "\xE2\x96\xB6"),
+                er, juce::Justification::centredLeft);
+
+    if (popoverExpertOpen_)
+    {
+        g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
+        g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
+        g.drawText ("DETECTOR " + juce::String (popoverSliders_[3] > 0.5f ? "RMS" : "PEAK")
+                    + "    LOOKAHEAD " + juce::String (popoverSliders_[4] == 0 ? "OFF"
+                                                    : popoverSliders_[4] == 1 ? "1 ms" : "3 ms"),
+                    er.withY (er.getBottom() + sy (2.0f)),
+                    juce::Justification::centredLeft);
+    }
+}
+
+// ============================================================
+// Phase 5.3.2：Popover 控件真接 APVTS
+//   · 5 个旋钮 = THRESHOLD / RANGE / ATTACK / RELEASE / MIX（v1.7 已删 MAKEUP）
+//   · 滑杆行 = RATIO / KNEE(HARD-SOFT) / EXT(INT-EXT)
+//   · EXPERT 折叠区 = DETECTOR(PEAK-RMS) / LOOKAHEAD(Off-1ms-3ms)
+//   · 复用 Knob 控件（拖动/双击输入/滚轮/Shift/Ctrl），不另写交互
+// ============================================================
+
+juce::Rectangle<float> DisplayView::popExpertRect() const
+{
+    const auto r = popoverRect();
+    return juce::Rectangle<float> (r.getX() + sx (10.0f), r.getBottom() - sy (18.0f),
+                                   sx (140.0f), 12.0f);
+}
+
+void DisplayView::applyPopSlider (int k, double v)
+{
+    popoverSliders_[(size_t) k] = v;
+    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
+    switch (k)
+    {
+        case 0:  setParamPhysical (Param::bandRatio (b), (float) v);  break;
+        case 1:  setParamNorm ("band" + juce::String (b) + "Knee", v > 0.5f ? 1.0f : 0.0f);     break;
+        case 2:  setParamNorm ("band" + juce::String (b) + "Ext",  v > 0.5f ? 1.0f : 0.0f);     break;
+        case 3:  setParamNorm ("band" + juce::String (b) + "Detector", v > 0.5f ? 1.0f : 0.0f); break;
+        default: break;   // Lookahead 是全局参数（k=4 不在此写）
+    }
+    syncPopoverFromParams();
+    curvePathsValid_ = false;
+}
+juce::String DisplayView::popParamId (int k) const
+{
+    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
+    const juce::String p = "band" + juce::String (b);
+    switch (k)
+    {
+        case 0:  return Param::bandThreshold (b);
+        case 1:  return Param::bandRange (b);
+        case 2:  return Param::bandAttack (b);
+        case 3:  return Param::bandRelease (b);
+        default: return Param::bandMix (b);
+    }
+}
+
+juce::Rectangle<float> DisplayView::popKnobRect (int k) const
+{
+    const auto r = popoverRect();
+    const float unitW = (r.getWidth() - sx (16.0f)) / (float) kPopKnobs;
+    const float x = r.getX() + sx (8.0f) + unitW * (float) k + 2.0f;
+    return juce::Rectangle<float> (x, r.getY() + sy (34.0f), unitW - 4.0f, sy (74.0f));
+}
+
+juce::Rectangle<float> DisplayView::popSliderRect (int k) const
+{
+    const auto r = popoverRect();
+    const float rowW = (r.getWidth() - sx (20.0f)) / 3.0f;
+    const float x0 = r.getX() + sx (10.0f) + rowW * (float) k;
+    return juce::Rectangle<float> (x0, r.getY() + sy (142.0f), rowW - sx (10.0f), sy (22.0f));
+}
+
+bool DisplayView::hitTestPopSlider (juce::Point<float> p, int& kOut) const
+{
+    if (! popoverOpen_) return false;
+    for (int k = 0; k < 3; ++k)
+        if (popSliderRect (k).contains (p)) { kOut = k; return true; }
+    return false;
+}
+
+void DisplayView::ensurePopoverKnobs()
+{
+    if (popKnobsReady_) return;
+
+    // 参数范围与显示格式（§6.2：旋钮下显示范围标注）
+    struct Cfg { double mn, mx, iv, def; int dec; const char* suf; const char* label; };
+    const Cfg cfgs[kPopKnobs] = {
+        { -60.0,   0.0, 0.1, -20.0, 1, "dB", "THRESHOLD" },
+        { -30.0,  30.0, 0.1,  -6.0, 1, "dB", "RANGE"     },
+        {   0.1, 200.0, 0.1,  10.0, 1, "ms", "ATTACK"    },
+        {  10.0, 1000.0, 0.1, 100.0, 1, "ms", "RELEASE"  },
+        {   0.0, 100.0, 1.0, 100.0, 0, "%",  "MIX"       },
+    };
+
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        auto* kb = new Knob();
+        kb->setRange (cfgs[k].mn, cfgs[k].mx, cfgs[k].iv);
+        kb->setDefaultValue (cfgs[k].def);
+        kb->setValue (cfgs[k].def, false);
+        kb->setLabel (cfgs[k].label);
+        kb->setValueSuffix (cfgs[k].suf);
+        kb->setDecimals (cfgs[k].dec);
+        kb->setKnobDiameter (38.0f);
+        kb->setShowLabel (true);
+        kb->setPalette (pal_);
+        const int kk = k;
+        kb->onValueChange = [this, kk] (double v) { applyPopoverKnob (kk, v); };
+        addAndMakeVisible (kb);
+        kb->setVisible (false);
+        popKnobs_[(size_t) k].reset (kb);
+    }
+    popKnobsReady_ = true;
+}
+
+void DisplayView::layoutPopoverKnobs()
+{
+    if (! popKnobsReady_) return;
+    const float a = popoverOpen_ ? 1.0f : 0.0f;
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        if (popKnobs_[(size_t) k] == nullptr) continue;
+        const auto rc = popKnobRect (k);
+        const float y = rc.getY() + (1.0f - a) * rc.getHeight();
+        popKnobs_[(size_t) k]->setBounds ((int) rc.getX(), (int) y,
+                                          (int) rc.getWidth(), (int) rc.getHeight());
+        popKnobs_[(size_t) k]->setVisible (popoverOpen_ || popoverAnim_ > 0.001f);
+    }
+    if (! popoverOpen_ && popoverAnim_ <= 0.001f)
+        for (auto& kb : popKnobs_)
+            if (kb != nullptr) kb->setVisible (false);
+}
+
+void DisplayView::applyPopoverKnob (int k, double v)
+{
+    setParamPhysical (popParamId (k), (float) v);
+    syncPopoverFromParams();
+    // 与显示区联动：段增益/Range 变化 → 曲线与 Range 层需重建
+    curvePathsValid_ = false;
 }
 
 // ============================================================

@@ -2321,6 +2321,11 @@ static void testInteraction()
 
     // ---- (3) 曲线纵向拖动 = Makeup（O5-A）----
     {
+        // Popover 打开时会接管面板内的点击（§6）——先点顶栏空白收起，再测曲线拖拽
+        dv.mouseDownForTest (430.0f, 15.0f);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+        check (! dv.isPopoverOpenForTest(), "T21.3b 顶栏空白点击收起 Popover", "");
+
         dv.mouseDownForTest (freqToXforTest (60.0f), 400.0f);
         dv.tickForTest();                                                  // 建立曲线数据
         const float before = paramF (Param::bandMakeup (0));
@@ -3699,28 +3704,37 @@ static void testPopover()
 
     // ⑧ Range 缘同样"点=开面板，拖=改 range"
     {
-        dv.mouseDownForTest (midOf (0), 120.0f);          // 先打开一个
+    {
+        // 先收起 Popover（§6：点空白收起），否则面板内的点击归面板
+        dv.mouseDownForTest (430.0f, 15.0f);
         for (int t = 0; t < 40; ++t) dv.tickForTest();
-        dv.mouseDownForTest (430.0f, 15.0f);               // 点空白收起
-        for (int t = 0; t < 40; ++t) dv.tickForTest();
-        // 避开频点（band1 频点≈391）：取段内偏左 20% 处
-        // 先选中 band1（hitTestRangeEdge 只对 selectedBand_ 判定），再取段内偏左 20% 处
-        // （避开 band1 频点≈391）
+        check (! dv.isPopoverOpenForTest(), "T36.11e 已收起 Popover", "");
+
+        // 选中 band1（hitTestRangeEdge 只对 selectedBand_ 判定；段内偏左 20% 避开频点）
         dv.mouseDownForTest (midOf (1) - (edges[2] - edges[1]) * 0.20f, 120.0f);
         for (int t = 0; t < 30; ++t) dv.tickForTest();
         check (dv.getSelectedBandForTest() == 1, "T36.11b 先选中 band1", "");
+
         float rx = 0.0f, ry = 0.0f;
         const bool foundEdge = dv.findRangeEdgePointForTest (1, rx, ry);
         check (foundEdge, "T36.11c band1 Range 缘可命中", "");
         if (! foundEdge) return;
-        // 选中 band1 时 Popover 会自动打开；先点空白收起，才能验证"点 Range 缘→打开"
+
+        // ⑧a 点 Range 缘 → Popover 打开（先确保是收起态，断言才有意义）
         dv.mouseDownForTest (430.0f, 15.0f);
         for (int t = 0; t < 40; ++t) dv.tickForTest();
         check (! dv.isPopoverOpenForTest(), "T36.11d 已收起", "");
         dv.mouseDownForTest (rx, ry);
         for (int t = 0; t < 30; ++t) dv.tickForTest();
         check (dv.isPopoverOpenForTest(), "T36.12 点 Range 缘 → Popover 打开（不抢占）", "");
-        // 拖动 → 改 range
+
+        // ⑧b 拖动 Range 缘 → 改 range；拖动时 Popover 收起
+        //    ⚠️ 必须先收起 Popover：面板打开时面板内的点击归面板（§6），
+        //       而 Range 缘点会落在 RATIO 滑杆区域内。
+        dv.mouseDownForTest (430.0f, 15.0f);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        check (! dv.isPopoverOpenForTest(), "T36.12b 拖动前已收起 Popover", "");
+
         const float rBefore = dv.getRangeDisplay (1);
         dv.mouseDownForTest (rx, ry);
         dv.mouseDragForTest (rx, ry - 60.0f);
@@ -3732,6 +3746,7 @@ static void testPopover()
                juce::String (rBefore) + " -> " + juce::String (rAfter));
         check (! dv.isPopoverOpenForTest(), "T36.14 拖动 Range 缘时 Popover 收起", "");
     }
+}
 }
 
 // ------------------------------------------------------------
@@ -4189,6 +4204,154 @@ static void testAnalyzerOptions()
     }
 }
 
+// ------------------------------------------------------------
+// T40 Phase 5.3.2 Popover 控件接线回归
+//   5 旋钮写 APVTS / 滑杆行（Ratio 拖动 + Knee/Ext 二态翻转）/
+//   EXPERT 折叠 / mouseUp 复位滑杆拖拽态（曾因未复位吞掉后续拖拽）
+// ------------------------------------------------------------
+static void testPopoverControls()
+{
+    std::cout << "\n--- T40 Phase 5.3.2 Popover 控件接线 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T40.0 处理器实例可访问", "");
+
+    const auto phys = [&] (const juce::String& id)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == id)
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                        return rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+        return -999.0f;
+    };
+    const auto normOf = [&] (const juce::String& id)
+    {
+        for (auto* p : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+                if (pw->getParameterID() == id) return pw->getValue();
+        return -1.0f;
+    };
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+    // 打开 HM 段（band2）Popover
+    dv.mouseDownForTest (freqToXforTest (2449.0f), 150.0f);
+    for (int t = 0; t < 40; ++t) dv.tickForTest();
+    check (dv.isPopoverOpenForTest() && dv.getPopoverBandForTest() == 2,
+           "T40.1 打开 band2 Popover", juce::String (dv.getPopoverBandForTest()));
+
+    // ① 5 旋钮：直接驱动 Knob 的 onValueChange（等价于用户拖动），参数应写入 APVTS
+    {
+        const float thBefore = phys (Param::bandThreshold (2));
+        const float rgBefore = phys (Param::bandRange (2));
+        const float atBefore = phys (Param::bandAttack (2));
+        const float rlBefore = phys (Param::bandRelease (2));
+        const float mxBefore = phys (Param::bandMix (2));
+
+        dv.applyPopoverKnobForTest (0, -32.0);      // Threshold
+        dv.applyPopoverKnobForTest (1,  12.0);      // Range（正值 = 向上压缩）
+        dv.applyPopoverKnobForTest (2,  45.0);      // Attack
+        dv.applyPopoverKnobForTest (3, 320.0);      // Release
+        dv.applyPopoverKnobForTest (4,  60.0);      // Mix
+
+        std::cout << "  Threshold " << thBefore << " -> " << phys (Param::bandThreshold (2))
+                  << " | Range " << rgBefore << " -> " << phys (Param::bandRange (2))
+                  << " | Attack " << atBefore << " -> " << phys (Param::bandAttack (2))
+                  << " | Release " << rlBefore << " -> " << phys (Param::bandRelease (2))
+                  << " | Mix " << mxBefore << " -> " << phys (Param::bandMix (2)) << std::endl;
+
+        check (std::abs (phys (Param::bandThreshold (2)) - (-32.0f)) < 0.2f,
+               "T40.2 Threshold 旋钮写入 APVTS", juce::String (phys (Param::bandThreshold (2))));
+        check (std::abs (phys (Param::bandRange (2)) - 12.0f) < 0.2f,
+               "T40.3 Range 旋钮写入 APVTS（支持正值）", juce::String (phys (Param::bandRange (2))));
+        check (std::abs (phys (Param::bandAttack (2)) - 45.0f) < 0.5f,
+               "T40.4 Attack 旋钮写入 APVTS", juce::String (phys (Param::bandAttack (2))));
+        check (std::abs (phys (Param::bandRelease (2)) - 320.0f) < 1.0f,
+               "T40.5 Release 旋钮写入 APVTS", juce::String (phys (Param::bandRelease (2))));
+        check (std::abs (phys (Param::bandMix (2)) - 60.0f) < 0.5f,
+               "T40.6 Mix 旋钮写入 APVTS", juce::String (phys (Param::bandMix (2))));
+    }
+
+    // ② 旋钮只影响目标段（不串段）
+    {
+        check (std::abs (phys (Param::bandThreshold (0)) - (-20.0f)) < 0.2f
+            && std::abs (phys (Param::bandThreshold (1)) - (-20.0f)) < 0.2f,
+               "T40.7 Popover 旋钮只改选中段（不串段）", "");
+    }
+
+    // ③ 滑杆行：RATIO 拖动（连续项）
+    {
+        const auto sr = dv.popSliderRectForTest (0);
+        const float rBefore = phys (Param::bandRatio (2));
+        dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());
+        dv.mouseDragForTest (sr.getX() + sr.getWidth() * 0.75f, sr.getCentreY());
+        dv.mouseUpForTest (sr.getX() + sr.getWidth() * 0.75f, sr.getCentreY());
+        const float rAfter = phys (Param::bandRatio (2));
+        std::cout << "  Ratio: " << rBefore << " -> " << rAfter << std::endl;
+        check (rAfter > rBefore + 5.0f, "T40.8 RATIO 滑杆拖动写入 APVTS",
+               juce::String (rBefore) + " -> " + juce::String (rAfter));
+    }
+
+    // ④ 滑杆行：KNEE 二态翻转（HARD ↔ SOFT）
+    {
+        const auto sr = dv.popSliderRectForTest (1);
+        const float kBefore = normOf ("band2Knee");
+        dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());
+        dv.mouseUpForTest (sr.getCentreX(), sr.getCentreY());
+        const float kAfter = normOf ("band2Knee");
+        std::cout << "  Knee norm: " << kBefore << " -> " << kAfter << std::endl;
+        check (std::abs (kAfter - kBefore) > 0.5f, "T40.9 KNEE 点击翻转（HARD↔SOFT）",
+               juce::String (kBefore) + " -> " + juce::String (kAfter));
+    }
+
+    // ⑤ 滑杆行：EXT 二态翻转（INT ↔ SIDECHAIN）
+    {
+        const auto sr = dv.popSliderRectForTest (2);
+        const float eBefore = normOf ("band2Ext");
+        dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());
+        dv.mouseUpForTest (sr.getCentreX(), sr.getCentreY());
+        const float eAfter = normOf ("band2Ext");
+        std::cout << "  Ext norm: " << eBefore << " -> " << eAfter << std::endl;
+        check (std::abs (eAfter - eBefore) > 0.5f, "T40.10 EXT 点击翻转（INT↔SIDECHAIN）",
+               juce::String (eBefore) + " -> " + juce::String (eAfter));
+    }
+
+    // ⑥ EXPERT 折叠
+    {
+        const auto er = dv.popExpertRectForTest();
+        dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
+        dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
+        check (dv.isPopoverExpertOpenForTest(), "T40.11 EXPERT 点击展开", "");
+        dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
+        dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
+        check (! dv.isPopoverExpertOpenForTest(), "T40.12 EXPERT 再点收起", "");
+    }
+
+    // ⑦ mouseUp 复位滑杆拖拽态（回归：曾因未复位吞掉后续所有拖拽）
+    {
+        const auto sr = dv.popSliderRectForTest (0);
+        dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());   // 按下 RATIO
+        dv.mouseUpForTest (sr.getCentreX(), sr.getCentreY());     // 松手 → 应复位
+        // 之后拖曲线区域应正常改 Makeup（不再被滑杆分支吃掉）
+        const float cy = dv.curveYAtFreqForTest (freqToXforTest (2449.0f));
+        const float mkBefore = phys (Param::bandMakeup (2));
+        dv.mouseDownForTest (freqToXforTest (2449.0f), cy);
+        dv.mouseDragForTest (freqToXforTest (2449.0f), cy - 100.0f);
+        dv.mouseUpForTest (freqToXforTest (2449.0f), cy - 100.0f);
+        const float mkAfter = phys (Param::bandMakeup (2));
+        std::cout << "  Makeup（滑杆拖拽后）: " << mkBefore << " -> " << mkAfter << std::endl;
+        check (std::abs (mkAfter - mkBefore) > 0.5f,
+               "T40.13 mouseUp 后滑杆拖拽态复位（后续拖拽不再被吞）",
+               juce::String (mkBefore) + " -> " + juce::String (mkAfter));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4237,6 +4400,7 @@ int main()
     testKnobGeometry();             // T37 Knob 弧心/帽心同心
     testAnalyzerSettings();         // T38 Analyzer 设置（Pro-MB 对标）
     testAnalyzerOptions();          // T39 Analyzer 单选项 + 组合（内部测试）
+    testPopoverControls();          // T40 Phase 5.3.2 Popover 控件接线
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

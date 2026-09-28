@@ -119,30 +119,50 @@ public:
     void  setAnalyzerTiltForTest (float v)    { analyzerTilt_ = v; }
     void  setAnalyzerFreezeForTest (bool v)   { analyzerFreeze_ = v; }
     void  applyAnalyzerSettingsForTest()      { applyAnalyzerSettings(); }
+    // T40 Popover 控件测试钩子
+    void applyPopoverKnobForTest (int k, double v) { applyPopoverKnob (k, v); }
+    juce::Rectangle<float> popSliderRectForTest (int k) const { return popSliderRect (k); }
+    juce::Rectangle<float> popExpertRectForTest() const { return popExpertRect(); }
+    bool isPopoverExpertOpenForTest() const { return popoverExpertOpen_; }
     bool  hasSpectrumFrameForTest() const     { return spectrumHasFrame_; }
     bool  spectrumPathsReadyForTest() const
     {
         return ! spectrumPreFill_.isEmpty() && ! spectrumPreStroke_.isEmpty();
     }
+    // T21/T36 诊断
+    int  dbgSelectedBand() const { return selectedBand_; }
+    bool dbgCurvePending() const { return curvePending_; }
+    bool dbgRangePending() const { return rangePending_; }
+    int  dbgRangePendingBand() const { return rangePendingBand_; }
+    int  dbgDragMode() const { return (int) drag_; }
+    int  dbgHitCurve (float x, float y) const { int b = -1; return hitTestCurve (juce::Point<float> (x, y), b) ? 1 : 0; }
+    int  dbgHitRangeEdge (float x, float y) const { int b = -1; bool l = true; return hitTestRangeEdge (juce::Point<float> (x, y), b, l) ? 1 : 0; }
+    int  dbgHitDot (float x, float y) const { int b = -1; return hitTestFreqDot (juce::Point<float> (x, y), b) ? 1 : 0; }
+    int  dbgHitBtn (float x, float y) const { int b = -1, j = -1; return hitTestButton (juce::Point<float> (x, y), b, j) ? 1 : 0; }
+    int  dbgHitDivider (float x, float y) const { return hitTestDivider (juce::Point<float> (x, y)); }
+    int  dbgHitAnalyzer (float x, float y) const { return hitTestAnalyzerButton (juce::Point<float> (x, y)) ? 1 : 0; }
+    int  dbgHitDrawer (float x, float y) const { return hitTestDrawerButton (juce::Point<float> (x, y)) ? 1 : 0; }
     float curveYAtFreqForTest (float f) const { return gainToY (curveDbAtFreq (f)); }
     float rangeEdgeYForTest (int b) const
     {
         // Range 层底边的 y（取该段几何中心处）
         return getRangeEdgeRect ((size_t) b).getBottom();
     }
-    // T36：在段内扫描一个真实命中 Range 缘的点（避免依赖未重建的 Path）
+    // T36：在段内扫描一个真实命中 Range 缘的点（排除同时命中曲线的点）
     bool findRangeEdgePointForTest (int band, float& outX, float& outY) const
     {
         const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
         const float W = (float) getWidth();
         const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+        int cb = -1;
         for (int i = 1; i < 20; ++i)
         {
             const float x = edges[(size_t) band] + (edges[(size_t) band + 1] - edges[(size_t) band]) * (float) i / 20.0f;
             for (int y = (int) plotTopPx() + 4; y < (int) plotBottomPx() - 4; ++y)
             {
                 int bOut = -1; bool lower = true;
-                if (hitTestRangeEdge (juce::Point<float> (x, (float) y), bOut, lower) && bOut == band && lower)
+                if (hitTestRangeEdge (juce::Point<float> (x, (float) y), bOut, lower) && bOut == band && lower
+                    && ! hitTestCurve (juce::Point<float> (x, (float) y), cb))
                 { outX = x; outY = (float) y; return true; }
             }
         }
@@ -333,7 +353,24 @@ private:
     void openAnalyzerMenu();
     void applyAnalyzerSettings();
     bool hitTestAnalyzerButton (juce::Point<float> p) const;
-    bool isAllBypassed() const;
+
+    // ---- Phase 5.3.2：Popover 控件（5 真旋钮 + 3 滑杆行 + EXPERT） ----
+    static constexpr int kPopKnobs = 5;
+    std::array<std::unique_ptr<Knob>, kPopKnobs> popKnobs_;
+    bool  popKnobsReady_ = false;
+    bool  popoverExpertOpen_ = false;
+    int   popSliderDrag_ = -1;
+    float popSliderDragX0_ = 0.0f, popSliderDragV0_ = 0.0f;
+    juce::Point<float> lastMousePos_ { -1.0f, -1.0f };
+    void  applyPopSlider (int k, double v);    void  ensurePopoverKnobs();
+    void  layoutPopoverKnobs();
+    void  applyPopoverKnob (int k, double v);
+    juce::Rectangle<float> popKnobRect (int k) const;
+    juce::Rectangle<float> popSliderRect (int k) const;
+    bool  hitTestPopSlider (juce::Point<float> p, int& kOut) const;
+    juce::String popParamId (int k) const;          // 该旋钮对应的 APVTS 参数 ID
+    juce::Rectangle<float> popExpertRect() const;
+    bool  isAllBypassed() const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;
     void openDisplayRangeMenu();
@@ -346,8 +383,8 @@ private:
     int   popoverBand_ = -1;
     std::array<double, 5> popoverValues_ {};       // Threshold/Range/Attack/Release/Mix
     std::array<float,  5> popoverNormalisedValue_ {};   // 归一化 0..1（旋钮弧用）
-    std::array<double, 3> popoverSliders_ { 4.0, 1.0, 0.0 };  // Ratio / Knee(1=soft) / Ext
-    bool popoverExpertOpen_ = false;
+    // Ratio / Knee(1=soft) / Ext / Detector / (Lookahead 占位)
+    std::array<double, 5> popoverSliders_ { 4.0, 1.0, 0.0, 0.0, 0.0 };
     // ---- Phase 5.3 Popover 几何/交互 ----
     float popoverAnim_ = 0.0f;                     // 0=收起 1=展开
     juce::Rectangle<float> popoverRect() const;
@@ -357,6 +394,8 @@ private:
     void drawPopoverTopBar (juce::Graphics& g);
     void drawPopoverKnobs (juce::Graphics& g);
     void syncPopoverFromParams();
+    void syncPopoverSliders();
+    float getParamNorm (const juce::String& id) const;
     float paramRangeMinOf (const juce::String& id) const;
     float paramRangeMaxOf (const juce::String& id) const;
     static juce::String fmtHzShort (float hz);
