@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第二十八轮 · 复审修 Linear FIFO 音频线程分配）
+### 进度总览（更新于 2026-10-14，第三十轮 · 复审修频谱衰减帧线程竞争）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -467,6 +467,7 @@ namespace Anim {
 | **复审修 3 处 BYP 阈值 bug**（`c9f79d7`） | 文档需求全部交付后做代码复审，发现 facade 迁移时引入的**同一错误三处复发**：`band{i}Mix` 是 0-100 物理百分比，`getParamFast()` 返回实际值，但三处比较仍写 `0.5f`（应按 `50.0f`）。**操作上的后果**：① BYP 打开时曲线仍显示压缩后的 live 曲线（BYP 在曲线层完全不可见）；② Range 钟型不切描边；③ **全局 BYPASS 胶囊永远不亮**。同时补完 SPI 漏掉的 BYP 路径——`bandDisplayDb_` 原来在 raw/live 间瞬时切换，该段被大幅压缩时切 BYP 会瞬间跳 20dB | — （代码质量修复，非 Pro-MB 对标项；但"BYP 时曲线归原"是 Pro-MB 的既有行为） |
 | **复审再修 4 处 Choice 索引放大**（`d3c6563`） | R7 的姊妹错：迁移前用 `* (N-1)` 把 normalized 转索引，迁移后 `getParamFast` 已返回索引，乘法却留着。**操作上的后果**：① EXPERT 面板点 Lookahead，从 1ms **跳过 3ms 直接回 Off**；② Lookahead 显示值错；③ `xoverSlope`/`phaseMode` 喂给结构缓存比对 → **缓存永久失配，每帧都判定"结构变了"**（持续无谓重建分频权重）；④ 全局栏选 1ms 却高亮 3ms。真正的原因是一句**错误注释**——`getParamNorm` 上写着"Bool/Choice 实际值与 normalized 同为 0/1"，这句话直接引导人写出这个 bug | — （代码质量修复；但"Lookahead 循环不跳档"是 Pro-MB 的既有交互） |
 | **Linear Phase FIFO 改固定容量 Ring**（`f8a61ca`） | `TECH_SPEC` §4 声明"音频线程零分配"，`FirFilter::processOneChannel` 标着 `noexcept` 跑在音频线程，却用 `std::vector` 的 `insert/erase/push_back` 做 FIFO。`prepare()` 里 reserve 了 `blockSize_+maxBlockSize+8`，稳态分析看着够——但**稳态峰值恰好贴在上界**（输出侧每轮 push `blockSize_`、只 erase `numSamples`），边缘情况下仍会重新分配。改为 `Ring<float>`（容量一次分配，热路径只做索引运算）。**音质上无可感知变化**——Linear 模式上报延迟跨 64/256/512 三种块大小恒为 3072 样本（T56.7 实测），与改前一致。顺带修正了类注释里一句**不实声明**（原写"prepare() 预分配 FIFO 容量，热路径 insert/erase 零分配"——只在无边缘情况时成立） | — （工程修复；但"恒定群延迟"是 Pro-MB Linear Phase 的既有承诺） |
+| **频谱衰减帧线程竞争修复**（`7e5ab0c`） | 停止播放时频谱走"保持 600ms → 衰减到静音底"路径。原来衰减帧**原地修改已发布的 slot**，而 UI 线程正在读同一个 slot——三缓冲的前提是"写侧永不碰已发布 slot"，这里破了：UI 可能读到**撕裂帧**，且版本号在写完后才递增，UI 可能在写中途判定"无更新"而**丢帧**。现改为与 `analyseTick` 同款（写未发布 slot → 发布 → 轮转）。**听感/观感上无可感知变化**——衰减行为完全保留（T57.3 仍衰减、T57.5 仍收敛到 −100dB），只是不再有偶发的画面撕裂与丢帧 | — （工程修复；"无信号时频谱保持再衰减"是 Pro-MB 的既有行为） |
 
 ### Phase D 待做
 
@@ -516,14 +517,16 @@ namespace Anim {
 | R7 | **物理值 vs normalized 比较（同一错误第三次复发）**：facade 迁移后，`DisplayView` 三处读 `band{i}Mix` 用 `getParamFast()` 却跟 `0.5f` 比——该参数是 **0-100 物理百分比**，`getParamFast` 返回实际值，应比 `50.0f`。后果：① `updateCurve()` 里 `bypassed` 永为 false → **BYP 状态下曲线仍显示压缩后的 live 曲线**；② Range 钟型在 BYP 时不切描边；③ `isAllBypassed()` 把 Mix>0.5% 当"未 bypass" → **全局 BYPASS 胶囊永远不亮** | 这个错在 §8.2 最早记为 `getParamBool("Mix") >= 0.5f`，修过一次；facade 迁移时把 `getRawParameterValue`（返回物理值）换成 `getParamFast`（也返回物理值），但比较表达式仍是按 normalized 写的 | 三处统一改比 `50.0f`，且 `isAllBypassed()` 改为委托 `isBandBypassed()`，让判据只存在一处。**教训：迁移读取 API 时必须同时审计比较表达式**——两条 API 返回值语义相同，不代表原有比较是对的 |
 | R8 | **SPI 漏了 BYP 这一路**：上轮给 `bandRawDb_`/`bandLiveDb_` 加了 τ=60ms 平滑，但 `bandDisplayDb_` 仍是在两者之间**瞬时切换**。该段正被大幅压缩时（live 明显低于 raw），切 BYP 会让曲线瞬间跳 20dB——正是 SPI 要消除的现象 | 只盯着"参数变化"这条路径想，没想"状态切换"也是跳变来源 | `bandDisplayDb_` 也走同一平滑，并用哨兵值初始化。**另外：初版测试是空跑的**——不喂音频时 `getBandGainDb()` 返回 0，`liveTarget == rawTarget`，根本没有差值可平滑，断言却因为"曲线没动但也没报错"而看起来通过。改成喂音频 + 低阈值 + 高比率，让该段真被压缩 |
 | R9 | **Choice 索引被二次放大（R7 的姊妹错，共 4 处）**：facade 迁移前用 `getRawParameterValue(...) * (N-1)` 把 normalized 转索引；迁移后 `getParamFast` 返回的实际值**已经是索引**，那个乘法却留着。① `BandPopover` lookahead 循环：从 1ms 点一下**跳过 3ms 直接回 Off**（T40.18 只测了 Off→1ms 没抓到）；② `syncFromParams` 里 Lookahead 显示值错；③ `pollStructureParams` 的 `xoverSlope*3` / `phaseMode*2` 喂给结构缓存比对 → **缓存永久失配，每帧都判定"结构变了"**；④ 全局栏当前值与下拉高亮项错（选 1ms 却高亮 3ms） | 与 R7 同根：只换了读取函数，没审计跟着它的算术表达式。且 R7 修完后我只扫了 `< 0.5f` 这类比较，没扫 `* N.0f` 这类转换 | 4 处全部改为直接用返回值当索引。并**改掉 `BandPopover::getParamNorm` 上那句错误注释**——它声称"Bool/Choice 的实际值与 normalized 同为 0/1"，这句话正是让人写出这个 bug 的原因。修正后的注释把三种情况（Bool 0/1、Choice 索引、Float 物理值）写明 |
+| R10 | **三缓冲被反向使用（线程竞争）**：`SpectrumEngine::publishDecayFrame` 原地修改 `slots_[publishedSlot]`，而 UI 线程的 `getLatest()` 正在读同一个 slot。三缓冲的前提是"写侧永不碰已发布的 slot"，这里破了两个保证：① UI 可能读到**撕裂帧**（写侧在底下改）；② `publishVersion_` 在写**完之后**才递增，UI 可能在写中途读到旧版本号 → 判定"无更新"→ **丢帧**。`analyseTick` 一向是正确的（写 `writeSlot_` → 发布 → 轮转），只有衰减路径是异类 | 三缓冲的纪律只写在 `analyseTick` 的代码形状里，没写成明文约束；后来加衰减路径时照抄了"改已发布帧"的直觉 | 衰减帧改为与 `analyseTick` 同款：读已发布 slot 旧值 → 写入 `writeSlot_` → 发布 → 轮转。T57.4 实测衰减期间 slot 轮转 **92 次**（原地改的话恒为 0） |
 
-> **教训（第二十八轮补充，共 11 条）**：
+> **教训（第三十轮补充，共 12 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
 > 7. **同一个错误会犯第二次，所以要用套路而不是记性防**。R5 修完后我明确知道这个坑，写 MIDI 按钮时还是复制了同样的模式（R6）。正解是立一条硬规则：**所有命中矩形一律从与绘制相同的常量现算，永不存成员**。
 > 8. **迁移读取 API 时必须同时审计比较表达式**。R7 是这个会话里第三次犯"物理值 vs normalized"：`getRawParameterValue` 和 `getParamFast` 都返回物理值，但迁移时只换了函数名，没换跟着它的 `0.5f`。两条 API 语义相同，不代表原来那个比较是对的。
 > 11. **零分配断言必须覆盖到热路径叶子，不能只测入口**。T19/T20 当年只验证 `processBlock` 入口无分配，就认定"音频线程零分配"达标；实际上 `FirFilter::processOneChannel` 里的 vector FIFO 才是真正的风险点（第 28 轮才发现并修）。**"入口没分配"不等于"热路径没分配"**——尤其是那种"prepare 里 reserve 过"的缓冲，它的安全性依赖稳态分析，而稳态分析恰恰容易忽略边缘情况。
+> 12. **并发纪律要写成明文约束，不能只靠"照抄正确的那处代码"**。R10：三缓冲"写侧永不碰已发布 slot"的规矩只体现在 `analyseTick` 的代码形状里，没人写下来；后来加衰减路径时凭直觉写了"改已发布帧"，就破了它。**凡是"某段代码恰好是对的"而不是"某条规则被遵守"，都该把规则提炼成注释或断言**——否则下一个人（包括未来的自己）只会复制形状，不理解约束。
 > 10. **迁移读取 API 时，要把跟着它的每一段算术都当嫌疑人**。R7 扫了"比较表达式"（`< 0.5f`）就以为扫完了，R9 证明"转换表达式"（`* (N-1)`）同样会留坑。正确做法：grep 出所有 `getParamFast|getParamNorm` 的调用点，逐个问"这个参数的类型是什么（Bool/Choice/Float），这个表达式假设的是哪种语义"。**另外，注释里的错误论断比没有注释更危险**——`getParamNorm` 上那句"Choice 实际值与 normalized 同为 0/1"直接导致了 R9。
 > 9. **"平滑"类改动要枚举所有跳变来源，不只是参数变化**。R8：SPI 平滑了参数变化，却漏了 BYP 状态切换——后者同样是瞬时跳变。**并且，测平滑的测试必须制造出真实差值**：不喂音频时 `getBandGainDb()` 返回 0，目标和当前值相等，平滑是空转，断言会假通过。
 
@@ -726,7 +729,7 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **470**（+183） |
+| `CrunchMBTests` 断言数 | 287 | **476**（+189） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
@@ -777,6 +780,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
 
 
 
