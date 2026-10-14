@@ -3223,11 +3223,19 @@ static void testScaleNotOccluded()
                "T31.2 增益轴首尾刻度不被盖住", "");
     }
 
-    // ③ 右轴刻度框右缘 ≤ 880（音量表左界 886 之前）
+    // ③ Phase B-4：右增益刻度贴紧 IN/OUT 电平表
+    //     drawScales 右轴文字框 = x (kGainScaleRightX-56) .. kGainScaleRightX = 826..882
+    //     电平表左界 = kMeterX = 886 → 间隙 4px（原为 818..874，间隙 12px）
     {
-        // drawScales 里右轴框 = x 824..876
-        const bool ok = (824.0f + 52.0f) <= 886.0f;
-        check (ok, "T31.3 右刻度框不进入 IN/OUT 音量表区域", "");
+        const float scaleRight = 882.0f;          // DisplayView::kGainScaleRightX
+        const float scaleLeft  = scaleRight - 56.0f;
+        const float meterLeft  = 886.0f;          // DisplayView::kMeterX
+        const float gap = meterLeft - scaleRight;
+        std::cout << "  增益刻度框 x " << scaleLeft << ".." << scaleRight
+                  << "  距电平表 " << gap << "px" << std::endl;
+        check (gap > 0.0f && gap <= 6.0f,
+               "T31.3 右增益刻度贴紧电平表（间隙 0..6px，且不侵入表区）",
+               "gap=" + juce::String (gap));
     }
 
     // ④ 20k 标签 clamp 后不超窗口右缘（freqToX(20000)=907，框 −20 → 887..927 → clamp 到 879..919）

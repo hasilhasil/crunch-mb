@@ -413,7 +413,7 @@ void DisplayView::drawScales (juce::Graphics& g)
         {
             const juce::String t = (db > 0.0f ? "+" : "") + juce::String (db, (step < 1.0f ? 1 : 0));
             g.setColour (std::abs (db) < 1.0e-4f ? pal_.text : pal_.accent);
-            g.drawText (t, clampTextBox (juce::Rectangle<float> (sx (818.0f), gainToY (db) - 7.0f,
+            g.drawText (t, clampTextBox (juce::Rectangle<float> (kGainScaleRightX - sx (56.0f), gainToY (db) - 7.0f,
                                                                  sx (56.0f), 14.0f)),
                         juce::Justification::centredRight);
         }

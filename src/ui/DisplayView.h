@@ -480,6 +480,9 @@ private:
     static constexpr float kPlotH = 548.0f;
     static constexpr float kTopStripH = 30.0f;
     static constexpr float kGlobalBarH = 32.0f;
+    // Phase B-4：增益刻度右缘 = IN/OUT 电平表左界(886) − 4px。
+    // Pro-MB 的增益刻度与电平表紧邻，读压缩量时视线不用横跳。
+    static constexpr float kGainScaleRightX = 882.0f;
 
     // ---- Phase A：参数查找缓存（消除 39 处线性扫描 + dynamic_cast）----
     // 构造时一次性建表；之后 getParamNorm/setParamNorm 等都是 O(1)。
