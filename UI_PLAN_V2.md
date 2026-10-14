@@ -342,7 +342,7 @@ namespace Anim {
 | LINKED 抽屉按钮 | 打开 LinkedDrawer |
 | THR/ATT/REL/MK 滑杆 | `band{i}*` 统一偏移（D4） |
 | IN / OUT | `inputGain` / `outputGain` |
-| MIX | 全局 Mix *(待新增，当前每段独立)* |
+| MIX | 全局 Mix ✅（`b0aa94e`，0-200%） |
 | BYPASS 胶囊 | `enabled` |
 
 ### 7.3 2026-10-14 新增 DSP 参数的 UI 落点
@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第十二轮 · 侧链 UI 补齐）
+### 进度总览（更新于 2026-10-14，第十三轮 · 全局 Mix 接通）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -372,7 +372,7 @@ namespace Anim {
 
 ---
 
-> **参数总数变更记录**：62 → 79（2026-10-14 第一轮：oversampling + 每段侧链滤波×3 + StereoLink）→ **83**（第九轮：每段 +Dynamics）。T0.1 / T0b.1 的断言已同步更新。
+> **参数总数变更记录**：62 → 79（第一轮：oversampling + 每段侧链滤波×3 + StereoLink）→ **83**（第九轮：每段 +Dynamics）→ **84**（第十三轮：+globalMix）。T0.1 / T0b.1 的断言已同步更新。
 
 ## 8.1 每一步的"表现对齐"记录（Pro-MB / Future MB 对照）
 
@@ -457,6 +457,7 @@ namespace Anim {
 | **E-3 多层渐变投影**（`41e3bd3`） | 弹层（Popover / Analyzer / Output）的投影从"一层硬边黑影 + 下移 3px"改成**三层由深到浅、由近到远**（alpha .30/.20/.14，偏移 2/6/14px，圆角随扩散增长）。观感从"贴在界面上"变成"浮在界面上" | **Pro-MB**：投影约 `0 14px 44px rgba(0,0,0,.5)` |
 | **E-1 backdrop blur**（`9a9dfa8`） | 顶栏/底栏从"透明塑料"变成"磨砂玻璃"：背后的频谱/网格先被下采样 + 两遍可分离盒模糊糊化，再上半透明色。模糊源只含背景层（背景/网格/分区/频谱），不含玻璃条自身与上层控件，避免自我反馈。15Hz 刷新——模糊是低频信息，人眼对滞后不敏感，CPU 省 4× | **Pro-MB**：位图预渲染投影 / **Future MB**：shader 模糊 |
 | **侧链滤波 UI 暴露**（`6e45685`） | EXPERT 面板从 2 行扩到 5 行：新增 **Filtering（Band↔Free）、SC High-Pass（20/100/500/2000 Hz）、SC Low-Pass（500/2000/5000/20000 Hz）**，点击循环档位。**DSP 侧链滤波能力从第一轮起就存在，但一直没有 UI 触达**——这次把它接上：Free 模式下可以让该段触发于完全不同的频率范围 | **Pro-MB**：Side Chain Filtering + Free 模式的 LP/HP 频率。官方帮助 "let a band trigger on a completely different frequency range" |
+| **全局 Mix 0-200% 接通 DSP**（`b0aa94e`） | 底栏 OUT 面板的 Mix 行从"UI-only + TODO"变成真功能：**100% = 纯处理声；<100% = 与干声混合（减弱效果）；>100% = 并行压缩提响**。DSP 侧在输入增益后、分频前存一份干声参考，保证 Mix=0 时输出与输入（含输入增益）逐样本一致。`globalMixLin_==1.0` 时整块短路，默认路径零开销 | **Pro-MB**：全局 Mix，官方帮助 "Mix values above 100% can be used for parallel compression" |
 
 ### Phase D 待做
 
@@ -709,8 +710,8 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **365**（+78） |
-| 参数总数 | 62 | **83**（+21：oversampling、每段侧链滤波×3、StereoLink、Dynamics） |
+| `CrunchMBTests` 断言数 | 287 | **370**（+83） |
+| 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | 重构引入的真 bug | — | **6 个，全部修复**（R1-R6，均有测试锁定） |
@@ -731,7 +732,7 @@ T39 频谱 17 项均通过）。
 **能力差异（有意保留或未实现）**：
 - 真多选：本插件是单选中模型，交付"扫选"手势的速度价值
 - MIDI 路由：实现可视化学习流程，不做消息路由（插件不接收 MIDI）
-- 全局 Mix 0-200%：UI 已就绪，DSP 需新增参数（语义与每段 Mix 不同，未硬接）
+- ~~全局 Mix 0-200%~~ ✅ 已接通（`b0aa94e`，含 DSP）
 - ~~侧链 EQ 频率~~ ✅ 已暴露（`6e45685`）
 - shader 渲染：Pro-MB 与 Future MB 用 GPU，本插件用 JUCE 软件渲染（60fps 达标）
 
@@ -739,5 +740,5 @@ T39 频谱 17 项均通过）。
 
 - `TextSelect` 自绘下拉（当前用原生 PopupMenu，功能可用）
 - 1px 细线 AA 提亮（细节抛光）
-- 全局 Mix DSP 接入
+- ~~全局 Mix DSP 接入~~ ✅ 已完成
 - ~~侧链 LP/HP 频率的 UI 暴露~~ ✅ 已完成
