@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第二十三轮 · SPI 平滑）
+### 进度总览（更新于 2026-10-14，第二十五轮 · 复审修 3 处 BYP 阈值 bug）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -464,6 +464,7 @@ namespace Anim {
 | **UI 全面改走 facade**（`fafa3da`） | `PLAN.md` Phase 6 有两半：① 实现 facade（上轮）② **UI 改走 facade，不直触 APVTS/DSP 内部**（本轮）。此前 DisplayView / BandPopover / LinkedDrawer **各持一份**自己的 id→参数缓存，绕过 facade 的钳制与值型拒绝——正是 API 规范 §6.2 列出的 D 类耦合。现在 `src/ui` 内 APVTS 引用数为 **0**，26 处读写全走 `proc_.getBackend()`。为不拖慢 UI 热路径，facade 加了 `getParamFast()`（一次性建哈希表，O(1) 查表；否则 `apvts.getParameter` 是 84 个参数的线性字符串比较，60fps 下每秒上千次扫描）。**操作上无可感知变化——这是纯架构解耦，用户看到的界面行为完全一致**（425 条既有断言零回归即证明） | — （PLAN Phase 6 要求，非 Pro-MB 对标项） |
 | **全局栏四个选择器接通**（`f1a9bec`） | `RESEARCH_UI.md` §五 P1 一直挂着的一项：全局栏的 Phase / Slope / Quality / Lookahead **画着 ▼ 下拉箭头却是点不动的静态文字**，而且值写死在代码里（"Natural Phase" / "24 dB/oct" / "Medium" / "Off"）——宿主自动化改了参数，这里显示的还是旧字符串。现在每项都可点，弹出与 Display Range 同一套的自绘下拉（同色圆角面板、当前项打勾 + accent 底、hover 高亮、三层投影），且**当前值从参数实时读取**。选完自动收起；再点同一项收起；点外面收起且不改值 | **Pro-MB**：全局栏的 Phase / Slope / Quality / Lookahead 全是可点下拉 |
 | **SPI 曲线层平滑**（`aa78e24`） | Pro-MB "Smart Parameter Interpolation"。原来曲线每帧取参数瞬时值 → 宿主自动化或切 preset 时**逐帧跳变**，看起来一格一格蹦。现在显示层加 τ=60ms 时间常数平滑（与量程切换同一手法）：实测改 +12dB Makeup 后，一帧只走 24% 路程，之后连续滑到新位置。**首帧用哨兵值直接吸附**，避免插件刚打开时曲线从 0dB 爬升；收敛后精确吸附，不会无限微动。**声音完全不变**——只平滑显示层，音频路径与 APVTS 都没碰（T54.5 断言参数未被污染） | **Pro-MB**：Smart Parameter Interpolation |
+| **复审修 3 处 BYP 阈值 bug**（`c9f79d7`） | 文档需求全部交付后做代码复审，发现 facade 迁移时引入的**同一错误三处复发**：`band{i}Mix` 是 0-100 物理百分比，`getParamFast()` 返回实际值，但三处比较仍写 `0.5f`（应按 `50.0f`）。**操作上的后果**：① BYP 打开时曲线仍显示压缩后的 live 曲线（BYP 在曲线层完全不可见）；② Range 钟型不切描边；③ **全局 BYPASS 胶囊永远不亮**。同时补完 SPI 漏掉的 BYP 路径——`bandDisplayDb_` 原来在 raw/live 间瞬时切换，该段被大幅压缩时切 BYP 会瞬间跳 20dB | — （代码质量修复，非 Pro-MB 对标项；但"BYP 时曲线归原"是 Pro-MB 的既有行为） |
 
 ### Phase D 待做
 
@@ -489,7 +490,7 @@ namespace Anim {
 
 ## 8.2 回归记录（抽取过程中引入、已修复）
 
-> 这些是重构引入的真 bug，记录在此以免未来重犯。**两条都是测试没抓到的**。
+> 这些是重构与迁移引入的真 bug，记录在此以免未来重犯。**多数是测试没抓到的**。
 
 | # | 回归 | 为什么测试没抓到 | 怎么修的 |
 |---|---|---|---|
@@ -510,12 +511,16 @@ namespace Anim {
 | R4 | **在单选模型上实现多选**：第一版 D-3 保留"各段选中快照 + 起手段 toggle"，假设 `selectedBand_` 初值是 0，**实际默认是 2** → 未被扫过的段在模型里"仍被选中"，在更新循环里覆盖结果（T43.4） | 静态读代码看不出默认值问题；只有断言能抓 | 删掉快照那套。既然插件是单选中，多选的可感知表现就是"选中段连续跟随光标"，不需要快照 |
 | R5 | **命中测试读了一个"绘制时才有"的成员矩形**：`hitTestOutputButton()` 第一版读 `outputBtnRect_`，而那个成员是在 `drawGlobalBar()` 里赋值的——首次悬停时矩形还是空的，按钮永远匹配不上，**面板根本打不开**（T44.2） | 悬停发生在任何绘制之前，而测试第一条就测悬停 | 命中测试改为从与绘制**完全相同的常量**现算矩形，并删掉那个没用的成员。教训：命中几何要么现算，要么在构造/resize 时同步，不能依赖 paint 的副作用 |
 | R6 | **同一个 R5 错误犯了第二次**：`hitTestMidiButton()` 第一版也读 `midiBtnRect_`（drawTopStrip 赋值），首次点击匹配不上，MIDI Learn 打不开（T48.2） | 写的时候明知有 R5 这个坑，还是复制了同样的模式。只有断言能抓 | 同样改为现算。**教训：这类错误靠"记住"防不住，要靠"现算"这个固定套路防**——所有命中矩形都从与绘制相同的常量现算，永不存成员 |
+| R7 | **物理值 vs normalized 比较（同一错误第三次复发）**：facade 迁移后，`DisplayView` 三处读 `band{i}Mix` 用 `getParamFast()` 却跟 `0.5f` 比——该参数是 **0-100 物理百分比**，`getParamFast` 返回实际值，应比 `50.0f`。后果：① `updateCurve()` 里 `bypassed` 永为 false → **BYP 状态下曲线仍显示压缩后的 live 曲线**；② Range 钟型在 BYP 时不切描边；③ `isAllBypassed()` 把 Mix>0.5% 当"未 bypass" → **全局 BYPASS 胶囊永远不亮** | 这个错在 §8.2 最早记为 `getParamBool("Mix") >= 0.5f`，修过一次；facade 迁移时把 `getRawParameterValue`（返回物理值）换成 `getParamFast`（也返回物理值），但比较表达式仍是按 normalized 写的 | 三处统一改比 `50.0f`，且 `isAllBypassed()` 改为委托 `isBandBypassed()`，让判据只存在一处。**教训：迁移读取 API 时必须同时审计比较表达式**——两条 API 返回值语义相同，不代表原有比较是对的 |
+| R8 | **SPI 漏了 BYP 这一路**：上轮给 `bandRawDb_`/`bandLiveDb_` 加了 τ=60ms 平滑，但 `bandDisplayDb_` 仍是在两者之间**瞬时切换**。该段正被大幅压缩时（live 明显低于 raw），切 BYP 会让曲线瞬间跳 20dB——正是 SPI 要消除的现象 | 只盯着"参数变化"这条路径想，没想"状态切换"也是跳变来源 | `bandDisplayDb_` 也走同一平滑，并用哨兵值初始化。**另外：初版测试是空跑的**——不喂音频时 `getBandGainDb()` 返回 0，`liveTarget == rawTarget`，根本没有差值可平滑，断言却因为"曲线没动但也没报错"而看起来通过。改成喂音频 + 低阈值 + 高比率，让该段真被压缩 |
 
-> **教训（第十轮补充，共 7 条）**：
+> **教训（第二十五轮补充，共 9 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
 > 7. **同一个错误会犯第二次，所以要用套路而不是记性防**。R5 修完后我明确知道这个坑，写 MIDI 按钮时还是复制了同样的模式（R6）。正解是立一条硬规则：**所有命中矩形一律从与绘制相同的常量现算，永不存成员**。
+> 8. **迁移读取 API 时必须同时审计比较表达式**。R7 是这个会话里第三次犯"物理值 vs normalized"：`getRawParameterValue` 和 `getParamFast` 都返回物理值，但迁移时只换了函数名，没换跟着它的 `0.5f`。两条 API 语义相同，不代表原来那个比较是对的。
+> 9. **"平滑"类改动要枚举所有跳变来源，不只是参数变化**。R8：SPI 平滑了参数变化，却漏了 BYP 状态切换——后者同样是瞬时跳变。**并且，测平滑的测试必须制造出真实差值**：不喂音频时 `getBandGainDb()` 返回 0，目标和当前值相等，平滑是空转，断言会假通过。
 
 ---
 
@@ -716,12 +721,12 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **450**（+163） |
+| `CrunchMBTests` 断言数 | 287 | **453**（+166） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
-| 重构引入的真 bug | — | **6 个，全部修复**（R1-R6，均有测试锁定） |
+| 重构引入的真 bug | — | **8 个，全部修复**（R1-R8，均有测试锁定） |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
 
@@ -767,6 +772,9 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
+
 
 
 
