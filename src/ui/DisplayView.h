@@ -9,6 +9,7 @@
 #include "MBTheme.h"
 #include "Anim.h"
 #include "Knob.h"
+#include "LinkedDrawer.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -97,13 +98,13 @@ public:
     {
         return rangeEdgePath_[(size_t) b].isEmpty() ? "" : "x";
     }
-    // 测试钩子（T35）
-    bool isLinkedOpenForTest() const { return linkedOpen_; }
-    void applyLinkedOffsetForTest (int k, double v) { applyLinkedOffset (k, v); }
+    // 测试钩子（T35）——Phase A：抽屉已拆为 LinkedDrawer，经它转发
+    bool isLinkedOpenForTest() const { return linkedDrawer_ != nullptr && linkedDrawer_->isOpen(); }
+    void applyLinkedOffsetForTest (int k, double v);
     juce::Rectangle<int> linkedKnobBoundsForTest (int k) const
     {
-        return linkedKnobs_[(size_t) k] != nullptr ? linkedKnobs_[(size_t) k]->getBounds()
-                                                   : juce::Rectangle<int>();
+        return linkedDrawer_ != nullptr ? linkedDrawer_->knobBoundsForTest (k)
+                                        : juce::Rectangle<int>();
     }
     // 测试钩子（T36）
     bool isPopoverOpenForTest() const { return popoverOpen_; }
@@ -111,7 +112,7 @@ public:
     int  getSelectedBandForTest() const { return selectedBand_; }
     double getPopoverValueForTest (int k) const { return popoverValues_[(size_t) k]; }
     void syncPopoverFromParamsForTest() { syncPopoverFromParams(); }
-    void openLinkedDrawerForTest() { toggleLinkedDrawer (true); }
+    void openLinkedDrawerForTest();
     juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
     // T38 Analyzer 测试钩子
     bool hitTestAnalyzerButtonForTest (float x, float y) const
@@ -151,7 +152,10 @@ public:
     int  dbgHitBtn (float x, float y) const { int b = -1, j = -1; return hitTestButton (juce::Point<float> (x, y), b, j) ? 1 : 0; }
     int  dbgHitDivider (float x, float y) const { return hitTestDivider (juce::Point<float> (x, y)); }
     int  dbgHitAnalyzer (float x, float y) const { return hitTestAnalyzerButton (juce::Point<float> (x, y)) ? 1 : 0; }
-    int  dbgHitDrawer (float x, float y) const { return hitTestDrawerButton (juce::Point<float> (x, y)) ? 1 : 0; }
+    int  dbgHitDrawer (float x, float y) const
+    {
+        return (linkedDrawer_ != nullptr && linkedDrawer_->hitTestButton (juce::Point<float> (x, y))) ? 1 : 0;
+    }
     float curveYAtFreqForTest (float f) const { return gainToY (curveDbAtFreq (f)); }
     float rangeEdgeYForTest (int b) const
     {
@@ -260,7 +264,7 @@ private:
     void drawFreqInput (juce::Graphics& g);   // #7 自绘频率输入框
     void drawTopStrip (juce::Graphics& g);
     void drawGlobalBar (juce::Graphics& g);
-    void drawDrawer (juce::Graphics& g);
+    // Phase A：drawDrawer() 已随抽屉拆到 LinkedDrawer::paint()
     // ---- Phase 4.3 动态层 ----
     void drawSpectrum (juce::Graphics& g);
     void drawRangeBell (juce::Graphics& g);
@@ -355,10 +359,8 @@ private:
     void closeFreqEditor (bool apply);
 
     // ---- Phase A：动画状态（UI_PLAN_V2 §6）----
-    // 每段选中淡入、每段 hover 淡入、每段 BYP 渐暗、分割线 hover 变色。
-    // 用 Tween 而非开关量——目标变化时从"当前显示值"起跳，不会回弹。
-    Tween drawerTween_, popoverTween_;
-    float linkedAnimTarget_  = 0.0f;   // 抽屉动画目标（检测目标变化才 start，避免每帧重启）
+    // Popover 用 Tween；抽屉的 Tween 归 LinkedDrawer 自己管。
+    Tween popoverTween_;
     float popoverAnimTarget_ = 0.0f;
     std::array<Tween, Param::kNumBands> selT_;      // 选中填充 alpha 0.05 ↔ 0.10
     std::array<Tween, Param::kNumBands> hoverT_;    // 按钮列 hover 淡入 0 ↔ 1
@@ -408,10 +410,9 @@ private:
     bool hitTestDisplayRange (juce::Point<float> p) const;
     void openDisplayRangeMenu();
     // ---- Phase 5.2 LINKED CONTROL 抽屉（§5.2 / O2-A / O6-方案1） ----
-    static constexpr int kLinkedKnobs = 5;         // Threshold/Attack/Release/Makeup/Mix
-    static constexpr int kLinkedMixIndex = 4;      // Mix 例外：绝对值语义
-    bool  linkedOpen_ = false;
-    float linkedAnim_ = 0.0f;                      // 0=收起 1=展开（~250ms 滑入）
+    // Phase A：抽屉已拆为独立组件 LinkedDrawer（UI_PLAN_V2 §3.2），
+    // DisplayView 只持有一个 unique_ptr 并转发开/关与命中分发。
+    std::unique_ptr<LinkedDrawer> linkedDrawer_;
     bool  popoverOpen_ = false;                    // O6 互斥（5.3 用）
     int   popoverBand_ = -1;
     std::array<double, 5> popoverValues_ {};       // Threshold/Range/Attack/Release/Mix
@@ -432,16 +433,7 @@ private:
     float paramRangeMinOf (const juce::String& id) const;
     float paramRangeMaxOf (const juce::String& id) const;
     static juce::String fmtHzShort (float hz);
-    std::array<std::unique_ptr<Knob>, kLinkedKnobs> linkedKnobs_;
-    std::array<double, kLinkedKnobs - 1> linkedOffset_ {};   // 4 个偏移旋钮的当前 Δ
-    void ensureLinkedKnobs();
-    void layoutLinkedKnobs (bool force = false);
-    void applyLinkedOffset (int k, double newValue);
     float getParamPhysical (const juce::String& id) const;
-    juce::Rectangle<float> drawerPanelRect() const;
-    bool hitTestDrawerButton (juce::Point<float> p) const;
-    void toggleLinkedDrawer (bool open);
-    void drawLinkedDrawer (juce::Graphics& g);
     juce::Rectangle<float> displayRangeBtn_;
 
     // ---- Phase 4.3：仿 EQ 动态曲线 ----

@@ -25,8 +25,27 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
 
     // Phase A：参数查找缓存（一次性建表，此后 O(1)）
     buildParamCache();
+    // Phase A：LINKED CONTROL 抽屉拆为独立组件（UI_PLAN_V2 §3.2）
+    linkedDrawer_ = std::make_unique<LinkedDrawer> (proc_);
+    addAndMakeVisible (*linkedDrawer_);
+    linkedDrawer_->setHostBounds (getLocalBounds());
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
+}
+
+void DisplayView::applyLinkedOffsetForTest (int k, double v)
+{
+    // Phase A：抽屉已拆出，经测试钩子触达（LinkedDrawer::applyOffset 为 private）
+    // 直接调用 openLinkedDrawerForTest 确保旋钮已建，再转发。
+    if (linkedDrawer_ == nullptr)
+        return;
+    linkedDrawer_->applyOffsetForTest (k, v);
+}
+
+void DisplayView::openLinkedDrawerForTest()
+{
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->setOpen (true);
 }
 
 void DisplayView::buildParamCache()
@@ -49,12 +68,12 @@ void DisplayView::syncAllTweens()
     }
     for (int e = 0; e < 3; ++e)
         divT_[(size_t) e].snapTo ((e == hoverDividers_) ? 1.0f : 0.0f);
-    drawerTween_.snapTo (linkedOpen_ ? 1.0f : 0.0f);
     popoverTween_.snapTo (popoverOpen_ ? 1.0f : 0.0f);
-    linkedAnimTarget_  = linkedOpen_ ? 1.0f : 0.0f;
     popoverAnimTarget_ = popoverOpen_ ? 1.0f : 0.0f;
-    linkedAnim_  = linkedAnimTarget_;
     popoverAnim_ = popoverAnimTarget_;
+    // Phase A：抽屉 Tween 归 LinkedDrawer 自己管
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->snapToCurrent();
     (void) nowMs;
 }
 
@@ -98,6 +117,8 @@ void DisplayView::setTheme (MBTheme::Theme t)
         return;
     theme_ = t;
     pal_ = MBTheme::palette (t);
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->setTheme (t);
     curvePathsValid_ = false;
     repaint();
 }
@@ -114,6 +135,9 @@ void DisplayView::setActive (bool active) noexcept
     {
         startTimerHz (60);
         proc_.getSpectrumEngine().setUIActive (true);
+        // Phase A：抽屉重新激活时吸附到当前状态，避免停表期间动画卡在中途
+        if (linkedDrawer_ != nullptr)
+            linkedDrawer_->snapToCurrent();
     }
 }
 
@@ -717,39 +741,7 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     g.drawText ("BYPASS", byp, juce::Justification::centred);
 }
 
-void DisplayView::drawDrawer (juce::Graphics& g)
-{
-    // S 边梯形抽屉（A7：底边与 global 条 +1px 叠合，消除接缝）
-    const float W = (float) getWidth();
-    const float cw = sx (456.0f), ch = sy (29.0f);
-    const float cx = (W - cw) * 0.5f;
-    const float cy = (float) getHeight() - sy (kGlobalBarH) - ch + 1.0f;
-
-    juce::Path tp;
-    tp.startNewSubPath (cx + sx (44.0f), cy + sy (2.0f));
-    tp.lineTo (cx + sx (412.0f), cy + sy (2.0f));
-    tp.cubicTo (cx + sx (434.0f), cy + sy (2.0f), cx + sx (422.0f), cy + sy (26.0f), cx + sx (444.0f), cy + sy (26.0f));
-    tp.lineTo (cx + sx (12.0f), cy + sy (26.0f));
-    tp.cubicTo (cx + sx (34.0f), cy + sy (26.0f), cx + sx (22.0f), cy + sy (2.0f), cx + sx (44.0f), cy + sy (2.0f));
-    tp.closeSubPath();
-
-    g.setColour (pal_.panel.withAlpha (0.9f));
-    g.fillPath (tp);
-    g.setColour (pal_.gridZ);
-    g.strokePath (tp, juce::PathStrokeType (1.0f));
-
-    g.setColour (pal_.accent);
-    g.setFont (MBTheme::font (MBTheme::bold(), 11.0f));
-    g.drawText (linkedOpen_ ? "LINKED CONTROL  ▲" : "LINKED CONTROL",
-                juce::Rectangle<float> (cx + sx (120.0f), cy + sy (6.0f), sx (180.0f), sy (14.0f)),
-                juce::Justification::centredLeft);
-    g.setColour (pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
-    g.drawText (juce::String::fromUTF8 ("\xE5\x9B\x9B\xE6\xAE\xB5\xE8\x81\x94\xE5\x8A\xA8 \xC2\xB7 \xE7\xBA\xBF\xE6\x80\xA7\xE5\x81\x8F\xE7\xA7\xBB"),
-                juce::Rectangle<float> (cx + sx (260.0f), cy + sy (7.0f), sx (150.0f), sy (12.0f)),
-                juce::Justification::centredLeft);
-}
-
+// Phase A：drawDrawer() 已随抽屉整体拆到 LinkedDrawer::paint()。
 // ---------------- 电平表弹道（EQ 同款） ----------------
 void DisplayView::updatePeakHold (float& peakDb, juce::uint32& holdUntilMs,
                                   float levelDb, juce::uint32 nowMs, double dt)
@@ -798,17 +790,17 @@ void DisplayView::timerCallback()
     // A2 修复：闪烁由时间驱动，paint() 只读。所有可能处于编辑态的旋钮都要推进。
     if (freqIn_.active)
     {
-        const auto now = animNowMs();
+        const auto now = (juce::uint32) animNowMs();
         if (now - freqIn_.lastBlinkMs > (juce::uint32) Anim::kBlinkMs)
         {
             freqIn_.lastBlinkMs = now;
             freqIn_.cursorVisible = ! freqIn_.cursorVisible;
         }
     }
-    for (auto& kb : linkedKnobs_)
-        if (kb != nullptr) kb->setEditCursorBlink (nowMs);
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->tickEditCursors ((juce::uint32) nowMs);
     for (auto& kb : popKnobs_)
-        if (kb != nullptr) kb->setEditCursorBlink (nowMs);
+        if (kb != nullptr) kb->setEditCursorBlink ((juce::uint32) nowMs);
 
     pollStructureParams();
 
@@ -876,29 +868,9 @@ void DisplayView::timerCallback()
         }
     }
     // ---- Phase 5.2：抽屉滑入/收起动画（~250ms，Anim::kDrawerMs）----
-    // Phase A：改用 Tween（有明确起止 + outCubic 缓动），取代原来的指数平滑。
-    // 指数平滑 `1-exp(-dt/τ)` 数学上永不完全结束，无法判断"动画已结束"，
-    // 也就无法在空闲时停 Timer（UI_PLAN_V2 Phase E 依赖 Tween::done()）。
-    {
-        const float cur = linkedAnim_;
-        const float target = linkedOpen_ ? 1.0f : 0.0f;
-        if (target != linkedAnimTarget_)
-            drawerTween_.start (nowMs, target, Anim::kDrawerMs, cur);
-        linkedAnimTarget_ = target;
-
-        linkedAnim_ = drawerTween_.value (nowMs);
-        if (std::abs (linkedAnim_ - target) < Anim::kSnapEps)
-        {
-            linkedAnim_ = target;
-            drawerTween_.snapTo (target);
-        }
-        // A3：只在位置真的变化时才重排（内部还有 1px 死区判断）
-        layoutLinkedKnobs (false);
-
-        if (! linkedOpen_ && linkedAnim_ <= Anim::kSnapEps)
-            for (auto& kb : linkedKnobs_)
-                if (kb != nullptr) kb->setVisible (false);
-    }
+    // Phase A：抽屉已拆为 LinkedDrawer，这里只推进它的 Tween。
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->advance (nowMs);
 
     // ---- Phase 5.3：Popover 展开动画（Anim::kPopoverMs，略快于抽屉）----
     {
@@ -1764,15 +1736,17 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     // 0) LINKED 抽屉梯形按钮（§5.2）：点开/收起
-    if (hitTestDrawerButton (p))
+    if (linkedDrawer_ != nullptr && linkedDrawer_->hitTestButton (p))
     {
-        toggleLinkedDrawer (! linkedOpen_);
+        // O6 方案1：与 Popover 互斥
+        if (popoverOpen_) togglePopover (false);
+        linkedDrawer_->setOpen (! linkedDrawer_->isOpen());
         repaint();
         return;
     }
     // 抽屉打开时，点面板外 = 收起（"点空白收起"）
-    if (linkedOpen_ && ! drawerPanelRect().contains (p))
-        toggleLinkedDrawer (false);
+    if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen() && ! linkedDrawer_->hitTestPanel (p))
+        linkedDrawer_->setOpen (false);
 
     // 0a) Display Range 档位：点击弹出二级菜单（Pro-MB drop-down 语义）
     if (hitTestDisplayRange (p))
@@ -2030,149 +2004,11 @@ void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 }
 
 // ============================================================
-// Phase 5.2 · LINKED CONTROL 抽屉（UI_SPEC §5.2，O2-A 已定）
-//   梯形按钮点开滑入；5 旋钮横排 = Threshold/Attack/Release/Makeup/Mix
-//   前 4 个 = Δ 偏移语义（四段同名参数线性偏移）；Mix = 绝对值（0..100%）
+// Phase 5.2 · LINKED CONTROL 抽屉 —— 已整体拆出为 LinkedDrawer 组件
+//   （UI_PLAN_V2 §3.2）。DisplayView 只持有一个 unique_ptr<LinkedDrawer>，
+//   负责：构造/尺寸同步、命中分发（mouseDown）、每帧 advance()。
+//   梯形按钮/玻璃面板/5 个握柄旋钮/Δ 偏移语义全部在 LinkedDrawer.cpp。
 // ============================================================
-
-juce::Rectangle<float> DisplayView::drawerPanelRect() const
-{
-    // 面板：宽 5×92，居中；贴在梯形按钮上方（留 4px 间隙）
-    const float W = (float) getWidth();
-    const float pw = sx (5.0f * 92.0f);
-    const float ph = sy (120.0f);                     // 20(标签) + 96(旋钮) + 4(余量)
-    const float px = (W - pw) * 0.5f;
-    const float buttonTop = (float) getHeight() - sy (kGlobalBarH) - sy (29.0f);
-    return juce::Rectangle<float> (px, buttonTop - ph - sy (4.0f), pw, ph);
-}
-
-bool DisplayView::hitTestDrawerButton (juce::Point<float> p) const
-{
-    // 梯形按钮区域（与 drawDrawer 的绘制区域一致）
-    const float ch = sy (29.0f), cw = sx (456.0f);
-    const float cx = ((float) getWidth() - cw) * 0.5f;
-    const float cy = (float) getHeight() - sy (kGlobalBarH) - ch + sy (1.0f);
-    return p.x >= cx && p.x <= cx + cw && p.y >= cy && p.y <= cy + ch;
-}
-
-void DisplayView::toggleLinkedDrawer (bool open)
-{
-    if (open == linkedOpen_) return;
-    linkedOpen_ = open;
-    if (open)
-    {
-        popoverOpen_ = false;          // O6 方案1：互斥
-        ensureLinkedKnobs();
-    }
-    layoutLinkedKnobs();
-}
-
-void DisplayView::ensureLinkedKnobs()
-{
-    if (linkedKnobs_[0] != nullptr) return;
-
-    // 4 个偏移旋钮（Δ 语义）+ 1 个 Mix（绝对值）
-    struct Cfg { const char* label; const char* param; double mn, mx, def; int dec; const char* suf; };
-    const Cfg cfgs[kLinkedKnobs] = {
-        { "THRESHOLD", "Threshold", -60.0,  60.0, 0.0, 1, "dB"  },
-        { "ATTACK",    "Attack",   -200.0, 200.0, 0.0, 1, "ms"  },
-        { "RELEASE",   "Release",  -900.0, 900.0, 0.0, 1, "ms"  },
-        { "MAKEUP",    "Makeup",   -36.0,   36.0, 0.0, 1, "dB"  },
-        { "MIX",       "Mix",        0.0,  100.0, 100.0, 0, "%" },
-    };
-
-    for (int k = 0; k < kLinkedKnobs; ++k)
-    {
-        auto* kb = new Knob();
-        kb->setRange (cfgs[k].mn, cfgs[k].mx, (k == kLinkedMixIndex) ? 1.0 : 0.1);
-        kb->setDefaultValue (cfgs[k].def);
-        kb->setValue (cfgs[k].def, false);
-        kb->setLabel (cfgs[k].label);
-        kb->setValueSuffix (cfgs[k].suf);
-        kb->setDecimals (cfgs[k].dec);
-        kb->setKnobDiameter (52.0f);
-        kb->setShowLabel (true);
-        kb->setLinkedMark (true);                       // §5.2：⊞ 联动标识
-        if (k != kLinkedMixIndex)
-            kb->setValuePrefix (juce::String::fromUTF8 ("\xCE\x94 "));   // §5.2：偏移读数带 Δ
-        const int kk = k;
-        kb->onValueChange = [this, kk] (double v) { applyLinkedOffset (kk, v); };
-        addAndMakeVisible (kb);
-        linkedKnobs_[(size_t) k].reset (kb);
-    }
-}
-
-void DisplayView::layoutLinkedKnobs (bool force)
-{
-    // A1 修复（UI_PLAN_V2 §6.3 / 01_UI_ANIMATION_PLAN.md A1）：
-    //   此前用 `const float a = linkedOpen_ ? 1.0f : 0.0f;` —— 开关量而非动画量。
-    //   打开时旋钮**瞬间跳到终位**、关闭时**瞬间跳到面板下方**，滑入动画等于没做
-    //   （linkedAnim_ 被正确计算了却只用于 alpha）。
-    //   现在 a 取 linkedAnim_，旋钮真正随动画滑入/滑出。
-    const float a = juce::jlimit (0.0f, 1.0f, linkedAnim_);
-    const auto panel = drawerPanelRect();
-    const float unitW = sx (92.0f);
-    for (int k = 0; k < kLinkedKnobs; ++k)
-    {
-        if (linkedKnobs_[(size_t) k] == nullptr) continue;
-        // 自检修复：旋钮顶部留 20px 给标签行（Knob 的标签画在旋钮上方 15px），
-        // 否则标签会突出到面板外、贴到绘图区上
-        const float x = panel.getX() + unitW * (float) k + (unitW - sx (84.0f)) * 0.5f;
-        const float y = panel.getY() + sy (20.0f) + (1.0f - a) * panel.getHeight();
-        const int nx = (int) x, ny = (int) y;
-        auto* kb = linkedKnobs_[(size_t) k].get();
-        // A3 修复：动画期间只在位置变化超过 1px 时才 setBounds，
-        // 否则每帧 5 次 setBounds → 5 次 resized()，白烧 CPU 且 int 量化会抖。
-        if (force || kb->getX() != nx || kb->getY() != ny
-                 || kb->getWidth() != (int) sx (84.0f) || kb->getHeight() != (int) sy (96.0f))
-            kb->setBounds (nx, ny, (int) sx (84.0f), (int) sy (96.0f));
-        kb->setVisible (linkedOpen_ || linkedAnim_ > 0.001f);
-    }
-}
-
-void DisplayView::applyLinkedOffset (int k, double newValue)
-{
-    // ---- Mix（k=4）：**绝对值语义**（§5.2 v1.6 例外）——四段 Mix 同设为该值 ----
-    if (k == kLinkedMixIndex)
-    {
-        const double old = getParamPhysical (Param::bandMix (0));
-        if (std::abs (newValue - old) < 1.0e-9) return;
-        for (int b = 0; b < 4; ++b)
-            setParamPhysical (Param::bandMix (b), (float) newValue);
-        return;
-    }
-
-    // ---- 前 4 个旋钮：Δ 偏移语义 —— 四段同名参数线性偏移 ----
-    const double delta = newValue - linkedOffset_[(size_t) k];
-    if (std::abs (delta) < 1.0e-9)
-    {
-        linkedOffset_[(size_t) k] = newValue;
-        return;
-    }
-    linkedOffset_[(size_t) k] = newValue;
-
-    const juce::String name = (k == 0) ? "Threshold"
-                           : (k == 1) ? "Attack"
-                           : (k == 2) ? "Release" : "Makeup";
-    for (int b = 0; b < 4; ++b)
-    {
-        const juce::String id = "band" + juce::String (b) + name;
-        setParamPhysical (id, getParamPhysical (id) + (float) delta);   // 内部钳到参数范围
-    }
-}
-
-void DisplayView::drawLinkedDrawer (juce::Graphics& g)
-{
-    if (linkedAnim_ < 0.004f && ! linkedOpen_) return;
-    const float a = juce::jlimit (0.0f, 1.0f, linkedAnim_);
-    const auto panel = drawerPanelRect();
-
-    // 半透明面板（§12：alpha ~0.62/0.68 的玻璃感）
-    g.setColour (pal_.popA.withMultipliedAlpha (a));
-    g.fillRoundedRectangle (panel, sx (10.0f));
-    g.setColour (pal_.accent.withAlpha (0.55f * a));
-    g.drawRoundedRectangle (panel, sx (10.0f), 1.0f);
-}
 
 // ============================================================
 // Phase 5.3 · 频段 Popover（UI_SPEC §6，Pro-MB 样式）
@@ -2218,7 +2054,8 @@ void DisplayView::togglePopover (bool open)
     popoverBand_ = open ? selectedBand_ : -1;
     if (open)
     {
-        toggleLinkedDrawer (false);               // O6 方案1：互斥
+        if (linkedDrawer_ != nullptr)                 // O6 方案1：与抽屉互斥
+            linkedDrawer_->setOpen (false);
         ensurePopoverKnobs();
         syncPopoverFromParams();
         syncPopoverSliders();
@@ -2654,8 +2491,7 @@ void DisplayView::paint (juce::Graphics& g)
     drawFreqInput (g);       // #7：自绘频率输入框（最上层）
     // A4 修复（UI_PLAN_V2 §6.3）：此处此前连续调了两次 drawDrawer (g)，
     // 导致抽屉区域 alpha 双重混合（偏深偏灰）+ 每帧无谓多画一整个面板。
-    drawDrawer (g);
-    drawLinkedDrawer (g);   // Phase 5.2：LINKED 抽屉面板（旋钮为子组件，画在上面）
+    // Phase A：抽屉（梯形按钮 + 面板 + 旋钮）已整体拆为 LinkedDrawer 子组件自绘。
     drawPopover (g);        // Phase 5.3：频段 Popover（浮于最上层）
     drawMeters (g);
     drawTopStrip (g);
@@ -2668,7 +2504,7 @@ void DisplayView::resized()
     curvePathsValid_ = false;
     spectrumPathsValid_ = false;
 
-    // Phase 5.2：抽屉旋钮跟着重排（否则缩放窗口后旋钮跑位）
-    if (linkedOpen_ || linkedAnim_ > 0.001f)
-        layoutLinkedKnobs();
+    // Phase A：抽屉按钮/面板位置依赖宿主 bounds，尺寸变化时同步并重排旋钮
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->setHostBounds (getLocalBounds());
 }
