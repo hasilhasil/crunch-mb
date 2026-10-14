@@ -504,6 +504,18 @@ private:
     bool handleMidiLearnClick (juce::Point<float> p);
     void drawMidiLearnOverlay (juce::Graphics& g);
 
+    // ---- Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）----
+    // 玻璃条背后的内容做一次下采样 + 盒模糊，缓存成 Image，15Hz 更新。
+    // 关键约束：
+    //   · 模糊源是已画好的背景层，不含玻璃条自身与更上层控件（避免自我反馈）。
+    //   · 缓存 Image 在消息线程构建，音频线程不碰。
+    //   · 15Hz 更新：模糊是低频信息，人眼对模糊滞后不敏感，CPU 省 4×。
+    juce::Image blurCache_;
+    int       blurCacheW_ = 0, blurCacheH_ = 0;
+    juce::uint32 blurLastBuildMs_ = 0;
+    void buildBlurCache (juce::Rectangle<float> srcRect);
+    bool drawBlurredBackdrop (juce::Graphics& g, juce::Rectangle<float> dstRect);
+
     // ---- Phase C-3：频段圆形电平表（Pro-MB Threshold 旋钮外圈环对标）----
     // ---- Phase E-2：空闲停 Timer ----
     // timerCallback 里记录本帧是否收到新频谱帧；无动效且无新帧时停表。

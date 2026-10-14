@@ -749,9 +749,22 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     const float W = (float) getWidth();
     const float h = sy (kTopStripH);
 
+    // Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）。
+    // 先把背后的频谱/网格糊化再上半透明色，玻璃条才真正"毛"起来。
+    // 15Hz 刷新：模糊是低频信息，人眼对滞后不敏感，CPU 省 4×。
+    {
+        const auto src = juce::Rectangle<float> (0.0f, 0.0f, W, h);
+        const juce::uint32 nowMsB = (juce::uint32) animNowMs();
+        if (nowMsB - blurLastBuildMs_ >= 66)      // ~15Hz
+        {
+            blurLastBuildMs_ = nowMsB;
+            buildBlurCache (src);
+        }
+        drawBlurredBackdrop (g, src);
+    }
+
     // Phase B-3：顶栏改**半透明玻璃**（原 100% 不透明 surface）。
     // 对齐 Pro-MB：顶栏是压在频谱之上的半透明条，频谱从它下面透出来。
-    // 模糊留到 Phase E（UI_SPEC §12.2 档 b：4× 下采样 + 15Hz 更新）。
     g.setColour (pal_.surfaceA);
     g.fillRect (0.0f, 0.0f, W, h);
     // 底缘 1px 分隔（比之前的 gridZ 更淡，玻璃条不需要硬边）
@@ -814,6 +827,17 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     const float h = sy (kGlobalBarH);
 
     // Phase B-3：global 条同样改半透明玻璃（对齐 Pro-MB 底栏压在频谱之上）
+    // Phase E-1：背后内容先糊化（15Hz）
+    {
+        const auto src = juce::Rectangle<float> (0.0f, y0, W, h);
+        const juce::uint32 nowMsB = (juce::uint32) animNowMs();
+        if (nowMsB - blurLastBuildMs_ >= 66)
+        {
+            blurLastBuildMs_ = nowMsB;
+            buildBlurCache (src);
+        }
+        drawBlurredBackdrop (g, src);
+    }
     g.setColour (pal_.surfaceA);
     g.fillRect (0.0f, y0, W, h);
     g.setColour (pal_.gridZ.withAlpha (0.6f));
@@ -950,6 +974,106 @@ void DisplayView::updateBandLevels (double nowMs, double dt)
                 juce::jmax (raw, bandPeakDb_[(size_t) b] - fallDbPerSec * (float) dt);
         }
     }
+}
+
+// ---------------- Phase E-1：backdrop blur ----------------
+// UI_SPEC §12.2 档 b：4× 下采样 + 盒模糊，15Hz 更新，约 0.3ms/帧。
+// 做法：把玻璃条对应的屏幕区域截取到一张小图（宽高各 1/4），
+// 做两遍 3×3 盒模糊（等效近似高斯），需要时再放大贴回去。
+void DisplayView::buildBlurCache (juce::Rectangle<float> srcRectF)
+{
+    const auto src = srcRectF.getSmallestIntegerContainer().getIntersection (
+        juce::Rectangle<int> (0, 0, getWidth(), getHeight()));
+    if (src.isEmpty())
+        return;
+
+    // 下采样系数：模糊不需要高频细节，1/4 足够且省 16× 像素量
+    const int kDown = 4;
+    const int cw = juce::jmax (1, src.getWidth()  / kDown);
+    const int ch = juce::jmax (1, src.getHeight() / kDown);
+
+    if (blurCache_.getWidth() != cw || blurCache_.getHeight() != ch)
+    {
+        blurCache_ = juce::Image (juce::Image::ARGB, cw, ch, true);
+        blurCacheW_ = cw;
+        blurCacheH_ = ch;
+    }
+    blurCache_.clear (blurCache_.getBounds());
+
+    // 1) 截取背景层到小图（用 Image 版 Graphics 缩放绘制 = 自动下采样）
+    {
+        juce::Graphics cg (blurCache_);
+        // 背景层已在主 Graphics 上画好，这里重新画一份缩放版。
+        // 只画"模糊可见"的层：背景/网格/分区/频谱。Range/曲线/刻度/控件不参与，
+        // 因为玻璃条区域内的它们本就该被糊掉。
+        cg.reduceClipRegion (blurCache_.getBounds());
+        const float kx = (float) cw / (float) src.getWidth();
+        const float ky = (float) ch / (float) src.getHeight();
+        cg.addTransform (juce::AffineTransform::scale (kx, ky, 0.0f, 0.0f)
+                            .translated ((float) -src.getX(), (float) -src.getY()));
+        drawBackground (cg);
+        drawGrid (cg);
+        drawPartitions (cg);
+        if (spectrumView_ != nullptr)
+            spectrumView_->paint (cg);
+    }
+
+    // 2) 两遍 3×3 盒模糊（近似高斯，成本 O(n) 且可用可分离写法）
+    //    这里用手写循环，避免为小图引入额外依赖。
+    {
+        const int w = blurCacheW_, h = blurCacheH_;
+        // 用一个临时缓冲做分离卷积（先横向后纵向）
+        juce::Image tmp (juce::Image::ARGB, w, h, true);
+        tmp.clear (tmp.getBounds());
+
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            // 横向
+            {
+                juce::Graphics tg (tmp);
+                tg.drawImageAt (blurCache_, 0, 0);
+            }
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                {
+                    float r = 0, g = 0, b = 0, a = 0;
+                    for (int dx = -1; dx <= 1; ++dx)
+                    {
+                        const int xx = juce::jlimit (0, w - 1, x + dx);
+                        const juce::Colour c = tmp.getPixelAt (xx, y);
+                        r += c.getFloatRed();   g += c.getFloatGreen();
+                        b += c.getFloatBlue();  a += c.getFloatAlpha();
+                    }
+                    blurCache_.setPixelAt (x, y, juce::Colour::fromFloatRGBA (r / 3, g / 3, b / 3, a / 3));
+                }
+            // 纵向
+            {
+                juce::Graphics tg (tmp);
+                tg.drawImageAt (blurCache_, 0, 0);
+            }
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                {
+                    float r = 0, g = 0, b = 0, a = 0;
+                    for (int dy = -1; dy <= 1; ++dy)
+                    {
+                        const int yy = juce::jlimit (0, h - 1, y + dy);
+                        const juce::Colour c = tmp.getPixelAt (x, yy);
+                        r += c.getFloatRed();   g += c.getFloatGreen();
+                        b += c.getFloatBlue();  a += c.getFloatAlpha();
+                    }
+                    blurCache_.setPixelAt (x, y, juce::Colour::fromFloatRGBA (r / 3, g / 3, b / 3, a / 3));
+                }
+        }
+    }
+}
+
+bool DisplayView::drawBlurredBackdrop (juce::Graphics& g, juce::Rectangle<float> dstRect)
+{
+    if (blurCacheW_ <= 0 || blurCacheH_ <= 0)
+        return false;
+    g.drawImage (blurCache_, dstRect, juce::RectanglePlacement::stretchToFit);
+    return true;
 }
 
 void DisplayView::timerCallback()
