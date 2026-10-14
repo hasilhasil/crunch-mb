@@ -4891,6 +4891,70 @@ static void testAutoExpandRange()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T46 Phase D-6：Alt+拖 OUT 按钮 = Output Gain
+//   Pro-MB：Alt-drag Output = makeup gain，不用打开面板就能快速校正输出电平
+// ------------------------------------------------------------
+static void testAltDragOutputGain()
+{
+    std::cout << "\n--- T46 Phase D-6 Alt+拖 OUT = Output Gain ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T46.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+
+    const float btnX = 920.0f - 196.0f + 39.0f;
+    const float btnY = 620.0f - 32.0f + 5.0f + 11.0f;
+
+    const auto ogOf = [&] () -> float
+    {
+        for (auto* pp : proc->getParameters())
+            if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                if (pw->getParameterID() == Param::ID::outputGain)
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                        return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+        return -999.0f;
+    };
+
+    // ① Alt+按下 → 进入 OutputGain 拖拽态（不开面板）
+    const float ogBefore = ogOf();
+    auto altMods = juce::ModifierKeys::altModifier;
+    dv.mouseDownForTestMods (btnX, btnY, altMods);
+    check (dv.isOutputGainDragForTest(), "T46.1 Alt+按下 OUT → 进入 OutputGain 拖拽态", "");
+    check (! dv.isOutputOpenForTest(), "T46.2 Alt+拖不打开 Output 面板", "");
+
+    // ② 上拖 100px → 增益增大（100/220 × 72 ≈ +32.7 dB）
+    dv.mouseDragForTestMods (btnX, btnY - 100.0f, altMods);
+    const float ogAfter = ogOf();
+    std::cout << "  Output Gain: " << ogBefore << " -> " << ogAfter << " dB" << std::endl;
+    check (ogAfter > ogBefore + 20.0f, "T46.3 Alt+上拖 → Output Gain 明显增大",
+           juce::String (ogBefore) + " -> " + juce::String (ogAfter));
+
+    // ③ 下拖回原位 → 增益回到起始值附近
+    dv.mouseDragForTestMods (btnX, btnY, altMods);
+    const float ogBack = ogOf();
+    std::cout << "  拖回: " << ogAfter << " -> " << ogBack << " dB" << std::endl;
+    check (std::abs (ogBack - ogBefore) < 0.5f, "T46.4 拖回原位 → 增益回到起始值",
+           juce::String (ogBack) + " vs " + juce::String (ogBefore));
+
+    // ④ 松手 → 退出拖拽态
+    dv.mouseUpForTestMods (btnX, btnY, altMods);
+    check (! dv.isOutputGainDragForTest(), "T46.5 松手 → 退出 OutputGain 拖拽态", "");
+
+    // ⑤ 不带 Alt 的点击仍走面板（不回归 D-4）
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isOutputStickyForTest(), "T46.6 无 Alt 点击仍打开 Output 面板（D-4 不回归）", "");
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4945,6 +5009,7 @@ int main()
     testBandSweepMultiSelect();     // T43 Phase D-3 显示背景拖拽多选
     testOutputPanelSticky();       // T44 Phase D-4 Output 面板 sticky 语义
     testAutoExpandRange();         // T45 Phase D-5 拖动超范围自动扩档
+    testAltDragOutputGain();       // T46 Phase D-6 Alt+拖 OUT = Output Gain
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

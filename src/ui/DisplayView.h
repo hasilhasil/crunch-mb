@@ -88,6 +88,12 @@ public:
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);
     void mouseUpForTest (float x, float y);
+    /** Phase D-6：带修饰键的鼠标钩子（Alt+拖 OUT = Output Gain 测试用）。 */
+    void mouseDownForTestMods (float x, float y, juce::ModifierKeys mods);
+    void mouseDragForTestMods (float x, float y, juce::ModifierKeys mods);
+    void mouseUpForTestMods (float x, float y, juce::ModifierKeys mods);
+    /** Phase D-6 测试钩子：是否正在拖 Output Gain。 */
+    bool isOutputGainDragForTest() const { return drag_ == DragMode::OutputGain; }
     /** Phase D：派发鼠标移动（悬停语义测试用，如 Analyzer 面板 hover-open）。 */
     void mouseMoveForTest (float x, float y);
     void mouseDoubleClickForTest (float x, float y);
@@ -411,7 +417,7 @@ private:
     int  hoverDividers_ = -1;        // C2：hover/拖动中的分割线（主题色高亮）
 
     // ---- Phase 4.4 交互状态 ----
-    enum class DragMode { None, Divider, Makeup, Range, DotFreq, BandSweep };
+    enum class DragMode { None, Divider, Makeup, Range, DotFreq, BandSweep, OutputGain };
     DragMode drag_ = DragMode::None;
     int  dragIndex_ = -1;            // 分割线索引 0..2
     int  dragBand_ = -1;             // Makeup 拖动作用的段（C4 可跨段）
@@ -427,6 +433,7 @@ private:
     bool  rangePendingLower_ = true;
     float dragRangeEdgeY_ = 0.0f;      // Range 拖动起始的下缘 y（判定是否仍是 Range 意图）
     float dragStartX_ = 0.0f;
+    float dragStartOutputGainDb_ = 0.0f;   // Phase D-6：Alt+拖 OUT 起始增益
     float dragStartRange_ = 0.0f;
     bool mouseDownOnButton_ = false;
 

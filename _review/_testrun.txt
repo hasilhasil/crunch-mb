@@ -270,7 +270,7 @@
 [PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
 [PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
 [PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
-  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-104.965dB
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-105.029dB
 [PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
 [PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
 [PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
@@ -321,7 +321,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=83.9844MB  anim#1=163.633MB (+79.6484)  anim#2=164.191MB (+80.207 / +0.558594 for the 2nd round)  editorsx200=164.191MB (+80.207)  theme/resizex50=164.402MB (+80.418)  resizeStormx400=164.699MB (+80.7148)
+  RSS: start=83.3281MB  anim#1=168.781MB (+85.4531)  anim#2=169.496MB (+86.168 / +0.714844 for the 2nd round)  editorsx200=169.496MB (+86.168)  theme/resizex50=169.316MB (+85.9883)  resizeStormx400=169.164MB (+85.8359)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -535,7 +535,7 @@
   Speed[1] tau=20ms: loud=-6.67806dB 阶跃后=-23.5717dB
 [PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
 [PASS] T39.1b é¶è·åç¡®å®ä¸è½
-  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-15.9424dB
+  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-16.1194dB
 [PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
 [PASS] T39.1b é¶è·åç¡®å®ä¸è½
 [PASS] T39.2 Speed ä¸æ¡£ä¸è½éåº¦éå¢ï¼fast < medium < slowï¼
@@ -651,5 +651,16 @@
   手动量程: 12 -> 12 dB
 [PASS] T45.4 æå¨æ¡£ä½ä¸æå¨ä¸èªå¨æ©æ¡£
 
+--- T46 Phase D-6 Alt+拖 OUT = Output Gain ---
+[PASS] T46.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T46.1 Alt+æä¸ OUT â è¿å¥ OutputGain ææ½æ
+[PASS] T46.2 Alt+æä¸æå¼ Output é¢æ¿
+  Output Gain: 0 -> 32.7 dB
+[PASS] T46.3 Alt+ä¸æ â Output Gain ææ¾å¢å¤§
+  拖回: 32.7 -> 0 dB
+[PASS] T46.4 æååä½ â å¢çåå°èµ·å§å¼
+[PASS] T46.5 æ¾æ â éåº OutputGain ææ½æ
+[PASS] T46.6 æ  Alt ç¹å»ä»æå¼ Output é¢æ¿ï¼D-4 ä¸åå½ï¼
+
 ====================================
-PASS 335 / FAIL 0
+PASS 342 / FAIL 0

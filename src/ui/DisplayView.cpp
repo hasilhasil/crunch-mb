@@ -853,16 +853,19 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
                     anBtn, juce::Justification::centred);
     }
 
-    // OUT 按钮（Phase D-4：从纯读数升级为可点按钮，Pro-MB Output 面板对标）
-    // 悬停打开 Output 面板（非 sticky），点击变 sticky。
+    // OUT 按钮（Phase D-4/D-6）
+    //   · 单击/悬停 → Output 面板（sticky 语义）
+    //   · **Alt+拖 → 直接调 Output Gain**（Pro-MB Alt-drag Output = makeup gain）
     auto outBtn = juce::Rectangle<float> (W - sx (196.0f), y0 + sy (5.0f),
                                           sx (78.0f), sy (22.0f));
     const bool outHot = outputPanel_ != nullptr
                      && (outputPanel_->isSticky()
                          || outBtn.contains (lastMousePos_));
-    g.setColour (outHot ? pal_.accent.withAlpha (0.85f) : pal_.track);
+    const bool outAlt = drag_ == DragMode::OutputGain;
+    g.setColour (outAlt ? pal_.accent
+                        : (outHot ? pal_.accent.withAlpha (0.85f) : pal_.track));
     g.fillRoundedRectangle (outBtn, sx (11.0f));
-    g.setColour (outHot ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
+    g.setColour (outHot || outAlt ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
     g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
     {
         const juce::uint32 nowMs2 = animNowMs();
@@ -872,8 +875,13 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
             labelOutDb_ = meterOutDb_;
             nextMeterLabelMs_ = nowMs2 + 250;
         }
-        g.drawText ("OUT " + juce::String (labelOutDb_, 1),
-                    outBtn, juce::Justification::centred);
+        // 拖动中显示正在调的增益值，否则显示 OUT 读数
+        if (outAlt && outputPanel_ != nullptr)
+            g.drawText (juce::String (outputPanel_->outputGainDb(), 1) + " dB",
+                        outBtn, juce::Justification::centred);
+        else
+            g.drawText ("OUT " + juce::String (labelOutDb_, 1),
+                        outBtn, juce::Justification::centred);
     }
 
     // BYPASS 胶囊（C10：可点按；命中区与绘制严格一致）
@@ -1431,10 +1439,10 @@ int DisplayView::hitTestFreqDot (juce::Point<float> p, int& bandOut) const
 namespace
 {
     // 构造测试用鼠标事件（无真实桌面时经 Desktop 取 MouseInputSource）
-    juce::MouseEvent mkTestMouse (juce::Point<float> p)
+    juce::MouseEvent mkTestMouse (juce::Point<float> p, juce::ModifierKeys mods = juce::ModifierKeys())
     {
         auto src = juce::Desktop::getInstance().getMainMouseSource();
-        return juce::MouseEvent (src, p, juce::ModifierKeys(),
+        return juce::MouseEvent (src, p, mods,
                                  0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // pressure/orientation/rotation/tiltX/tiltY
                                  nullptr, nullptr,                // eventComponent/originator
                                  juce::Time(), p,                 // eventTime/mouseDownPos
@@ -1454,6 +1462,9 @@ void DisplayView::enterTestClock()
 void DisplayView::mouseDownForTest (float x, float y) { enterTestClock(); mouseDown (mkTestMouse (juce::Point<float> (x, y))); }
 void DisplayView::mouseDragForTest (float x, float y) { enterTestClock(); mouseDrag (mkTestMouse (juce::Point<float> (x, y))); }
 void DisplayView::mouseUpForTest   (float x, float y) { enterTestClock(); mouseUp   (mkTestMouse (juce::Point<float> (x, y))); }
+void DisplayView::mouseDownForTestMods (float x, float y, juce::ModifierKeys m) { enterTestClock(); mouseDown (mkTestMouse (juce::Point<float> (x, y), m)); }
+void DisplayView::mouseDragForTestMods (float x, float y, juce::ModifierKeys m) { enterTestClock(); mouseDrag (mkTestMouse (juce::Point<float> (x, y), m)); }
+void DisplayView::mouseUpForTestMods   (float x, float y, juce::ModifierKeys m) { enterTestClock(); mouseUp   (mkTestMouse (juce::Point<float> (x, y), m)); }
 void DisplayView::mouseMoveForTest (float x, float y) { enterTestClock(); mouseMove (mkTestMouse (juce::Point<float> (x, y))); }
 
 // Phase A：推进虚拟时钟再跑一帧。advanceMs 默认 16ms ≈ 60fps。
@@ -2020,8 +2031,22 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     // 0d) Phase D-4：OUT 按钮 → Output 面板（悬停打开 / 点击 sticky）
+    // Phase D-6：**Alt+拖 OUT 按钮 = 直接调 Output Gain**
+    //   （Pro-MB：Alt-drag Output = makeup gain，不用打开面板就能快速校正输出电平）
     if (hitTestOutputButton (p))
     {
+        if (e.mods.isAltDown())
+        {
+            drag_ = DragMode::OutputGain;
+            dragStartY_ = p.y;
+            dragStartOutputGainDb_ = outputPanel_ != nullptr
+                                   ? outputPanel_->outputGainDb()
+                                   : getParamPhysical (Param::ID::outputGain);
+            if (outputPanel_ != nullptr)
+                outputPanel_->setOutputGainForTest (dragStartOutputGainDb_);
+            repaint();
+            return;
+        }
         if (outputPanel_ != nullptr)
         {
             outputPanel_->clickButton();
@@ -2209,6 +2234,22 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
         for (int bb = 0; bb < Param::kNumBands; ++bb)
             tweenTo (hoverT_[(size_t) bb], animNowMs(),
                      (bb == hit) ? 1.0f : 0.0f, Anim::kFadeMs);
+        repaint();
+        return;
+    }
+
+    // Phase D-6：Alt+拖 OUT 按钮 = Output Gain（Pro-MB Alt-drag Output = makeup gain）
+    // 垂直拖拽：上拖 = 增益增大。220px 走完 ±72dB 全程（与旋钮同一速度比例）。
+    if (drag_ == DragMode::OutputGain)
+    {
+        const float dy = dragStartY_ - p.y;
+        const float span = 72.0f;                     // −36..+36 dB
+        const float fine = e.mods.isShiftDown() ? 0.1f : 1.0f;
+        float ng = dragStartOutputGainDb_ + dy / 220.0f * span * fine;
+        ng = juce::jlimit (-36.0f, 36.0f, ng);
+        if (outputPanel_ != nullptr)
+            outputPanel_->setOutputGainForTest (ng);
+        applyOutputSettings();
         repaint();
         return;
     }
