@@ -975,8 +975,9 @@ void DisplayView::timerCallback()
     updateBandLevels (nowMs, dt);
 
     // ---- Phase 4.3：频谱帧拾取（Phase A：已拆为 SpectrumView）----
+    spectrumHadNewFrame_ = false;
     if (spectrumView_ != nullptr)
-        spectrumView_->updateFromEngine();
+        spectrumHadNewFrame_ = spectrumView_->updateFromEngine();
 
     // #7：输入框光标闪烁（500ms 半周期）
     // A2 修复：闪烁由时间驱动，paint() 只读。所有可能处于编辑态的控件都要推进。
@@ -1072,7 +1073,28 @@ void DisplayView::timerCallback()
         outputPanel_->advance (nowMs);
 
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
-    advanceTweens (nowMs);
+    const bool tweensBusy = advanceTweens (nowMs);
+
+    // ---- Phase E-2：空闲停 Timer ----
+    // 没有动效、没有新频谱帧、没有拖拽、没有光标闪烁时，停掉 60fps 定时器。
+    // 音频仍在跑（DSP 在音频线程），停的只是 UI 重绘——省 CPU/电量。
+    // ⚠️ 只在真实运行时生效：测试用的虚拟时钟下不停，否则 tickForTest 会失效。
+    if (! useTestClock_ && ! tweensBusy && ! spectrumHadNewFrame_)
+    {
+        if (linkedDrawer_ != nullptr && linkedDrawer_->advance (nowMs)) {}
+        // 再确认一次各面板/抽屉的 Tween 都已结束
+        bool anyAnim = false;
+        if (linkedDrawer_ != nullptr && linkedDrawer_->anim() > 0.0f
+            && linkedDrawer_->anim() < 1.0f) anyAnim = true;
+        if (bandPopover_  != nullptr && bandPopover_->anim()  > 0.0f
+            && bandPopover_->anim()  < 1.0f) anyAnim = true;
+        if (analyzerPanel_ != nullptr && analyzerPanel_->anim() > 0.0f
+            && analyzerPanel_->anim() < 1.0f) anyAnim = true;
+        if (outputPanel_   != nullptr && outputPanel_->anim()   > 0.0f
+            && outputPanel_->anim()   < 1.0f) anyAnim = true;
+        if (! anyAnim && drag_ == DragMode::None)
+            stopTimer();
+    }
 
     repaint();
 }
@@ -1931,6 +1953,7 @@ bool DisplayView::keyPressed (const juce::KeyPress& key)
 
 void DisplayView::mouseMove (const juce::MouseEvent& e)
 {
+    ensureTimerRunning();      // Phase E-2：悬停可能触发面板开合动画
     const auto p = e.position;
     lastMousePos_ = p;
     if (bandPopover_ != nullptr)
@@ -2030,6 +2053,7 @@ void DisplayView::openDisplayRangeMenu()
 
 void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
+    ensureTimerRunning();      // Phase E-2
     // #4 修订：只要在**分区内**滚轮就可改该段大小（不要求 hover 在频点上）
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
@@ -2073,6 +2097,7 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 
 void DisplayView::mouseDown (const juce::MouseEvent& e)
 {
+    ensureTimerRunning();      // Phase E-2：任何交互都唤醒定时器
     // Phase D-3：每次 mouseDown 都重置拖拽状态——新手势开始。
     // ⚠️ 不清零的后果：若上一次 mouseDown 布防了 BandSweep 而 mouseUp 从未到达
     //    （鼠标移出窗口、模态吞掉事件、测试里只按不松），drag_ 会卡在 BandSweep，
@@ -2689,6 +2714,7 @@ void DisplayView::paint (juce::Graphics& g)
 
 void DisplayView::resized()
 {
+    ensureTimerRunning();      // Phase E-2：尺寸变化需要重建几何
     // D3：尺寸变化 → 曲线几何全部失效（坐标基于实际像素，必须重建）
     curvePathsValid_ = false;
 

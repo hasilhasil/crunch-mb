@@ -505,6 +505,15 @@ private:
     void drawMidiLearnOverlay (juce::Graphics& g);
 
     // ---- Phase C-3：频段圆形电平表（Pro-MB Threshold 旋钮外圈环对标）----
+    // ---- Phase E-2：空闲停 Timer ----
+    // timerCallback 里记录本帧是否收到新频谱帧；无动效且无新帧时停表。
+    // 任何交互/动画开始时会经 ensureTimerRunning() 重启。
+    bool spectrumHadNewFrame_ = false;
+    void ensureTimerRunning()
+    {
+        if (! isTimerRunning())
+            startTimerHz (60);
+    }
     // 实时值由音频线程写、UI 线程读；这里各存一份平滑后的显示值，
     // 让环的转动有弹道感而不是每帧跳。
     // ⚠️ 初值必须是静音底 −100dB，不能是 0：0 会被弹道逻辑当成"当前电平 0dB"，
