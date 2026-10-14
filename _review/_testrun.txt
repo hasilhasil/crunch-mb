@@ -1,0 +1,586 @@
+﻿Crunch MB — Phase 3 DSP 离线断言（含 Phase 2 全量 + DAW 链路回归）
+
+--- T0 参数系统 ---
+[PASS] T0.1 å¸å±åæ°æ° = 79ï¼2026-10-14 æ°å¢ oversampling + æ¯æ®µä¾§é¾æ»¤æ³¢Ã3 + StereoLinkï¼
+[PASS] T0.2 å³é® ID å¯å¯»åï¼band{i}Range / band{i}Delta / phaseModeï¼
+[PASS] T0.3 clamp åæ³å¼ä¸å
+[PASS] T0.4 clamp è¿è§å¼æ¶æä¸º â¥1 å«åº¦é¾
+[PASS] T0.5 clamp æ Â§3.8 é¡ºåºå°±å°æ¶æï¼x1â175ï¼æ¯å¼æ° 2:1ï¼
+[PASS] T0.6 ç¶æåºååå¾è¿æ æï¼band2Makeup=3.2dB / xover1=333Hzï¼
+
+--- T0b 参数清单盘点 ---
+[PASS] T0b.1 åæ°æ»æ° = 79ï¼2026-10-14ï¼
+[PASS] T0b.2 æ¯æ®µ Makeup/Solo/Mute/Delta/Ext åæ°é½å¨ï¼å± 20 ä¸ªï¼
+---- 79 参数清单（Studio One 参数下拉显示名 → ID）----
+  enabled  |  Enabled
+  phaseMode  |  Phase Mode
+  linearQuality  |  Linear Quality
+  xoverSlope  |  Crossover Slope
+  xover1  |  Crossover 1
+  xover2  |  Crossover 2
+  xover3  |  Crossover 3
+  inputGain  |  Input Gain
+  outputGain  |  Output Gain
+  lookahead  |  Lookahead
+  oversampling  |  Oversampling
+  band0Threshold  |  Low Threshold
+  band0Range  |  Low Range
+  band0Ratio  |  Low Ratio
+  band0Attack  |  Low Attack
+  band0Release  |  Low Release
+  band0Makeup  |  Low Makeup
+  band0Mix  |  Low Mix
+  band0Knee  |  Low Knee
+  band0Detector  |  Low Detector
+  band0SCFilter  |  Low Side Chain Filtering
+  band0SCLow  |  Low Side Chain Low Frequency
+  band0SCHigh  |  Low Side Chain High Frequency
+  band0StereoLink  |  Low Stereo Link
+  band0Solo  |  Low Solo
+  band0Mute  |  Low Mute
+  band0Ext  |  Low Ext
+  band0Delta  |  Low Delta
+  band1Threshold  |  Low Mid Threshold
+  band1Range  |  Low Mid Range
+  band1Ratio  |  Low Mid Ratio
+  band1Attack  |  Low Mid Attack
+  band1Release  |  Low Mid Release
+  band1Makeup  |  Low Mid Makeup
+  band1Mix  |  Low Mid Mix
+  band1Knee  |  Low Mid Knee
+  band1Detector  |  Low Mid Detector
+  band1SCFilter  |  Low Mid Side Chain Filtering
+  band1SCLow  |  Low Mid Side Chain Low Frequency
+  band1SCHigh  |  Low Mid Side Chain High Frequency
+  band1StereoLink  |  Low Mid Stereo Link
+  band1Solo  |  Low Mid Solo
+  band1Mute  |  Low Mid Mute
+  band1Ext  |  Low Mid Ext
+  band1Delta  |  Low Mid Delta
+  band2Threshold  |  High Mid Threshold
+  band2Range  |  High Mid Range
+  band2Ratio  |  High Mid Ratio
+  band2Attack  |  High Mid Attack
+  band2Release  |  High Mid Release
+  band2Makeup  |  High Mid Makeup
+  band2Mix  |  High Mid Mix
+  band2Knee  |  High Mid Knee
+  band2Detector  |  High Mid Detector
+  band2SCFilter  |  High Mid Side Chain Filtering
+  band2SCLow  |  High Mid Side Chain Low Frequency
+  band2SCHigh  |  High Mid Side Chain High Frequency
+  band2StereoLink  |  High Mid Stereo Link
+  band2Solo  |  High Mid Solo
+  band2Mute  |  High Mid Mute
+  band2Ext  |  High Mid Ext
+  band2Delta  |  High Mid Delta
+  band3Threshold  |  High Threshold
+  band3Range  |  High Range
+  band3Ratio  |  High Ratio
+  band3Attack  |  High Attack
+  band3Release  |  High Release
+  band3Makeup  |  High Makeup
+  band3Mix  |  High Mix
+  band3Knee  |  High Knee
+  band3Detector  |  High Detector
+  band3SCFilter  |  High Side Chain Filtering
+  band3SCLow  |  High Side Chain Low Frequency
+  band3SCHigh  |  High Side Chain High Frequency
+  band3StereoLink  |  High Stereo Link
+  band3Solo  |  High Solo
+  band3Mute  |  High Mute
+  band3Ext  |  High Ext
+  band3Delta  |  High Delta
+----------------------------------------------------
+
+--- T1 BandCompressor ---
+[PASS] T1.1 ç¡¬æç¹ä¼ è¾æ²çº¿ï¼-30dBâ0 / 0dBâ-15 / -10dBâ-7.5ï¼
+[PASS] T1.2 è½¯æç¹ä¼ è¾æ²çº¿ï¼12dB äºæ¬¡æå¼ãåè°ï¼
+[PASS] T1.3 Range é³å¶ï¼|GR| â¤ 3dBï¼
+[PASS] T1.4 attack æ¶é´å¸¸æ° â 50msï¼63.2%@Ïï¼
+[PASS] T1.5 release æ¶é´å¸¸æ° â 200msï¼63.2%@Ïï¼ç¨³æèµ·æµï¼
+
+--- T2 断言①：四段幅度求和平坦（±0.01dB @48k 扫频）---
+[PASS] T2.1 Minimal 12dB/octï¼äºè¡¥å¯¹ï¼ 平坦和（tol 0.01dB）
+[PASS] T2.2 Minimal 24dB/octï¼LR4 æ ï¼ 平坦和（tol 0.60dB）
+[PASS] T2.3 Minimal 36dB/octï¼äºè¡¥å¯¹ï¼ 平坦和（tol 0.01dB）
+[PASS] T2.4 Minimal 48dB/octï¼LR8 æ ï¼ 平坦和（tol 2.00dB）
+[PASS] T2.5 Natural 12dB/octï¼äºè¡¥å¯¹ï¼ 平坦和（tol 0.01dB）
+[PASS] T2.6 Natural 24dB/octï¼LR4 æ ï¼ 平坦和（tol 0.60dB）
+[PASS] T2.7 Natural 36dB/octï¼äºè¡¥å¯¹ï¼ 平坦和（tol 0.01dB）
+[PASS] T2.8 Natural 48dB/octï¼LR8 æ ï¼ 平坦和（tol 2.00dB）
+
+--- T3 断言②：互补恒等（逐样本 < 1e-6）---
+[PASS] T3.1 Minimal 12ï¼äºè¡¥å¯¹ï¼ 恒等重建
+[PASS] T3.2 Minimal 36ï¼äºè¡¥å¯¹ï¼ 恒等重建
+[PASS] T3.3 Natural 12ï¼äºè¡¥å¯¹ï¼ 恒等重建
+[PASS] T3.4 Natural 36ï¼äºè¡¥å¯¹ï¼ 恒等重建
+
+--- T4 断言③：FIR 核和 = 纯延迟 ---
+[PASS] T4.1 Î£æ®µæ ¸ = Î´_Dï¼æç­æ±åï¼
+[PASS] T4.2 Î£H = e^{-jÏD}ï¼|H|â1ãç¾¤å»¶è¿æå® = Dï¼
+[PASS] T4.3 Î£|H_i| â 1ï¼å¹åº¦åå²å®æ´æ§ï¼
+
+--- T5 断言④：延迟计数 = pad + (L−1)/2 ---
+[PASS] T5.1.2048 getLatencySamples == pad+(L−1)/2 == 3N/4
+[PASS] T5.2.2048 脉冲峰位 == getLatencySamples（幅度 1）
+[PASS] T5.1.4096 getLatencySamples == pad+(L−1)/2 == 3N/4
+[PASS] T5.2.4096 脉冲峰位 == getLatencySamples（幅度 1）
+[PASS] T5.1.8192 getLatencySamples == pad+(L−1)/2 == 3N/4
+[PASS] T5.2.8192 脉冲峰位 == getLatencySamples（幅度 1）
+
+--- T6 断言⑤：中性增益下三模式输出 = 输入 ---
+[PASS] T6.1 Minimal 12dB/oct ä¸­æ§ç´éï¼äºè¡¥å¯¹éæ ·æ¬æç­ï¼
+[PASS] T6.1b Minimal 24dB/oct ä¸­æ§å¹åº¦å¹³å¦ï¼LR æ  Â±0.5dBï¼
+[PASS] T6.2 Linear å»¶è¿ä¸æ¥ = 1536ï¼Lowï¼
+[PASS] T6.3 Linear ä¸­æ§ç´éï¼å»¶è¿å¯¹é½ï¼
+[PASS] T6.4 Natural ä¸­æ§å¹åº¦å¹³å¦ï¼LR4 æ å®¹å·® Â±0.5dBï¼
+
+--- T7 Lookahead ---
+[PASS] T7.1 å»¶è¿ä¸æ¥ = lookahead æ ·æ¬æ°ï¼0 / 48 / 144ï¼
+[PASS] T7.2 èå²å³°ä½ â 48ï¼LR4 ç¾¤å»¶è¿ Â±1 æ ·æ¬ï¼å³°å¼ â¥0.6ï¼
+[PASS] T7.3 3ms lookahead ç¬æèµ·å§æåæå¶ï¼æ¹åæ§ï¼on3 < on0ï¼
+
+--- T8 侧链 EXT ---
+[PASS] T8.1 INT æ£æµï¼è½»ä¸»ä¿¡å·ä¸åç¼©ï¼RMSâè¾å¥ï¼
+[PASS] T8.2 EXT æ£æµï¼åä¾§é¾é©±å¨åç¼©ï¼RMS æ¾èä¸éï¼
+[PASS] T8.3 æ ä¾§é¾æ¶ fallback INTï¼ä¸è¯¯åç¼©ï¼
+
+--- T9 监听门 + 断言⑥：切换无爆音 ---
+[PASS] æ­è¨â¥aï¼Delta åæ¢æ æ ·æ¬çº§çé³ï¼å·®å â¤ ç¨³æÃ3ï¼
+[PASS] æ­è¨â¥bï¼é¨æå¡ 63% â 5msï¼240 æ ·æ¬ Â±40%ï¼
+[PASS] æ­è¨â¥cï¼Delta ç¨³æè¾åº = wetâdryï¼æçãéçº§åçï¼
+[PASS] T9.1 ä¼åçº§ Delta > Soloï¼é delta æ®µé¨å¨é­ï¼
+[PASS] T9.2 ä¼åçº§ Solo > Muteï¼ä» solo æ®µå¼é¨ï¼
+[PASS] T9.3 Mute æ·¡åºæ çé³ä¸ HM å½é¶ï¼å¶ä½æ®µè£è¾¹æ®ç <15%ï¼
+
+--- T10 分段归属（BiquadFilter 公式修正验证）---
+[PASS] 50Hz → band0 占比 ≥ 90%
+[PASS] 150Hz → band0 占比 ≥ 60%
+[PASS] 400Hz → band1 占比 ≥ 60%
+[PASS] 2400Hz → band2 占比 ≥ 90%
+[PASS] 5000Hz → band2 占比 ≥ 60%
+[PASS] 12000Hz → band3 占比 ≥ 90%
+
+--- T10b 分段归属（三模式全覆盖）---
+[PASS] Natural 50Hz → band0 ≥90%
+[PASS] Natural 2400Hz → band2 ≥90%
+[PASS] Minimal(LRæ ) 50Hz → band0 ≥90%
+[PASS] Minimal(LRæ ) 2400Hz → band2 ≥90%
+[PASS] Linear 50Hz → band0 ≥90%
+[PASS] Linear 2400Hz → band2 ≥90%
+[PASS] Linear 400Hz → band1 ≥60%
+[PASS] Linear 12000Hz → band3 ≥90%
+
+--- T14 低频段三模式行为对比 ---
+  band0 电平: Natural=0.376956 Minimal=0.376956 Linear=0.382136
+  总输出 RMS: Natural=0.155584 Minimal=0.155584 Linear=0.147557
+  band0 电平差: N-M=0dB  M-L=-0.118531dB  N-L=-0.118531dB
+[PASS] T14.1 ä¸æ¨¡å¼ band0 çµå¹³å·®å¼ < 1.5dBï¼åæ®µå½å±ä¸è´ï¼
+[PASS] T14.2 Natural ä¸ Minimal æ»è¾åºä¸è´ï¼LR æ åææï¼
+[PASS] T14.3 Linear ä¸ IIR æ»è¾åºå·®å¼ < 1.5dBï¼BW4 FIR vs LR4 å½¢ç¶ï¼
+
+--- T11 APVTS raw 语义 + 全处理器延迟 ---
+[PASS] T11.1 å¤çå¨å®ä¾å¯è®¿é®ï¼createPluginFilterï¼
+[PASS] T11.2 åæ° ID å¯å¯»åï¼linearQuality/xoverSlope/phaseMode/lookaheadï¼
+[PASS] T11.3 choice raw = ç´¢å¼ï¼é»è®¤ Medium/Slope24/Natural/Off â 1/1/0/0ï¼
+[PASS] T11.4 åå§ï¼Naturalï¼å»¶è¿ = 0
+[PASS] T11.5 Linear+Medium å»¶è¿ = 3072ï¼é 6144ï¼
+[PASS] T11.6 éå¼åå»¶è¿ä» = 3072ï¼ä¸å¤ç°ç¿»åï¼
+[PASS] T11.7 ç¶æå¾è¿åå»¶è¿ = 3072ï¼Linear/Medium æ¢å¤ï¼
+[PASS] T11.8 Linear+3ms å»¶è¿ = 3216ï¼æ¶æ¯çº¿ç¨å³æ¶å·æ°ï¼
+[PASS] T11.9 Natural+3ms å»¶è¿ = 144ï¼lookahead ç¬ç«ä¸æ¥ï¼
+[PASS] T11.10 Natural+1ms å»¶è¿ = 48
+[PASS] T11.11 Linear+Low+1ms å»¶è¿ = 1584
+[PASS] T11.12 Linear+High+1ms å»¶è¿ = 6192
+[PASS] T11.13 Enabled=off æ¶è¾åº = è¾å¥ï¼ç´éï¼
+
+--- T12 监听门端到端（APVTS → DSP）---
+[PASS] T12.1 Solo(band1) ç»å®¿ä¸»è°åçæï¼è¾åºæ¾èéä½ï¼
+[PASS] T12.2 Mute(band2) ç»å®¿ä¸»è°åçæï¼è¾åºéä½ï¼
+[PASS] T12.3 Delta(band2) è¾åº = wetâdryï¼æçãæ¾èå¼äºå¨å¸¦ï¼
+
+--- T13 侧链 EXT 端到端（APVTS → 总线 → DSP）---
+[PASS] T13.1 INT æ£æµï¼è½»ä¸»ä¿¡å·ä¸åç¼©
+[PASS] T13.2 EXT æ£æµï¼åä¾§é¾é©±å¨åç¼©ï¼æ»çº¿é¾è·¯çæï¼
+[PASS] T13.3 æ ä¾§é¾æ¶ fallback INTï¼ä¸è¯¯åç¼©ï¼
+
+--- T15 参数灵敏度全量审计（79 参数）---
+  基线输出 RMS = 0.290279
+  [PASS] band0Threshold  Δ=-0.065dB  (Low Threshold −20→−45dB（压得更狠）)
+  [PASS] band0Range  Δ=2.405dB  (Low Range −6→−29dB（恢复 GR 钳制）)
+  [PASS] band0Ratio  Δ=-0.062dB  (Low Ratio 4→20)
+  [PASS] band0Attack  Δ=1.030dB  (Low Attack 10→200ms)
+  [PASS] band0Release  Δ=-0.057dB  (Low Release 100→900ms)
+  [PASS] band0Makeup  Δ=6.398dB  (Low Makeup 0→+12dB)
+  [PASS] band0Mix  Δ=1.139dB  (Low Mix 100→50%)
+  [PASS] band0Knee  Δ=-0.063dB  (Low Knee Soft→Hard（阈值同步降到 −40dB 使信号落入膝区）)
+  [PASS] band0Detector  Δ=-0.067dB  (Low Detector Peak→RMS)
+  [PASS] band0Solo  Δ=-5.977dB  (Low Solo on)
+  [PASS] band0Mute  Δ=-1.367dB  (Low Mute on)
+  [PASS] band0Delta  Δ=-6.555dB  (Low Delta on)
+  [PASS] band0Ext  Δ=0.000dB  (Low Ext on（无侧链→正确回退 INT，输出应不变）)
+[PASS] T15.1 é¢æ®µåæ° 13 é¡¹å¨é¨æ¥çº¿ï¼æ¹å¼âè¾åºååï¼
+  [PASS] Δ=2.939dB  (xoverSlope 24→12（xover1 移到 400Hz + band0Range 调深，使裙边差异可测）)
+  [PASS] Δ=0.000dB  (phaseMode Natural→Minimal（LR 树同拓扑，应几乎一致）)
+  [PASS] Δ=0.000dB  (linearQuality Low（IIR 模式下应无影响）)
+  [PASS] Δ=-0.055dB  (lookahead Off→3ms（瞬态提前抑制）)
+  [PASS] xover1  Δ=0.357dB  (Crossover 1 200→~1850Hz（偏斜映射）)
+  [PASS] xover2  Δ=0.300dB  (Crossover 2 1000→~300Hz（偏斜映射）)
+  [PASS] xover3  Δ=0.225dB  (Crossover 3 6000→~9500Hz（偏斜映射）)
+  [PASS] inputGain  Δ=17.721dB  (Input Gain 0→+18dB)
+  [PASS] outputGain  Δ=-18.000dB  (Output Gain 0→−18dB)
+  [PASS] enabled  Δ=5.823dB  (Enabled→off（直通）)
+[PASS] T15.2 å¨å±åæ°å¨é¨æ¥çº¿ï¼å« Naturalâ¡Minimal ä¸è´æ§ï¼
+[PASS] T15.3 Natural ä¸ Minimal è¾åºå·®å¼ < 0.05dBï¼LR æ åææï¼
+
+--- T16 三模式声音一致性 ---
+  类鼓信号 RMS: Natural=0.104246 Minimal=0.104246 Linear=0.104749
+  差异: N-M=0.0000dB  N-L=-0.0418dB  M-L=-0.0418dB
+[PASS] T16.1 Natural â¡ Minimalï¼< 0.05dBï¼
+[PASS] T16.2 Natural vs Linear < 1dBï¼BW4 FIR vs LR4ï¼
+
+--- T17 延迟统计表（@48kHz）---
+  | 相位模式 | Linear 质量 | 分频延迟 | Lookahead | 合计(样本) | 合计(ms) |
+  |----------|-------------|---------|-----------|-----------|---------|
+  | Natural  | —         |       0 |         0 |         0 |     0.0 |
+  | Natural  | —         |       0 |        48 |        48 |     1.0 |
+  | Natural  | —         |       0 |       144 |       144 |     3.0 |
+  | Minimal  | —         |       0 |         0 |         0 |     0.0 |
+  | Minimal  | —         |       0 |        48 |        48 |     1.0 |
+  | Minimal  | —         |       0 |       144 |       144 |     3.0 |
+  | Linear   | Low (2048)  |    1536 |         0 |      1536 |    32.0 |
+  | Linear   | Low (2048)  |    1536 |        48 |      1584 |    33.0 |
+  | Linear   | Low (2048)  |    1536 |       144 |      1680 |    35.0 |
+  | Linear   | Medium (4096) |    3072 |         0 |      3072 |    64.0 |
+  | Linear   | Medium (4096) |    3072 |        48 |      3120 |    65.0 |
+  | Linear   | Medium (4096) |    3072 |       144 |      3216 |    67.0 |
+  | Linear   | High (8192) |    6144 |         0 |      6144 |   128.0 |
+  | Linear   | High (8192) |    6144 |        48 |      6192 |   129.0 |
+  | Linear   | High (8192) |    6144 |       144 |      6288 |   131.0 |
+  实测: Linear+Medium+Off=3072  +3ms=3216  Low+3ms=1680  High+3ms=6288
+[PASS] T17.1 å®æµå»¶è¿ä¸ç»è®¡è¡¨ä¸è´ï¼3072/3216/1680/6288ï¼
+
+--- T18 Phase 4.1 显示数据层 ---
+[PASS] T18.0 å¤çå¨å®ä¾å¯è®¿é®
+  inputPeak=0.5 outputPeak=0.271768
+[PASS] T18.1 è¾å¥å³°å¼ atomic æ­£ç¡®ï¼â0.5ï¼
+[PASS] T18.2 è¾åºå³°å¼ atomic æ­£ç¡®ï¼1kHz è¿éå¼è¢«åç¼©ï¼
+  bandGainDb: L=0 HM=-5.01992
+[PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
+[PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
+[PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-108.636dB
+[PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
+[PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
+[PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
+[PASS] T18.9 å¯¹æ°é¢çè½´å¯ç¨ï¼512 ç¹ï¼
+
+--- T19 Phase 4.2 静态绘制像素回归 ---
+[PASS] T19.0 å¤çå¨å®ä¾å¯è®¿é®
+  [PASS] (10,300) got #17,25,32 (a=255) expect ~#111920  分区 L 底（accent 5% over bg）
+  [PASS] (400,300) got #17,25,32 (a=255) expect ~#111920  分区 LM 底
+  [PASS] (640,480) got #19,32,44 (a=255) expect ~#13202C  分区 HM 底（选中 accent 10% over bg）
+  [PASS] (850,480) got #17,25,32 (a=255) expect ~#111920  分区 H 底
+  [PASS] (900,300) got #22,24,27 (a=255) expect ~#16181B  电平表条带底
+  [PASS] (290,513) got #42,46,51 (a=255) expect ~#2A2E33  交叉点手柄 1
+  [PASS] (492,513) got #42,46,51 (a=255) expect ~#2A2E33  交叉点手柄 2
+  [PASS] (718,513) got #42,46,51 (a=255) expect ~#2A2E33  交叉点手柄 3
+  [PASS] (300,600) got #34,38,43 (a=255) expect ~#202429  全局条玻璃（surfaceA 0.84 over 分区底）
+  [PASS] (290,300) got #45,49,55 (a=255) 亮于邻域 +75  分割线 x1 (200Hz)
+  [PASS] (492,300) got #60,66,73 (a=255) 亮于邻域 +125  分割线 x2 (1kHz)
+  [PASS] (718,300) got #45,50,54 (a=255) 亮于邻域 +54  分割线 x3 (6kHz)
+[PASS] T19.1 å³é®åç´  12/12 å½ä¸­ï¼ååº/åå²çº¿/ææ/è¡¨å¸¦/å¨å±æ¡ï¼
+  [PASS] (100,70) got #17,25,32 (a=255)  L 段名行下方背景
+  [PASS] (340,70) got #17,25,32 (a=255)  LM 段名行下方背景（文字盒外）
+  [PASS] (680,70) got #19,32,44 (a=255)  HM 段名行下方背景
+[PASS] T19.3 æ®µåè¡èæ¯ä¸ºååºåºè²ï¼æ å¼å¸¸è²å¸¦ï¼
+  [PASS] (650,8) got #34,38,43 (a=255) expect ~#202429  顶栏玻璃
+[PASS] T19.2 é¡¶æ ç»çæ¡è²å¼
+
+--- T20 Phase 4.3 动态层（频谱/曲线/Range）---
+[PASS] T20.0 å¤çå¨å®ä¾å¯è®¿é®
+  1kHz 区域非底色像素数 = 1711
+[PASS] T20.1 åå±é¢è°±å·²ç»å¶ï¼1kHz åºåæåå®¹ï¼
+  accent 系像素数 = 6581
+[PASS] T20.2 ä»¿ EQ æ²çº¿å·²ç»å¶ï¼accent åç´ å­å¨ï¼
+  HM 区间 Range 层像素数 = 44965
+[PASS] T20.3 Range éåå±å·²ç»å¶ï¼HM åºé´æå¡«åï¼
+
+--- T21 Phase 4.4 交互层（手势→参数）---
+[PASS] T21.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T21.1 ç¹å» L ååº -> éä¸­ band0
+[PASS] T21.2 ææ½åå²çº¿ x1 -> é¢çåæ°åå
+[PASS] T21.3 åå²çº¿ææ½å 1 å«åº¦é³å¶ï¼x1 <= x2/2ï¼
+[PASS] T21.3b é¡¶æ ç©ºç½ç¹å»æ¶èµ· Popover
+[PASS] T21.4 EQ æ²çº¿çºµæ -> Makeup ååï¼O5-Aï¼
+[PASS] T21.5 ç¹å» S æé® -> band0Solo åæ¢
+[PASS] T21.6 ç¹å» Delta æé® -> band0Delta åæ¢
+[PASS] T21.7 ç¹å» BYP -> Mix=0ï¼æ¹æ¡A å®ï¼
+[PASS] T21.8 åç¹ BYP -> Mix æ¢å¤è®°å¿å¼
+
+--- T22 内存泄漏回归（UI 数据面）---
+[PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
+  RSS: start=83.582MB  anim#1=168.637MB (+85.0547)  anim#2=167.664MB (+84.082 / +-0.972656 for the 2nd round)  editorsx200=167.664MB (+84.082)  theme/resizex50=168.422MB (+84.8398)  resizeStormx400=168.215MB (+84.6328)
+[PASS] T22.1 6000 frames anim converges (2nd round << 1st)
+[PASS] T22.2 freq editor x200 no cumulative leak
+[PASS] T22.3 theme/resize x50 no cumulative leak
+[PASS] T22.4 resize storm x400 no cumulative leak
+
+--- T23 曲线存活回归（结构变化/resize/主题后曲线仍在）---
+[PASS] T23.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T23.1 åºçº¿æ²çº¿å­å¨
+[PASS] T23.2 æå¨äº¤åçº¿åæ²çº¿ä»å­å¨ï¼bug ä¿®å¤éªè¯ï¼
+[PASS] T23.3 resize åæ²çº¿ä»å­å¨
+[PASS] T23.4 åæ¢ä¸»é¢åæ²çº¿ä»å­å¨
+[PASS] T23.5 å Linear æ¨¡å¼åæ²çº¿ä»å­å¨
+
+--- T24 频点拖动 / 全局 BYPASS / 分区跟随 ---
+[PASS] T24.0 å¤çå¨å®ä¾å¯è®¿é®
+  [diag] dot=(391.096,309) mk 0.5 -> 0.623611
+[PASS] T24.1 æå¨ LM æ®µé¢ç¹ -> band1Makeup åå
+[PASS] T24.2 æå¨ä»æ®µé¢ç¹åæ¶éä¸­è¯¥æ®µ
+[PASS] T24.3 å¨å± BYPASS -> åæ®µ Mix=0
+[PASS] T24.4 åç¹å¨å± BYPASS -> æ¢å¤å Mix
+[PASS] T24.5 xover1=800Hz å 500Hz å¤é L æ®µ
+[PASS] T24.6 xover1=800Hz å 900Hz å¤é LM æ®µ
+
+--- T25 三层曲线模型（Range 地板静态 / EQ 吸附）---
+[PASS] T25.0 å¤çå¨å®ä¾å¯è®¿é®
+  HM 频点（=EQ 主线）= (605.139, 309)
+[PASS] T25.1 EQ ä¸»çº¿è¢« range æªæ­å¨åçåºé´
+  BYP 后 HM 频点 = (605.139, 309)
+[PASS] T25.2 BYP æå¼ â é¢ç¹ä»å¨ Range é¡¶è¾¹ä¸­ç¹ï¼0dBï¼
+[PASS] T25.3 æ¢å¤ Mix â é¢ç¹ä»ç¨³å®å¨ Range ä¸­çº¿ï¼#5 è®¾è®¡ï¼ä¸éåç¼©è·³å¨ï¼
+  Makeup+6dB: 频点 y 309 -> 30.4301
+[PASS] T25.4 æ¹ Makeup â é¢ç¹/ä¸»çº¿è·éç§»å¨
+
+--- T26 Range 参数实时刷新（不切段也立即生效）---
+[PASS] T26.0 å¤çå¨å®ä¾å¯è®¿é®
+  range=-6  → Range 底边 y=587.999 | range=-14 → y=442.835 (disp=-13.9802)
+[PASS] T26.1 æ¹ Range åæ°å Range å±ç«å³å·æ°ï¼æ éåæ®µï¼
+
+--- T27 Display Range 档位 / 拖动不卡 ---
+[PASS] T27.0 å¤çå¨å®ä¾å¯è®¿é®
+  档位模式: 0 -> 0
+[PASS] T27.1 ç¹å»æ¡£ä½æé®åªå¼¹èåï¼ä¸æ¹æ¡£ä½ï¼
+  纯纵拖: Makeup 0.5 -> 0.544444 | xover2+3 7000 -> 7000
+[PASS] T27.3 çº¯çºµææ¹ Makeup çæï¼éç¦»åä»ååºï¼
+[PASS] T27.3b çº¯çºµæä¸æ¹åååºä½ç½®ï¼æ¨ªæéç¦»ï¼
+
+--- T28 四段 Range 全覆盖（默认值/各自刷新/拖动冻结量程）---
+[PASS] T28.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T28.1 åæ®µ Range é»è®¤å¼åä¸º -6 dB
+  band0 Range 底边 y: 588 -> 503.813  [PASS]
+  band1 Range 底边 y: 364.987 -> 494.105  [PASS]
+  band2 Range 底边 y: 364.8 -> 493.99  [PASS]
+  band3 Range 底边 y: 364.799 -> 493.988  [PASS]
+[PASS] T28.2 åæ®µ Range åèªå®æ¶å·æ°ï¼ä¸åª Lowï¼
+  拖动中量程: 30 -> 30
+[PASS] T28.3 Makeup æå¨æé´éç¨å»ç»ï¼æ å¡é¡¿ï¼
+
+--- T29 绘制层不闪烁（脏帧仍保留上一帧几何）---
+[PASS] T29.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T29.1 æ²çº¿/Range å± Path æåå®¹
+[PASS] T29.2 è¿ç»­ 200 å¸§æ ä»»ä½ä¸å±åç©ºï¼ä¸éªçï¼
+[PASS] T29.3 ç½®èå¸§ paint ä»ä¿çä¸ä¸å¸§å ä½ï¼ä¸éªï¼
+
+--- T30 本轮 4 项修复回归 ---
+[PASS] T30.0 å¤çå¨å®ä¾å¯è®¿é®
+  (890,130) 命中按钮 = 0
+[PASS] T30.1 band3 æé®åé¿å¼ IN/OUT é³éè¡¨ï¼890 å¤ä¸åå½ä¸­ï¼
+[PASS] T30.2 band3 æé®åå¨ååºå³ä¾§å¯ç¹
+  band3 按钮中心像素 = 143,148,155
+[PASS] T30.2b band3 æé®å·²ç»å¶ï¼åç´ éååºåºè²ï¼
+  xover2+3: 7000 -> 13365
+[PASS] T30.3 æç¡®æ¨ªæé¢ç¹ â æ®µé¢çå¹³ç§»ï¼åå²çº¿è·éï¼
+  纯纵拖 xover1+2: 3565 -> 3565
+[PASS] T30.4 çº¯çºµæä¸è¯¯è§¦åæ¨ªæï¼ä¸»è½´éå®ï¼
+  band1 宽(八度): 4.07254 -> 4.9175
+[PASS] T30.5 é¢ç¹ä¸æ»è½® â è¯¥æ®µæ©å®½
+  band1 宽(八度): 4.9175 -> 3.57529
+[PASS] T30.6 é¢ç¹ä¸æ»è½® â è¯¥æ®µæ¶çª
+
+--- T31 刻度不被遮挡回归 ---
+[PASS] T31.0 å¤çå¨å®ä¾å¯è®¿é®
+  绘图区: y 30 .. 588
+[PASS] T31.0 ç»å¾åºå®å¨è´´åç¶ææ /global bar è¾¹ç
+  频谱轴 0dB 文字 y=31  -100dB 文字 y=575
+[PASS] T31.1 é¢è°±è½´é¦å°¾å»åº¦å¨é¡¶æ /global bar ä¹é´
+[PASS] T31.1b é¦è¡å»åº¦ä¸è¢«é¡¶æ çä½
+  增益轴 +R 文字 y=31  -R 文字 y=575
+[PASS] T31.2 å¢çè½´é¦å°¾å»åº¦ä¸è¢«çä½
+[PASS] T31.3 å³å»åº¦æ¡ä¸è¿å¥ IN/OUT é³éè¡¨åºå
+  20k 标签 x: 886.9 -> clamp 879
+[PASS] T31.4 20k æ ç­¾å¨çªå£å
+
+--- T32 band0/3 双向伸缩 + 刻度步长 ---
+[PASS] T32.0 å¤çå¨å®ä¾å¯è®¿é®
+  band0 左拖: x1 200 -> 40
+[PASS] T32.1 band0 å·¦æå¯æ¶ç¼©ååºï¼ä¸åååï¼
+  band0 右拖: x1 40 -> 269
+[PASS] T32.2 band0 å³æå¯æ©å®½ååº
+  band3 右拖: x3 6000 -> 10000
+[PASS] T32.3 band3 å³æå¯æ¶ç¼©ååºï¼ä¸åååï¼
+  band3 左拖: x3 10000 -> 2000
+[PASS] T32.4 band3 å·¦æå¯æ©å®½ååº
+  ±6 量程 = 6
+[PASS] T32.5 é»è®¤éç¨ Â±6ï¼å¯¹åº 1dB æ­¥è¿ï¼
+
+--- T33 正 Range = 向上压缩 ---
+  向下压缩: over=-7.5dB under=0dB
+[PASS] T33.1 è´ Rangeï¼é«äºéå¼è¡°å ~â7.5dB
+[PASS] T33.2 è´ Rangeï¼ä½äºéå¼ä¸å¨ä½
+  向上压缩: under=6dB over=0dB just=2.25dB
+[PASS] T33.3 æ­£ Rangeï¼ä½äºéå¼æ¬åä¸ â¤ Range
+[PASS] T33.4 æ­£ Rangeï¼é«äºéå¼ä¸å¨ä½
+[PASS] T33.5 æ­£ Rangeï¼å°å¹ä½äºéå¼ â å°å¹æ¬å
+  range=20: 20dB
+[PASS] T33.6 æ­£ Range å¹åº¦ä¸é = Range å¼
+  软拐点: g0=1.125 g1=1.53125 g6=4.5
+[PASS] T33.7 è½¯æç¹åä¸åç¼©å¹³æ»éå¢
+
+--- T34 Phase 5.1 旋钮控件 ---
+[PASS] T34.1 é»è®¤å¼ 0
+[PASS] T34.2 è¶åºä¸éè¢«é³å° 30
+[PASS] T34.3 ä½äºä¸éè¢«é³å° -30
+[PASS] T34.4 å¼åååè°è§¦å
+[PASS] T34.5 Ctrl+click å¤ä½å°é»è®¤å¼
+[PASS] T34.6 æ»è½®ä¸ +interval
+[PASS] T34.7 æ»è½®ä¸ -interval
+  上拖 110px → 30 dB
+[PASS] T34.8 åç´æå¨æ¹å¼ï¼ä¸æ=å¢å¤§ï¼110pxâ30dBï¼
+  Shift 上拖 110px → 3 dB
+[PASS] T34.9 Shift å¾®è°ï¼çº¦ 1/10ï¼
+[PASS] T34.10 ææ½ç»ææ interval éå
+
+--- T35 Phase 5.2 LINKED 抽屉 ---
+[PASS] T35.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T35.1 åå§ä¸ºæ¶èµ·
+[PASS] T35.2 ç¹æ¢¯å½¢æé® â æ½å±æå¼
+  Threshold: band0 -20 -> -17 | band3 -20 -> -17
+[PASS] T35.3 Threshold åç§» +3dB â band0 éå¼åå¢
+[PASS] T35.4 Threshold åç§» +3dB â band3 éå¼åå¢ï¼åæ®µèå¨ï¼
+  Makeup: band1 0 -> 6
+[PASS] T35.5 Makeup åç§» +6dB â band1 åå¢
+  Mix: band0=40 band2=40
+[PASS] T35.6 Mix ç»å¯¹å¼è¯­ä¹ï¼åæ®µåä¸ºè®¾å®å¼ï¼
+[PASS] T35.7 ç¹ç©ºç½ â æ½å±æ¶èµ·
+[PASS] T35.8 åæ¬¡ç¹å»å¯éæ°æå¼
+[PASS] T35.9 æé®æ ç­¾è¡å¨æ½å±é¢æ¿åï¼ä¸æº¢åºï¼
+[PASS] T35.10 è¯»æ°è¡ä¸è¶åºæ½å±é¢æ¿
+  缩放 1100×700 后 knob0 x = 279（期望 279.783）
+[PASS] T35.11 ç¼©æ¾çªå£åæ½å±æé®åä½
+
+--- T36 Phase 5.3 Popover 交互 ---
+[PASS] T36.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T36.1 åå§ Popover å³é­
+[PASS] T36.2 ç¹ååº â Popover å¼¹å¼
+[PASS] T36.3 å¼¹å¼åæ¶éä¸­è¯¥æ®µ
+[PASS] T36.4a æ½å±å·²æå¼
+[PASS] T36.4 å¼ Popover â æ½å±èªå¨æ¶èµ·ï¼O6 äºæ¥ï¼
+[PASS] T36.4b Popover å·²æå¼
+[PASS] T36.5 ç¹ç©ºç½ â Popover æ¶èµ·
+[PASS] T36.6 ç¹å¶ä»æ®µ â Popover è·éåæ¢ï¼ä¸å³é­ï¼
+  Threshold 读数: -20 -> -30
+[PASS] T36.7 Popover è¯»æ°åæ­¥èª APVTS
+[PASS] T36.8a éæ°æå¼
+[PASS] T36.8 ç¹ â â æ¶èµ·
+[PASS] T36.9 ç¹æ²çº¿åº â Popover æå¼ï¼ä¸æ¢å ï¼
+  Makeup: 0 -> 1.7
+[PASS] T36.10 æ²çº¿ä¸æå¨ â Makeup ååï¼O5-Aï¼
+[PASS] T36.11 æå¨æ²çº¿æ¶ Popover æ¶èµ·
+[PASS] T36.11e å·²æ¶èµ· Popover
+[PASS] T36.11b åéä¸­ band1
+[PASS] T36.11c band1 Range ç¼å¯å½ä¸­
+[PASS] T36.11d å·²æ¶èµ·
+[PASS] T36.12 ç¹ Range ç¼ â Popover æå¼ï¼ä¸æ¢å ï¼
+[PASS] T36.12b æå¨åå·²æ¶èµ· Popover
+  Range: -6 -> 16.2031
+[PASS] T36.13 Range ç¼æå¨ â range åå
+[PASS] T36.14 æå¨ Range ç¼æ¶ Popover æ¶èµ·
+
+--- T37 Knob 弧心/帽心同心 ---
+  弧包围盒中心 = (36,49) bbox=(16,27)-(56,71) n=363 | 帽心 = (41.5,52.5) bbox=(23,34)-(60,71) n=1037
+[PASS] T37.1 å¼§åç´ å­å¨
+[PASS] T37.2 å¸½åç´ å­å¨
+  弧外半径=25.9326 帽外半径=18.5607
+[PASS] T37.3 å¸½åå¾åçï¼è¯´æå¼§/å¸½åå¿ï¼
+[PASS] T37.3b å¼§ç¯å¨å¸½å¤ä¾§ï¼åå¿åå±æ­£ç¡®ï¼
+  指针端点半径=23.4 av 方向最远弧=25.7391 最远深色=66.9216
+[PASS] T37.5 æéç«¯ç¹è§¦å°å¼§ç¯åç¼ï¼æ ç¼ºå£ï¼
+[PASS] T37.5b å¼§å¤´/æéå¨åä¸æè§ï¼å¯¹é½ï¼
+[PASS] T37.4 å¼§ä¸ºé¨åç¯ï¼éæ»¡ç¯ï¼
+
+--- T38 Analyzer 设置（Pro-MB 对标）---
+[PASS] T38.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T38.1 Analyzer æé®å¯å½ä¸­
+[PASS] T38.2 ç»å¾åºä¸è¯¯è§¦ Analyzer æé®
+[PASS] T38.3 é»è®¤ Resolution = Medium 2048
+[PASS] T38.4 Resolution â Maximum 8192
+[PASS] T38.5 Speed æ¡£ä½å¯è®¾
+[PASS] T38.5 Speed æ¡£ä½å¯è®¾
+[PASS] T38.5 Speed æ¡£ä½å¯è®¾
+[PASS] T38.6 é»è®¤ Tilt = 0ï¼MB çï¼
+[PASS] T38.7 Tilt â 4.5 dB/oct
+[PASS] T38.8 é»è®¤ Freeze off
+[PASS] T38.9 Freeze on â å³°å¼åç»ä¿æ
+[PASS] T38.10 Pre/Post é»è®¤å¼
+
+--- T39 Analyzer 单选项 + 组合（内部测试）---
+  Speed[0] tau=10ms: loud=-6.67879dB 阶跃后=-26.1758dB
+[PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
+[PASS] T39.1b é¶è·åç¡®å®ä¸è½
+  Speed[1] tau=20ms: loud=-6.67806dB 阶跃后=-23.5717dB
+[PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
+[PASS] T39.1b é¶è·åç¡®å®ä¸è½
+  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-15.9424dB
+[PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
+[PASS] T39.1b é¶è·åç¡®å®ä¸è½
+[PASS] T39.2 Speed ä¸æ¡£ä¸è½éåº¦éå¢ï¼fast < medium < slowï¼
+[PASS] T39.3 fast ä¸ slow å·® â¥1dBï¼æ¡£ä½å¯æç¥ï¼
+  Tilt 4kHz: 0dB/oct=-6.65114 → 4.5dB/oct=0.729999 (Δ=7.38113dB)
+[PASS] T39.4 Tilt 4.5dB/oct å¨ 4kHz å¤ +9dB
+  Freeze: held=-6.65113 静音后=-6.65113
+[PASS] T39.5 Freeze å¼ â éé³ä¸æï¼å³°å¼ä¿æï¼
+  Freeze 关 → -23.9444
+[PASS] T39.6 Freeze å³ â æ¢å¤ä¸è½
+[PASS] T39.7 Low 1024 â 513 ä»
+[PASS] T39.8 Maximum 8192 â 4097 ä»
+[PASS] T39.9 8192 æ¡£ä»è½åºå¸§
+  Slow+8192: loud=-6.71625 阶跃后=-15.549
+[PASS] T39.10 Slow + Maximum 8192ï¼åºå¸§æ­£å¸¸ä¸ä¸è½åæ¢
+  Freeze+Slow: held=-6.65113 静音后=-6.65113
+[PASS] T39.11 Freeze + Slowï¼Freeze ä¼åï¼ä¸æï¼
+  Freeze+Tilt: with4.5=2.36153 tilt0=-6.65114 (Δ=9.01267dB)
+[PASS] T39.12 Freeze + Tiltï¼å»ç»åç»ä¿ç tilt åç§»ï¼+9dB @4kHzï¼
+[PASS] T39.12b å»ç»åå³ tilt ä¸æä½å·²ä¿æåç»
+[PASS] T39.14 å¼æå¸§å°è¾¾ UI å±ï¼é¢è°±å¯è§æ§åç½®ï¼
+  渲染差分: 关Pre=17039px  关Post=14744px  全关=20113px
+[PASS] T39.15 å³ Pre â ç»é¢ææ¾ååï¼Pre å±è§è§çæï¼
+[PASS] T39.16 å³ Post â ç»é¢ææ¾ååï¼Post å±è§è§çæï¼
+[PASS] T39.17 Pre/Post å¨å³ â ååéå¤§äºåå³ä»»ä¸å±ï¼ä¸¤å±å å çæï¼
+
+--- T40 Phase 5.3.2 Popover 控件接线 ---
+[PASS] T40.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T40.1 æå¼ band2 Popover
+  Threshold -20 -> -32 | Range -6 -> 12 | Attack 10 -> 45 | Release 100 -> 320 | Mix 100 -> 60
+[PASS] T40.2 Threshold æé®åå¥ APVTS
+[PASS] T40.3 Range æé®åå¥ APVTSï¼æ¯ææ­£å¼ï¼
+[PASS] T40.4 Attack æé®åå¥ APVTS
+[PASS] T40.5 Release æé®åå¥ APVTS
+[PASS] T40.6 Mix æé®åå¥ APVTS
+[PASS] T40.7 Popover æé®åªæ¹éä¸­æ®µï¼ä¸ä¸²æ®µï¼
+  Ratio: 4 -> 20
+[PASS] T40.8 RATIO æ»ææå¨åå¥ APVTS
+  Knee: 6 -> 42 dB
+[PASS] T40.9 KNEE è¿ç»­æ»ææå¨åå¥ APVTSï¼0â48 dBï¼
+  Ext norm: 0 -> 1
+[PASS] T40.10 EXT ç¹å»ç¿»è½¬ï¼INTâSIDECHAINï¼
+[PASS] T40.11 EXPERT ç¹å»å±å¼
+[PASS] T40.12 EXPERT åç¹æ¶èµ·
+  Makeup（滑杆拖拽后）: 0 -> 2.2
+[PASS] T40.13 mouseUp åæ»æææ½æå¤ä½ï¼åç»­ææ½ä¸åè¢«åï¼
+
+====================================
+PASS 287 / FAIL 0

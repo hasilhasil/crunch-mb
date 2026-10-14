@@ -24,7 +24,8 @@ namespace
     {
         return id == Param::ID::xover1 || id == Param::ID::xover2 || id == Param::ID::xover3
             || id == Param::ID::xoverSlope || id == Param::ID::phaseMode
-            || id == Param::ID::linearQuality || id == Param::ID::lookahead;
+            || id == Param::ID::linearQuality || id == Param::ID::lookahead
+            || id == Param::ID::oversampling;      // 2026-10-14
     }
 }
 
@@ -38,7 +39,8 @@ CrunchMBAudioProcessor::CrunchMBAudioProcessor()
     // 结构/延迟参数监听（消息线程）——FIR 设计禁上音频线程（PLAN L5）
     for (const char* id : { Param::ID::xover1, Param::ID::xover2, Param::ID::xover3,
                             Param::ID::xoverSlope, Param::ID::phaseMode,
-                            Param::ID::linearQuality, Param::ID::lookahead })
+                            Param::ID::linearQuality, Param::ID::lookahead,
+                            Param::ID::oversampling })
         apvts.addParameterListener (id, this);
 }
 
@@ -46,7 +48,8 @@ CrunchMBAudioProcessor::~CrunchMBAudioProcessor()
 {
     for (const char* id : { Param::ID::xover1, Param::ID::xover2, Param::ID::xover3,
                             Param::ID::xoverSlope, Param::ID::phaseMode,
-                            Param::ID::linearQuality, Param::ID::lookahead })
+                            Param::ID::linearQuality, Param::ID::lookahead,
+                            Param::ID::oversampling })
         apvts.removeParameterListener (id, this);
 }
 
@@ -61,13 +64,16 @@ void CrunchMBAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // 编辑器开关状态由 setEditorActive() 单独管理，prepareToPlay 不碰它。
     spectrumEngine_.setSampleRate (sampleRate_);
 
-    // pre 抽头延迟环：容量 = 最大分频延迟(6144) + 最大 lookahead(144) + 块余量
-    const int ringSize = 6144 + 144 + samplesPerBlock + 64;
+    // pre 抽头延迟环：容量 = 最大分频延迟(6144) + 最大 lookahead(3ms @ 4× = 576)
+    //   + 过采样滤波器延迟余量(256) + 块余量。2026-10-14：块容量下限取 4096——
+    //   宿主偶发超大块（>prepare 时的 samplesPerBlock）时不会让频谱/电平表静默假死。
+    const int laMax = (int) std::ceil (0.003 * sampleRate_ * 4.0);
+    const int ringSize = 6144 + laMax + 256 + juce::jmax (samplesPerBlock, 4096);
     preTapRing_.assign ((size_t) ringSize, 0.0f);
     preTapPos_ = 0;
     preTapLatency_ = 0;
-    monoPre_.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
-    monoPost_.assign ((size_t) juce::jmax (1, samplesPerBlock), 0.0f);
+    monoPre_.assign ((size_t) juce::jmax (4096, samplesPerBlock), 0.0f);
+    monoPost_.assign ((size_t) juce::jmax (4096, samplesPerBlock), 0.0f);
 
     applyStructure();
     updateLatency();
@@ -114,18 +120,23 @@ void CrunchMBAudioProcessor::applyStructure()
     sp.slopeDb = Param::slopeIndexToDb (choiceIndex (apvts.getRawParameterValue (Param::ID::xoverSlope)));
     sp.mode    = (Param::PhaseMode)     choiceIndex (apvts.getRawParameterValue (Param::ID::phaseMode));
     sp.quality = (Param::LinearQuality) choiceIndex (apvts.getRawParameterValue (Param::ID::linearQuality));
+    sp.oversampling = Param::oversamplingIndexToFactor (
+        choiceIndex (apvts.getRawParameterValue (Param::ID::oversampling)));   // 2026-10-14
     dsp_.setStructure (sp);
 }
 
 void CrunchMBAudioProcessor::updateLatency() noexcept
 {
-    // 延迟 = 分频延迟 + lookahead。lookahead 部分必须从参数直接算：
+    // 延迟 = 分频延迟 + lookahead + 过采样。lookahead 部分必须从参数直接算：
     // dsp_ 的 laSamples_ 是音频线程状态（updateScalars 写入），切换瞬间
     // 消息线程可能读到旧值——2026-09-23 用户实测"切 1ms/3ms 延迟不变"即此因。
+    // 2026-10-14：lookahead 与过采样延迟都按 procRate_ = sampleRate_ × factor 换算。
+    const int osFactor = dsp_.getOversamplingFactor();
     const int laSamples = (int) std::lround (
         Param::lookaheadIndexToMs (choiceIndex (apvts.getRawParameterValue (Param::ID::lookahead)))
-        * 0.001 * sampleRate_);
-    const int lat = dsp_.getCrossoverLatencySamples() + juce::jmax (0, laSamples);
+        * 0.001 * sampleRate_ * (double) osFactor);
+    const int lat = dsp_.getCrossoverLatencySamples() + juce::jmax (0, laSamples)
+                  + dsp_.getOversamplingLatencySamples();
     if (lat != lastLatency_)
     {
         setLatencySamples (lat);
@@ -168,7 +179,12 @@ void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const 
         bp.releaseMs   = apvts.getRawParameterValue (Param::bandRelease (b))->load();
         bp.makeupDb    = apvts.getRawParameterValue (Param::bandMakeup (b))->load();
         bp.mixPct      = apvts.getRawParameterValue (Param::bandMix (b))->load();
-        bp.softKnee    = choiceIndex (apvts.getRawParameterValue (Param::bandKnee (b))) == (int) Param::KneeMode::Soft;
+        bp.kneeDb      = apvts.getRawParameterValue (Param::bandKnee (b))->load();   // 2026-10-14：连续 dB
+        // 2026-10-14：侧链滤波 + 立体声链接
+        bp.scFree      = choiceIndex (apvts.getRawParameterValue (Param::bandSCFilter (b))) == (int) Param::SCFilter::Free;
+        bp.scLowHz     = apvts.getRawParameterValue (Param::bandSCLow  (b))->load();
+        bp.scHighHz    = apvts.getRawParameterValue (Param::bandSCHigh (b))->load();
+        bp.stereoLink  = apvts.getRawParameterValue (Param::bandStereoLink (b))->load();
         bp.useRms      = choiceIndex (apvts.getRawParameterValue (Param::bandDetector (b))) == (int) Param::Detector::RMS;
         bp.solo        = boolParam (apvts.getRawParameterValue (Param::bandSolo (b)));
         bp.mute        = boolParam (apvts.getRawParameterValue (Param::bandMute (b)));
@@ -220,10 +236,13 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // ---- Phase 4.1：采集 pre 抽头（单声道，经延迟环对齐 post） ----
-    if (numSamples <= (int) monoPre_.size())
+    // 2026-10-14：块大于抽头缓冲时按容量截断（而非整块跳过）——此前超大块会让
+    // 频谱与电平表静默冻结。截断只影响显示精度，不影响音频输出。
+    const int tapN = juce::jmin (numSamples, (int) monoPre_.size());
+    if (tapN > 0)
     {
         const int chans = juce::jmin (2, mainInCh);
-        for (int i = 0; i < numSamples; ++i)
+        for (int i = 0; i < tapN; ++i)
         {
             const float m = chans > 1
                 ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))
@@ -275,14 +294,14 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         buffer.clear (ch, 0, numSamples);
 
     // ---- Phase 4.1：采集 post 抽头并推送频谱/电平 ----
-    if (numSamples <= (int) monoPost_.size())
+    if (tapN > 0)
     {
         const int chans = juce::jmin (2, mainInCh);
-        for (int i = 0; i < numSamples; ++i)
+        for (int i = 0; i < tapN; ++i)
             monoPost_[(size_t) i] = chans > 1
                 ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))
                 : buffer.getSample (0, i);
-        pushDisplayTaps (buffer, monoPre_.data(), monoPost_.data(), numSamples);
+        pushDisplayTaps (buffer, monoPre_.data(), monoPost_.data(), tapN);
     }
 }
 

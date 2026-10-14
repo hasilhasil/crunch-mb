@@ -321,7 +321,10 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
             {
                 case 0: lit = getParamBool ("band" + juce::String (b) + "Solo");  break;
                 case 1: lit = getParamBool ("band" + juce::String (b) + "Mute");  break;
-                case 2: lit = getParamBool ("band" + juce::String (b) + "Mix") < 0.5f; break;
+                // 2026-10-14：BYP = Mix<50%（D9 方案 A）。band{i}Mix 是浮点参数，
+                // getRawParameterValue 返回物理百分比（0..100），必须直接比 50.0f——
+                // 此前误用 getParamBool（内部 >=0.5f 判定）导致 Mix=30% 时 BYP 灯误亮。
+                case 2: lit = getParamPhysical ("band" + juce::String (b) + "Mix") < 50.0f; break;
                 case 3: lit = getParamBool ("band" + juce::String (b) + "Delta"); break;
                 default: break;
             }
@@ -345,7 +348,8 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
                 {
                     case 0: on = getParamBool ("band" + juce::String (b) + "Solo");  break;
                     case 1: on = getParamBool ("band" + juce::String (b) + "Mute");  break;
-                    case 2: on = getParamBool ("band" + juce::String (b) + "Mix") < 0.5f; break;
+                    // 2026-10-14：同上，BYP 判定用物理 Mix 值比 50%
+                    case 2: on = getParamPhysical ("band" + juce::String (b) + "Mix") < 50.0f; break;
                     case 3: on = getParamBool ("band" + juce::String (b) + "Delta"); break;
                     default: break;
                 }
@@ -1596,8 +1600,9 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             popSliderDrag_ = sk;
             popSliderDragX0_ = p.x;
             popSliderDragV0_ = popoverSliders_[(size_t) sk];
-            // 二态项（KNEE/EXT）：点击即翻转，不进入拖动
-            if (sk >= 1)
+            // 二态项（EXT/DETECTOR，k>=2）：点击即翻转，不进入拖动。
+            // 2026-10-14：KNEE(k=1) 改为连续 0–48 dB，现在是可拖动滑杆。
+            if (sk >= 2)
             {
                 applyPopSlider (sk, popoverSliders_[(size_t) sk] > 0.5f ? 0.0 : 1.0);
                 popSliderDrag_ = -1;
@@ -1749,13 +1754,15 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 {
     const auto p = e.position;
 
-    // Popover 滑杆拖动（仅连续项：RATIO）
-    if (popSliderDrag_ == 0)
+    // Popover 滑杆拖动（连续项：RATIO k=0、KNEE k=1；EXT/DETECTOR 仍是点击翻转）
+    if (popSliderDrag_ == 0 || popSliderDrag_ == 1)
     {
-        const float w = popSliderRect (0).getWidth();
+        const int k = popSliderDrag_;
+        const float w = popSliderRect (k).getWidth();
         float frac = popSliderDragV0_ + (p.x - popSliderDragX0_) / juce::jmax (1.0f, w);
         frac = juce::jlimit (0.0f, 1.0f, frac);
-        applyPopSlider (0, 1.0 + frac * 19.0);      // ratio 1..20
+        if (k == 0) applyPopSlider (0, 1.0 + frac * 19.0);   // ratio 1..20
+        else        applyPopSlider (1, (double) frac);        // 2026-10-14：knee 0..48 dB（归一化）
         repaint();
         return;
     }
@@ -2222,7 +2229,7 @@ void DisplayView::drawPopoverKnobs (juce::Graphics& g)
                     juce::Justification::centredTop);
     }
 
-    // ---- 滑杆行：RATIO / KNEE(HARD-SOFT) / EXT(INT-EXT) ----
+    // ---- 滑杆行：RATIO / KNEE(0-48dB) / EXT(INT-EXT) ----
     for (int k = 0; k < 3; ++k)
     {
         const auto sr = popSliderRect (k);
@@ -2232,7 +2239,7 @@ void DisplayView::drawPopoverKnobs (juce::Graphics& g)
 
         float frac = 0.0f;
         if (k == 0)      frac = (float) ((popoverSliders_[0] - 1.0) / 19.0);
-        else if (k == 1) frac = (float) popoverSliders_[1];
+        else if (k == 1) frac = (float) popoverSliders_[1];   // 0..1 ↔ 0..48 dB
         else             frac = (float) popoverSliders_[2];
         frac = juce::jlimit (0.0f, 1.0f, frac);
         g.setColour (pal_.accent.withAlpha (0.30f * a));
@@ -2240,8 +2247,10 @@ void DisplayView::drawPopoverKnobs (juce::Graphics& g)
 
         g.setColour (hot ? pal_.text.withMultipliedAlpha (a) : pal_.dim.withMultipliedAlpha (a));
         g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+        // 2026-10-14：KNEE 从 HARD/SOFT 二态文本改为连续 dB 读数（Pro-MB 同款）
+        const juce::String kneeTxt = "KNEE  " + juce::String (popoverSliders_[1] * 48.0f, 1) + " dB";
         const juce::String txt = (k == 0) ? ("RATIO  " + juce::String (popoverSliders_[0], 1) + " : 1")
-                              : (k == 1) ? (popoverSliders_[1] > 0.5f ? "KNEE  SOFT" : "KNEE  HARD")
+                              : (k == 1) ? kneeTxt
                                          : (popoverSliders_[2] > 0.5f ? "EXT  SIDECHAIN" : "EXT  INTERNAL");
         g.drawText (txt, sr, juce::Justification::centred);
 
@@ -2295,7 +2304,8 @@ void DisplayView::applyPopSlider (int k, double v)
     switch (k)
     {
         case 0:  setParamPhysical (Param::bandRatio (b), (float) v);  break;
-        case 1:  setParamNorm ("band" + juce::String (b) + "Knee", v > 0.5f ? 1.0f : 0.0f);     break;
+        // 2026-10-14：Knee 改为连续 0–48 dB，直接写归一化值（原为 HARD/SOFT 二态翻转）
+        case 1:  setParamNorm ("band" + juce::String (b) + "Knee", (float) v);  break;
         case 2:  setParamNorm ("band" + juce::String (b) + "Ext",  v > 0.5f ? 1.0f : 0.0f);     break;
         case 3:  setParamNorm ("band" + juce::String (b) + "Detector", v > 0.5f ? 1.0f : 0.0f); break;
         default: break;   // Lookahead 是全局参数（k=4 不在此写）

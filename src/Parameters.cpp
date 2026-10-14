@@ -78,6 +78,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
                { "Off", "1 ms", "3 ms" },
                (int) Lookahead::Off);
 
+    // 2026-10-14：过采样（Pro-MB 对标）。高比率 + 快 attack 时抑制增益调制混叠。
+    addChoice (pid (ID::oversampling), "Oversampling",
+               { "Off", "2x", "4x" },
+               (int) Oversampling::Off);
+
     // ================= 每频段参数（13 × 4 = 52，TECH_SPEC §5.2） =================
     for (int i = 0; i < kNumBands; ++i)
     {
@@ -91,8 +96,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         addFloat  (pid (bandMakeup    (i)), bn + " Makeup",    { -36.0f, 36.0f, 0.1f },    0.0f,  "dB",  fmtDb2);
         addFloat  (pid (bandMix       (i)), bn + " Mix",       { 0.0f, 100.0f, 0.1f },   100.0f,  "%",   fmtPct);
 
-        addChoice (pid (bandKnee     (i)), bn + " Knee",     { "Hard", "Soft" }, (int) KneeMode::Soft);
+        // 2026-10-14：Knee 从 Hard/Soft 二态改为连续 0–48 dB（Pro-MB 对标）。
+        addFloat  (pid (bandKnee     (i)), bn + " Knee",     { 0.0f, 48.0f, 0.1f }, 6.0f, "dB", fmtDb2);
         addChoice (pid (bandDetector (i)), bn + " Detector", { "Peak", "RMS"  }, (int) Detector::Peak);
+
+        // 2026-10-14：侧链滤波（Pro-MB Free 模式对标）+ 立体声连续链接
+        addChoice (pid (bandSCFilter  (i)), bn + " Side Chain Filtering", { "Band", "Free" }, (int) SCFilter::Band);
+        addFloat  (pid (bandSCLow     (i)), bn + " Side Chain Low Frequency",  skewed (20.0f, 2000.0f, 1.0f, 100.0f),  100.0f, "Hz", fmtHz);
+        addFloat  (pid (bandSCHigh    (i)), bn + " Side Chain High Frequency", skewed (500.0f, 20000.0f, 1.0f, 5000.0f), 5000.0f, "Hz", fmtHz);
+        addFloat  (pid (bandStereoLink(i)), bn + " Stereo Link", { 0.0f, 100.0f, 1.0f }, 100.0f, "%", fmtPct);
 
         addBool   (pid (bandSolo  (i)), bn + " Solo",  false);
         addBool   (pid (bandMute  (i)), bn + " Mute",  false);

@@ -20,15 +20,24 @@ void SpectrumEngine::pushSamples (const float* pre, const float* post, int numSa
 
     // SPSC 单生产者侧：prepareToWrite 无锁，只报告能写入多少——
     // 消费者停滞时丢样本而非阻塞音频线程。
+    // 2026-10-14：pre/post 必须写入**相同数量**，否则两个 FIFO 填充度会漂移，
+    // 双层频谱的 Pre/Post 两层随时间横向错开（最坏可达 ring 容量）。
+    // 先按两个 FIFO 的剩余空间取 min，再一次性写入。
+    const int roomPre  = fifoPre_.getFreeSpace();
+    const int roomPost = fifoPost_.getFreeSpace();
+    const int toWrite  = juce::jmin (numSamples, juce::jmin (roomPre, roomPost));
+    if (toWrite <= 0)
+        return;
+
     int s1 = 0, n1 = 0, s2 = 0, n2 = 0;
-    fifoPre_.prepareToWrite (numSamples, s1, n1, s2, n2);
+    fifoPre_.prepareToWrite (toWrite, s1, n1, s2, n2);
 
     if (n1 > 0)
         juce::FloatVectorOperations::copy (ringPre_.data() + s1, pre, n1);
     if (n2 > 0)
         juce::FloatVectorOperations::copy (ringPre_.data() + s2, pre + n1, n2);
 
-    const int written = n1 + n2;
+    const int written = n1 + n2;          // == toWrite
 
     int t1 = 0, m1 = 0, t2 = 0, m2 = 0;
     fifoPost_.prepareToWrite (written, t1, m1, t2, m2);

@@ -48,6 +48,7 @@ target_sources(CrunchMB PRIVATE
     src/dsp/CrossoverBank.cpp
     src/dsp/LinearPhaseCrossover.cpp
     src/dsp/MultibandDSP.cpp
+    src/dsp/SideChainFilter.h
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
     src/ui/DisplayView.cpp
@@ -87,6 +88,7 @@ target_sources(CrunchMBTests PRIVATE
     src/dsp/CrossoverBank.cpp
     src/dsp/LinearPhaseCrossover.cpp
     src/dsp/MultibandDSP.cpp
+    src/dsp/SideChainFilter.h
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
     src/ui/DisplayView.cpp

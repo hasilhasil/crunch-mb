@@ -18,13 +18,16 @@ public:
     void reset();
 
     void setParameters (float thresholdDb, float ratio, float attackMs, float releaseMs,
-                        float rangeDb, bool softKnee, bool useRmsDetector) noexcept;
+                        float rangeDb, float kneeDb, bool useRmsDetector) noexcept;
 
     // 立体声联动处理（就地乘平滑增益）
     void processSample (float& left, float& right) noexcept;
 
     // 更新检测器/平滑状态并返回线性增益（Mix 数学需要干/湿分离时使用）
-    float processGain (float left, float right) noexcept;
+    void processGain (float left, float right, float& gainL, float& gainR) noexcept;
+
+    // 立体声链接 0..1（2026-10-14）。1 = 两声被较响者驱动（原行为）；0 = 各自独立。
+    void setStereoLink (float link01) noexcept { stereoLink_ = juce::jlimit (0.0f, 1.0f, link01); }
 
     // 静态传输曲线（含 Range 钳制、不含平滑）——UI 传输曲线 inset 用（TECH_SPEC §6.2）
     float getStaticGainDb (float levelDb) const noexcept;
@@ -41,7 +44,7 @@ private:
     float thresholdDb_ = -20.0f;
     float ratio_       = 4.0f;
     float rangeDb_     = -30.0f;
-    float kneeWidthDb_ = 6.0f;
+    float kneeWidthDb_ = 6.0f;      // 连续 0–48 dB；0 = 硬膝（2026-10-14）
     bool  useRms_      = false;
 
     float attackCoeff_  = 0.0f;   // exp(-1/(tau*fs)) 形式，63%@tau
@@ -49,7 +52,11 @@ private:
     float rmsCoeff_     = 0.0f;
 
     float smoothedGainDb_ = 0.0f;
+    float smoothedGainDbR_ = 0.0f;     // 右声道包络（2026-10-14 立体声链接）
+    float stereoLink_     = 1.0f;      // 1 = 完全链接（较响者驱动）
     float lastGain_       = 1.0f;
     float rmsEnvelope_    = 0.0f;
+    float rmsEnvelopeR_   = 0.0f;
     float lastDetectorDb_ = -100.0f;
+    float lastDetectorDbR_ = -100.0f;
 };

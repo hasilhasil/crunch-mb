@@ -6,35 +6,70 @@ void MultibandDSP::prepare (double sampleRate, int maxBlockSize, int numChannels
     maxBlock_   = juce::jmax (16, maxBlockSize);
     numCh_      = juce::jlimit (1, 2, numChannels);
 
-    crossover_.prepare  (sampleRate_, maxBlock_, numCh_);
-    scCrossover_.prepare (sampleRate_, maxBlock_, numCh_);
+    // 2026-10-14：过采样。整条链在 procRate_ = sampleRate_ × osFactor_ 下运行。
+    osFactor_  = juce::jlimit (1, 4, struct_.oversampling);
+    procRate_  = sampleRate_ * (double) osFactor_;
+    procBlock_ = maxBlock_ * osFactor_;
+
+    crossover_.prepare   (procRate_, procBlock_, numCh_);
+    scCrossover_.prepare (procRate_, procBlock_, numCh_);
 
     for (auto& c : comps_)
-        c.prepare (sampleRate_);
+        c.prepare (procRate_);
+    for (auto& f : scFilters_)
+        f.prepare (procRate_);
 
     for (int b = 0; b < Param::kNumBands; ++b)
     {
         for (int ch = 0; ch < 2; ++ch)
         {
-            bandStore_[b][ch].assign ((size_t) maxBlock_, 0.0f);
-            scStore_[b][ch].assign   ((size_t) maxBlock_, 0.0f);
+            bandStore_[b][ch].assign ((size_t) procBlock_, 0.0f);
+            scStore_[b][ch].assign   ((size_t) procBlock_, 0.0f);
         }
-        gStore_[b].assign ((size_t) maxBlock_, 0.0f);
+        gStore_[b][0].assign ((size_t) procBlock_, 0.0f);
+        gStore_[b][1].assign ((size_t) procBlock_, 0.0f);
     }
     for (int ch = 0; ch < 2; ++ch)
-        outStore_[ch].assign ((size_t) maxBlock_, 0.0f);
+        outStore_[ch].assign ((size_t) procBlock_, 0.0f);
 
-    // Lookahead 容量：3ms @ 192kHz = 576 样本（留余量），标量切换零分配
-    laMax_ = (int) std::ceil (0.003 * sampleRate_) + 16;
+    // Lookahead 容量：3ms @ (192kHz × 4) = 2304 样本（留余量），标量切换零分配
+    laMax_ = (int) std::ceil (0.003 * procRate_) + 16;
     for (int b = 0; b < Param::kNumBands; ++b)
         for (int ch = 0; ch < 2; ++ch)
             laBuf_[b][ch].assign ((size_t) laMax_, 0.0f);
 
-    mixSmoothCoeff_ = (float) std::exp (-1.0 / (0.010 * sampleRate_));   // Mix 10ms
-    gateCoeff_      = (float) std::exp (-1.0 / (0.005 * sampleRate_));   // 门 5ms
+    // 平滑系数用真实处理采样率（过采样下墙钟时间不变）
+    mixSmoothCoeff_ = (float) std::exp (-1.0 / (0.010 * procRate_));   // Mix 10ms
+    gateCoeff_      = (float) std::exp (-1.0 / (0.005 * procRate_));   // 门 5ms
+
+    // 过采样器（上/下采样 staging 缓冲按 1× 块长；侧链 ZOH 缓冲按 procBlock_）
+    osIn_.setSize (2, maxBlock_, false, false, false);
+    scHold_.setSize (2, procBlock_, false, false, false);
+    rebuildOversampler (osFactor_);
 
     setStructure (struct_);
     reset();
+}
+
+void MultibandDSP::rebuildOversampler (int factor) noexcept
+{
+    osFactor_ = juce::jlimit (1, 4, factor);
+    procRate_ = sampleRate_ * (double) osFactor_;
+    procBlock_ = maxBlock_ * osFactor_;
+
+    if (osFactor_ == 1)
+    {
+        oversampler_.reset();
+        return;
+    }
+    // factor 是指数：1 → 2×，2 → 4×。useIntegerLatency = true 便于整数延迟上报。
+    const int exponent = (osFactor_ == 2) ? 1 : 2;
+    oversampler_ = std::make_unique<juce::dsp::Oversampling<float>> (
+        (size_t) numCh_, (size_t) exponent,
+        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
+        true, true);
+    oversampler_->initProcessing ((size_t) maxBlock_);
+    oversampler_->reset();
 }
 
 void MultibandDSP::reset()
@@ -43,6 +78,10 @@ void MultibandDSP::reset()
     scCrossover_.reset();
     for (auto& c : comps_)
         c.reset();
+    for (auto& f : scFilters_)
+        f.reset();
+    if (oversampler_ != nullptr)
+        oversampler_->reset();
 
     for (int b = 0; b < Param::kNumBands; ++b)
     {
@@ -59,8 +98,27 @@ void MultibandDSP::reset()
 
 void MultibandDSP::setStructure (const StructureParams& s)
 {
+    const bool osChanged = (juce::jlimit (1, 4, s.oversampling) != osFactor_);
+
     struct_ = s;
     Param::clampCrossovers (struct_.xover1, struct_.xover2, struct_.xover3);
+    struct_.oversampling = juce::jlimit (1, 4, s.oversampling);
+
+    if (osChanged)
+    {
+        // 结构性变化：整条链的采样率/块长都变，必须重新 prepare 所有子模块
+        const int keepFactor = struct_.oversampling;
+        prepare (sampleRate_, maxBlock_, numCh_);          // 内部按 struct_.oversampling 重建
+        struct_.oversampling = keepFactor;                 // prepare 里 setStructure 会再进一次
+        crossover_.setParameters  (struct_.xover1, struct_.xover2, struct_.xover3,
+                                   struct_.slopeDb, struct_.mode, struct_.quality);
+        scCrossover_.setParameters (struct_.xover1, struct_.xover2, struct_.xover3,
+                                    struct_.slopeDb, Param::PhaseMode::Natural,
+                                    Param::LinearQuality::Medium);
+        reset();
+        return;
+    }
+
     crossover_.setParameters  (struct_.xover1, struct_.xover2, struct_.xover3,
                                struct_.slopeDb, struct_.mode, struct_.quality);
     // 侧链恒 IIR（DESIGN §6.3）：Natural 形状 + 同斜率/交叉点
@@ -71,12 +129,17 @@ void MultibandDSP::setStructure (const StructureParams& s)
 
 int MultibandDSP::getLatencySamples() const noexcept
 {
-    return crossover_.getLatencySamples() + laSamples_;
+    return crossover_.getLatencySamples() + laSamples_ + getOversamplingLatencySamples();
 }
 
 int MultibandDSP::getCrossoverLatencySamples() const noexcept
 {
     return crossover_.getLatencySamples();
+}
+
+int MultibandDSP::getOversamplingLatencySamples() const noexcept
+{
+    return (oversampler_ != nullptr) ? (int) std::lround (oversampler_->getLatencyInSamples()) : 0;
 }
 
 float MultibandDSP::getBandGainDb (int band) const noexcept
@@ -117,14 +180,17 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
     inGain_  = juce::Decibels::decibelsToGain (p.inputGainDb);
     outGain_ = juce::Decibels::decibelsToGain (p.outputGainDb);
 
-    laSamples_ = (int) std::lround (p.lookaheadMs * 0.001 * sampleRate_);
+    // lookahead 以**墙钟时间**为准：过采样下换算成 procRate_ 下的样本数
+    laSamples_ = (int) std::lround (p.lookaheadMs * 0.001 * procRate_);
     laSamples_ = juce::jlimit (0, laMax_, laSamples_);
 
     for (int b = 0; b < Param::kNumBands; ++b)
     {
         const auto& bp = p.bands[(size_t) b];
         comps_[b].setParameters (bp.thresholdDb, bp.ratio, bp.attackMs, bp.releaseMs,
-                                 bp.rangeDb, bp.softKnee, bp.useRms);
+                                 bp.rangeDb, bp.kneeDb, bp.useRms);
+        comps_[b].setStereoLink (juce::jlimit (0.0f, 1.0f, bp.stereoLink * 0.01f));   // 2026-10-14
+        scFilters_[(size_t) b].setParameters (bp.scLowHz, bp.scHighHz, bp.scFree);     // 2026-10-14
         makeupLin_[b]  = juce::Decibels::decibelsToGain (bp.makeupDb);
         mixLin_[b]     = juce::jlimit (0.0f, 1.0f, bp.mixPct * 0.01f);
         extEnabled_[b] = bp.ext;
@@ -135,11 +201,63 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
 void MultibandDSP::process (float* const* channels, int numSamples,
                             const float* const* sidechain, int sidechainChannels) noexcept
 {
+    // 2026-10-14：过采样包装。整条链跑在 procRate_ 下，这里只负责上/下采样。
+    if (osFactor_ > 1 && oversampler_ != nullptr && numSamples <= maxBlock_)
+    {
+        const int chans = juce::jmin (numCh_, 2);
+
+        for (int ch = 0; ch < chans; ++ch)
+            juce::FloatVectorOperations::copy (osIn_.getWritePointer (ch), channels[ch], numSamples);
+
+        const juce::dsp::AudioBlock<const float> inBlock (osIn_);
+        auto up = oversampler_->processSamplesUp (inBlock);   // chans × (numSamples × factor)
+
+        // 侧链同样按倍数扩展（每样本重复 factor 次 = 零阶保持，供 EXT 检测用）。
+        // 缓冲在 prepare() 预分配，音频线程零分配（TECH_SPEC §4）。
+        const float* scUp[2] = { nullptr, nullptr };
+        int scUpCh = 0;
+        if (sidechain != nullptr && sidechainChannels > 0)
+        {
+            bool anyExt = false;
+            for (int b = 0; b < Param::kNumBands; ++b)
+                anyExt = anyExt || extEnabled_[b];
+            if (anyExt)
+            {
+                const int upN = (int) up.getNumSamples();
+                const int scCh = juce::jmin (2, sidechainChannels);
+                for (int ch = 0; ch < scCh; ++ch)
+                {
+                    float* dst = scHold_.getWritePointer (ch);
+                    for (int i = 0; i < upN; ++i)
+                        dst[i] = sidechain[ch][i / osFactor_];
+                }
+                scUpCh = scCh;
+                for (int ch = 0; ch < scCh; ++ch)
+                    scUp[ch] = scHold_.getReadPointer (ch);
+            }
+        }
+
+        float* upPtr[2] = { up.getChannelPointer (0),
+                            chans > 1 ? up.getChannelPointer (1) : up.getChannelPointer (0) };
+        processChain (upPtr, (int) up.getNumSamples(), scUpCh > 0 ? scUp : nullptr, scUpCh);
+
+        oversampler_->processSamplesDown (up);                // 就地：up 变回 1× 块长
+        for (int ch = 0; ch < chans; ++ch)
+            juce::FloatVectorOperations::copy (channels[ch], up.getChannelPointer (ch), numSamples);
+        return;
+    }
+
+    processChain (channels, numSamples, sidechain, sidechainChannels);
+}
+
+void MultibandDSP::processChain (float* const* channels, int numSamples,
+                                 const float* const* sidechain, int sidechainChannels) noexcept
+{
     const int chans = juce::jmin (numCh_, 2);
 
-    for (int done = 0; done < numSamples; done += maxBlock_)
+    for (int done = 0; done < numSamples; done += procBlock_)
     {
-        const int n = juce::jmin (maxBlock_, numSamples - done);
+        const int n = juce::jmin (procBlock_, numSamples - done);
 
         float* chPtr[2] = { nullptr, nullptr };
         for (int ch = 0; ch < chans; ++ch)
@@ -179,22 +297,28 @@ void MultibandDSP::process (float* const* channels, int numSamples,
             }
         }
 
-        // 4) 每段：检测（INT/EXT）→ 增益 → lookahead 延迟音频 → g·makeup
+        // 4) 每段：检测（INT/EXT）→ 侧链滤波 → 增益 → lookahead 延迟音频 → g·makeup
         for (int b = 0; b < Param::kNumBands; ++b)
         {
             const float* l = bandStore_[b][0].data();
             const float* r = chans > 1 ? bandStore_[b][1].data() : bandStore_[b][0].data();
-            float* g = gStore_[b].data();
+            float* gL = gStore_[b][0].data();
+            float* gR = gStore_[b][1].data();
             const float mk = makeupLin_[b];
             const bool useExt = extEnabled_[b] && scReady;
             const float* sl = useExt ? scStore_[b][0].data() : nullptr;
             const float* sr = useExt ? (chans > 1 ? scStore_[b][1].data() : scStore_[b][0].data()) : nullptr;
+            auto& scf = scFilters_[(size_t) b];
 
             for (int i = 0; i < n; ++i)
             {
-                const float dl = useExt ? sl[i] : l[i];
-                const float dr = useExt ? sr[i] : r[i];
-                const float gain = comps_[b].processGain (dl, dr);
+                // 检测信号：EXT 取侧链同频段，否则取本段音频；Free 模式下再过 HP/LP
+                float dl = useExt ? sl[i] : l[i];
+                float dr = useExt ? sr[i] : r[i];
+                scf.process (dl, dr);                       // 2026-10-14：侧链检测滤波（Band 模式直通）
+
+                float gl = 1.0f, gr = 1.0f;
+                comps_[b].processGain (dl, dr, gl, gr);      // 2026-10-14：L/R 独立 + 立体声链接
 
                 float al = l[i], ar = r[i];
                 {
@@ -221,8 +345,10 @@ void MultibandDSP::process (float* const* channels, int numSamples,
                     if (++prw >= laMax_) prw = 0;
                 }
                 bandStore_[b][0][i] = al;
-                bandStore_[b][1][i] = ar;
-                g[i] = gain * mk;
+                if (chans > 1)
+                    bandStore_[b][1][i] = ar;   // 2026-10-14：mono 时 [1] 与 [0] 同源，跳过冗余写
+                gL[i] = gl * mk;               // 2026-10-14：L/R 独立增益 × makeup
+                gR[i] = gr * mk;
             }
         }
 
@@ -255,7 +381,7 @@ void MultibandDSP::process (float* const* channels, int numSamples,
                     {
                         const float d = bandStore_[b][ch][i];
                         dry += d;
-                        gTot[b] = (1.0f - mArr[b]) + mArr[b] * gStore_[b][i];
+                        gTot[b] = (1.0f - mArr[b]) + mArr[b] * gStore_[b][ch][i];
                     }
                     const float mBar = 0.25f * (gTot[0] + gTot[1] + gTot[2] + gTot[3]);
                     float acc = dry * mBar;
@@ -269,9 +395,12 @@ void MultibandDSP::process (float* const* channels, int numSamples,
                     for (int b = 0; b < Param::kNumBands; ++b)
                     {
                         const float d = bandStore_[b][ch][i];
-                        const float gmk = gStore_[b][i];
+                        const float gmk = gStore_[b][ch][i];
                         const float signal   = d * ((1.0f - mArr[b]) + mArr[b] * gmk);
-                        const float deltaSig = d * (gmk - 1.0f);
+                        // TECH_SPEC §3.7：Delta 作用在 Mix 之后 —— wet−dry = d·m·(gmk−1)。
+                        // 2026-10-14 修复：此前漏乘 mArr[b]，Mix<100% 时 Delta 监听音量
+                        // 偏大 1/mix 倍（Mix=50% → 2 倍，Mix=20% → 5 倍）。
+                        const float deltaSig = d * mArr[b] * (gmk - 1.0f);
                         acc += signal * gArr[b] + deltaSig * dArr[b];
                     }
                     out[i] = acc;

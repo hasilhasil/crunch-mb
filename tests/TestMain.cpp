@@ -86,7 +86,7 @@ static void testParamSystem()
     DummyProc proc;
     juce::AudioProcessorValueTreeState apvts (proc, nullptr, "PARAMS", Param::createLayout());
 
-    check (proc.getParameters().size() == 62, "T0.1 布局参数数 = 62",
+    check (proc.getParameters().size() == 79, "T0.1 布局参数数 = 79（2026-10-14 新增 oversampling + 每段侧链滤波×3 + StereoLink）",
            "actual " + juce::String (proc.getParameters().size()));
 
     check (apvts.getParameter (Param::bandRange (2)) != nullptr
@@ -150,14 +150,14 @@ static void testBandCompressor()
     c.prepare (48000.0);
 
     // 静态传输（硬拐点，ratio=4，thr=−20）：gain = over·(1/ratio − 1)
-    c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -30.0f, false, false);
+    c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -30.0f, 0.0f, false);
     check (std::abs (c.getStaticGainDb (-30.0f) - 0.0f) < 1.0e-4f
            && std::abs (c.getStaticGainDb (0.0f) - (-15.0f)) < 1.0e-3f
            && std::abs (c.getStaticGainDb (-10.0f) - (-7.5f)) < 1.0e-3f,
            "T1.1 硬拐点传输曲线（-30dB→0 / 0dB→-15 / -10dB→-7.5）");
 
     // 软拐点（w=12，TECH_SPEC §3.3）：阈值点 = slope·(w/2)²/(2w) = −1.125dB（ratio=4）
-    c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -30.0f, true, false);
+    c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -30.0f, 12.0f, false);
     check (std::abs (c.getStaticGainDb (-20.0f) - (-1.125f)) < 1.0e-3f
            && std::abs (c.getStaticGainDb (-23.0f) - (-0.28125f)) < 1.0e-3f
            && c.getStaticGainDb (-17.0f) < c.getStaticGainDb (-23.0f),
@@ -165,21 +165,22 @@ static void testBandCompressor()
            "at0=" + fmt (c.getStaticGainDb (-20.0f)));
 
     // Range 钳制：range=−3 → 压缩量上限 3dB
-    c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -3.0f, false, false);
+    c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -3.0f, 0.0f, false);
     check (std::abs (c.getStaticGainDb (0.0f) - (-3.0f)) < 1.0e-4f,
            "T1.3 Range 钳制（|GR| ≤ 3dB）");
 
     // 时间常数：attack 50ms / release 200ms @48k，63.2% 判定
     {
-        c.setParameters (-20.0f, 4.0f, 50.0f, 200.0f, -30.0f, false, false);
+        c.setParameters (-20.0f, 4.0f, 50.0f, 200.0f, -30.0f, 0.0f, false);
         c.reset();
         const double fs = 48000.0;
         const float targetDb = -15.0f;
+        float gl = 1.0f, gr = 1.0f;   // 2026-10-14：processGain 改为 L/R 双输出
 
         int atk = -1;
         for (int i = 0; i < 48000 && atk < 0; ++i)
         {
-            c.processGain (1.0f, 1.0f);          // 0dBFS 步进（thr −20, ratio 4 → −15dB）
+            c.processGain (1.0f, 1.0f, gl, gr);          // 0dBFS 步进（thr −20, ratio 4 → −15dB）
             if (c.getSmoothedGainDb() <= targetDb * 0.632f)
                 atk = i + 1;
         }
@@ -189,12 +190,12 @@ static void testBandCompressor()
 
         // 先跑到稳态（−15dB），再测 release
         for (int i = 0; i < 40000; ++i)
-            c.processGain (1.0f, 1.0f);
+            c.processGain (1.0f, 1.0f, gl, gr);
 
         int rel = -1;
         for (int i = 0; i < 96000 && rel < 0; ++i)
         {
-            c.processGain (0.0f, 0.0f);          // 步进回落（target 0dB gain）
+            c.processGain (0.0f, 0.0f, gl, gr);          // 步进回落（target 0dB gain）
             if (c.getSmoothedGainDb() >= targetDb * (1.0f - 0.632f))
                 rel = i + 1;
         }
@@ -1382,7 +1383,7 @@ static void testParameterInventory()
     std::cout << "\n--- T0b 参数清单盘点 ---\n";
     std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
     const auto& params = proc->getParameters();
-    check ((int) params.size() == 62, "T0b.1 参数总数 = 62", juce::String (params.size()));
+    check ((int) params.size() == 79, "T0b.1 参数总数 = 79（2026-10-14）", juce::String (params.size()));
 
     juce::StringArray names;
     for (auto* p : params)
@@ -1408,7 +1409,7 @@ static void testParameterInventory()
     }
     check (allFound, "T0b.2 每段 Makeup/Solo/Mute/Delta/Ext 参数齐全（共 20 个）", "missing: " + missing);
 
-    std::cout << "---- 62 参数清单（Studio One 参数下拉显示名 → ID）----" << std::endl;
+    std::cout << "---- 79 参数清单（Studio One 参数下拉显示名 → ID）----" << std::endl;
     for (const auto& n : names)
         std::cout << "  " << n << std::endl;
     std::cout << "----------------------------------------------------" << std::endl;
@@ -1605,13 +1606,13 @@ static void testLowBandModeBehavior()
 }
 
 // ------------------------------------------------------------
-// T15 参数灵敏度全量审计（62 参数逐一验证"改值 → 输出变化"）
+// T15 参数灵敏度全量审计（参数逐一验证"改值 → 输出变化"）
 //   目的：捕捉"参数读了但没送进 DSP"类缺陷（2026-09-23 updateScalars 漏调用事故）。
 //   信号：四段各有内容 + 起振瞬态（同时覆盖稳态型与瞬态型参数）。
 // ------------------------------------------------------------
 static void testParameterSensitivity()
 {
-    std::cout << "\n--- T15 参数灵敏度全量审计（62 参数）---\n";
+    std::cout << "\n--- T15 参数灵敏度全量审计（79 参数）---\n";
 
     const int n = 512;
     const int blocks = 24;
@@ -3345,7 +3346,7 @@ static void testUpwardCompression()
     const float ratio = 4.0f;
 
     // ① 负 Range（向下压缩）：高于阈值 → 负增益；低于阈值 → 0
-    comp.setParameters (thr, ratio, 5.0f, 50.0f, -12.0f, false, false);
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, -12.0f, 0.0f, false);
     {
         const float gOver  = comp.getStaticGainDb (-10.0f);   // 高于阈值 10dB → −7.5dB
         const float gUnder = comp.getStaticGainDb (-40.0f);   // 低于阈值 → 0
@@ -3356,7 +3357,7 @@ static void testUpwardCompression()
     }
 
     // ② 正 Range（向上压缩）：低于阈值 → 正增益；高于阈值 → 0
-    comp.setParameters (thr, ratio, 5.0f, 50.0f, 6.0f, false, false);
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, 6.0f, 0.0f, false);
     {
         const float gUnder = comp.getStaticGainDb (-40.0f);   // 低于阈值 20dB → 抬 +7.5，但 range=6 → 钳到 +6
         const float gOver  = comp.getStaticGainDb (-10.0f);   // 高于阈值 → 0
@@ -3371,7 +3372,7 @@ static void testUpwardCompression()
     }
 
     // ③ 正 Range 幅度上限：range=20 时低于阈值 40dB → 抬 15dB（ratio 4 → 40×0.75=30 → 钳 20）
-    comp.setParameters (thr, ratio, 5.0f, 50.0f, 20.0f, false, false);
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, 20.0f, 0.0f, false);
     {
         const float g = comp.getStaticGainDb (-60.0f);
         std::cout << "  range=20: " << g << "dB" << std::endl;
@@ -3380,7 +3381,7 @@ static void testUpwardCompression()
 
     // ④ 软拐点下向上压缩仍连续（u 从 0 → w/2 平滑过渡；阈值中心处为半程增益，
     //    与向下分支镜像对称——标准 soft-knee 行为）
-    comp.setParameters (thr, ratio, 5.0f, 50.0f, 12.0f, true, false);
+    comp.setParameters (thr, ratio, 5.0f, 50.0f, 12.0f, 12.0f, false);
     {
         const float g0 = comp.getStaticGainDb (thr);              // 恰在阈值 → 半程（w/8 效应）
         const float g1 = comp.getStaticGainDb (thr - 1.0f);       // 低 1dB
@@ -4298,15 +4299,16 @@ static void testPopoverControls()
                juce::String (rBefore) + " -> " + juce::String (rAfter));
     }
 
-    // ④ 滑杆行：KNEE 二态翻转（HARD ↔ SOFT）
+    // ④ 滑杆行：KNEE 连续拖动（2026-10-14 起为 0–48 dB 连续滑杆，不再是 HARD/SOFT 二态）
     {
         const auto sr = dv.popSliderRectForTest (1);
-        const float kBefore = normOf ("band2Knee");
-        dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());
-        dv.mouseUpForTest (sr.getCentreX(), sr.getCentreY());
-        const float kAfter = normOf ("band2Knee");
-        std::cout << "  Knee norm: " << kBefore << " -> " << kAfter << std::endl;
-        check (std::abs (kAfter - kBefore) > 0.5f, "T40.9 KNEE 点击翻转（HARD↔SOFT）",
+        const float kBefore = phys (Param::bandKnee (2));
+        dv.mouseDownForTest (sr.getX() + sr.getWidth() * 0.10f, sr.getCentreY());
+        dv.mouseDragForTest (sr.getX() + sr.getWidth() * 0.85f, sr.getCentreY());
+        dv.mouseUpForTest (sr.getX() + sr.getWidth() * 0.85f, sr.getCentreY());
+        const float kAfter = phys (Param::bandKnee (2));
+        std::cout << "  Knee: " << kBefore << " -> " << kAfter << " dB" << std::endl;
+        check (kAfter > kBefore + 10.0f, "T40.9 KNEE 连续滑杆拖动写入 APVTS（0–48 dB）",
                juce::String (kBefore) + " -> " + juce::String (kAfter));
     }
 

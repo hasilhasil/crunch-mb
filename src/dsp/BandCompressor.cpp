@@ -15,18 +15,22 @@ void BandCompressor::prepare (double sampleRate)
 void BandCompressor::reset()
 {
     smoothedGainDb_ = 0.0f;
+    smoothedGainDbR_ = 0.0f;
     lastGain_       = 1.0f;
     rmsEnvelope_    = 0.0f;
+    rmsEnvelopeR_   = 0.0f;
     lastDetectorDb_ = -100.0f;
+    lastDetectorDbR_ = -100.0f;
 }
 
 void BandCompressor::setParameters (float thresholdDb, float ratio, float attackMs, float releaseMs,
-                                    float rangeDb, bool softKnee, bool useRmsDetector) noexcept
+                                    float rangeDb, float kneeDb, bool useRmsDetector) noexcept
 {
     thresholdDb_ = thresholdDb;
     ratio_       = juce::jmax (1.0f, ratio);
     rangeDb_     = rangeDb;
-    kneeWidthDb_ = softKnee ? 12.0f : 0.0f;   // 软拐点 = 12dB 二次插值（TECH_SPEC §3.3）
+    // 2026-10-14：膝宽改为连续 0–48 dB（Pro-MB 对标）。0 = 硬膝，其余 = 二次插值软膝。
+    kneeWidthDb_ = juce::jmax (0.0f, kneeDb);
     useRms_      = useRmsDetector;
 
     const auto coeffFor = [this] (double ms)
@@ -100,31 +104,51 @@ float BandCompressor::getStaticGainDb (float levelDb) const noexcept
     return computeTargetGainDb (levelDb);
 }
 
-float BandCompressor::processGain (float left, float right) noexcept
+void BandCompressor::processGain (float left, float right, float& gainL, float& gainR) noexcept
 {
-    const float peak = juce::jmax (std::abs (left), std::abs (right));
+    // 2026-10-14：立体声链接（Pro-MB 对标）。
+    //   link = 1.0 → 两声被**较响者**驱动，增益相同（原行为 max(|L|,|R|)）
+    //   link = 0.0 → 左右各自独立压缩
+    // 实现：两声电平先按 link 向 max 混合，再各跑一条包络。
+    //   link=1 时 detL == detR == max(levelL, levelR) → 两条包络输入相同 → 增益相同
+    //   link=0 时 detL = levelL, detR = levelR → 完全独立
+    const float peakL = std::abs (left);
+    const float peakR = std::abs (right);
 
-    float level = peak;
+    float levelL = peakL, levelR = peakR;
     if (useRms_)
     {
-        rmsEnvelope_ = rmsEnvelope_ * rmsCoeff_ + peak * peak * (1.0f - rmsCoeff_);
-        level = std::sqrt (rmsEnvelope_);
+        rmsEnvelope_  = rmsEnvelope_  * rmsCoeff_ + peakL * peakL * (1.0f - rmsCoeff_);
+        rmsEnvelopeR_ = rmsEnvelopeR_ * rmsCoeff_ + peakR * peakR * (1.0f - rmsCoeff_);
+        levelL = std::sqrt (rmsEnvelope_);
+        levelR = std::sqrt (rmsEnvelopeR_);
     }
 
-    lastDetectorDb_ = juce::Decibels::gainToDecibels (level, -100.0f);
-    const float target = computeTargetGainDb (lastDetectorDb_);
+    const float loudest = juce::jmax (levelL, levelR);
+    const float detL = levelL + stereoLink_ * (loudest - levelL);
+    const float detR = levelR + stereoLink_ * (loudest - levelR);
+
+    lastDetectorDb_  = juce::Decibels::gainToDecibels (detL, -100.0f);
+    lastDetectorDbR_ = juce::Decibels::gainToDecibels (detR, -100.0f);
+
+    const float targetL = computeTargetGainDb (lastDetectorDb_);
+    const float targetR = computeTargetGainDb (lastDetectorDbR_);
 
     // dB 域单极点平滑：目标更压缩时 attack，否则 release（63%@tau）
-    const float coeff = (target < smoothedGainDb_) ? attackCoeff_ : releaseCoeff_;
-    smoothedGainDb_ += (target - smoothedGainDb_) * (1.0f - coeff);
+    const float coeffL = (targetL < smoothedGainDb_)  ? attackCoeff_ : releaseCoeff_;
+    const float coeffR = (targetR < smoothedGainDbR_) ? attackCoeff_ : releaseCoeff_;
+    smoothedGainDb_  += (targetL - smoothedGainDb_)  * (1.0f - coeffL);
+    smoothedGainDbR_ += (targetR - smoothedGainDbR_) * (1.0f - coeffR);
 
-    lastGain_ = juce::Decibels::decibelsToGain (smoothedGainDb_);
-    return lastGain_;
+    gainL = juce::Decibels::decibelsToGain (smoothedGainDb_);
+    gainR = juce::Decibels::decibelsToGain (smoothedGainDbR_);
+    lastGain_ = gainL;          // 兼容：UI/测试读左声道
 }
 
 void BandCompressor::processSample (float& left, float& right) noexcept
 {
-    const float g = processGain (left, right);
-    left  *= g;
-    right *= g;
+    float gl = 1.0f, gr = 1.0f;
+    processGain (left, right, gl, gr);
+    left  *= gl;
+    right *= gr;
 }
