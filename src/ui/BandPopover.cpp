@@ -123,7 +123,8 @@ juce::Rectangle<float> BandPopover::expertContentRect() const
     const auto r = popoverRect();
     const auto er = expertRect();
     const float ew = r.getWidth() * (200.0f / 472.0f);
-    const float eh = r.getHeight() * (60.0f / 200.0f);
+    // Phase：EXPERT 内容从 2 行扩到 5 行（Detector / Lookahead / Filtering / SC Low / SC High）
+    const float eh = r.getHeight() * (100.0f / 200.0f);
     return juce::Rectangle<float> (er.getX() - ew - r.getWidth() * (6.0f / 472.0f),
                                    er.getY(), ew, eh);
 }
@@ -163,8 +164,34 @@ BandPopover::ExpertRow BandPopover::hitTestExpertRow (juce::Point<float> p) cons
     const auto box = expertContentRect();
     if (! box.contains (p))
         return ExpertRow::None;
-    // 两块等分：上 = Detector，下 = Lookahead
-    return (p.y < box.getCentreY()) ? ExpertRow::Detector : ExpertRow::Lookahead;
+    // 5 行等分：Detector / Lookahead / Filtering / SC Low / SC High
+    const int idx = (int) ((p.y - box.getY()) / (box.getHeight() / 5.0f));
+    switch (juce::jlimit (0, 4, idx))
+    {
+        case 0:  return ExpertRow::Detector;
+        case 1:  return ExpertRow::Lookahead;
+        case 2:  return ExpertRow::Filtering;
+        case 3:  return ExpertRow::SCLow;
+        default: return ExpertRow::SCHigh;
+    }
+}
+
+void BandPopover::setSideChainFreq (int band, bool isLow)
+{
+    // Pro-MB：Free 模式下侧链有一个高通和一个低通频率，用来让该段触发于
+    // 不同的频率范围。这里用"点击循环预设档"的方式暴露（与 Lookahead 同样的
+    // 交互语言，不需要额外拖拽手势）。
+    const juce::String id = "band" + juce::String (band)
+                         + (isLow ? "SCLow" : "SCHigh");
+    const float choicesLow[4]  = { 20.0f, 100.0f, 500.0f, 2000.0f };
+    const float choicesHigh[4] = { 500.0f, 2000.0f, 5000.0f, 20000.0f };
+    const float* choices = isLow ? choicesLow : choicesHigh;
+
+    const float cur = getParamPhysical (id);
+    int next = 0;
+    for (int i = 0; i < 4; ++i)
+        if (cur >= choices[i] - 1.0f) next = (i + 1) % 4;
+    setParamPhysical (id, choices[next]);
 }
 
 void BandPopover::clickExpertRow (ExpertRow row)
@@ -186,6 +213,21 @@ void BandPopover::clickExpertRow (ExpertRow row)
                 setParamNorm ("lookahead", next * 0.5f);
                 sliders_[4] = next;
             }
+            break;
+        case ExpertRow::Filtering:
+            // Band → Free 循环（Pro-MB Side Chain Filtering）
+            {
+                const float cur = getParamNorm ("band" + juce::String (b) + "SCFilter");
+                setParamNorm ("band" + juce::String (b) + "SCFilter", cur > 0.5f ? 0.0f : 1.0f);
+            }
+            break;
+        case ExpertRow::SCLow:
+            // 高通频率：20 → 100 → 500 → 2000 Hz 循环
+            setSideChainFreq (b, true);
+            break;
+        case ExpertRow::SCHigh:
+            // 低通频率：500 → 2000 → 5000 → 20000 Hz 循环
+            setSideChainFreq (b, false);
             break;
         case ExpertRow::None:
             break;
@@ -587,7 +629,7 @@ void BandPopover::paint (juce::Graphics& g)
         }
     }
 
-    // ---- EXPERT 展开内容：从右缘向左列出的低频操作项 ----
+    // ---- EXPERT 展开内容：5 行低频操作项（Phase：加侧链滤波三行）----
     if (expertOpen_)
     {
         const auto box = expertContentRect();
@@ -596,20 +638,45 @@ void BandPopover::paint (juce::Graphics& g)
         g.setColour (pal_.accent.withAlpha (0.6f * a));
         g.drawRoundedRectangle (box, r.getWidth() * (6.0f / 472.0f), 1.0f);
 
-        g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
-        g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
-        g.drawText ("DETECTOR  " + juce::String (sliders_[3] > 0.5 ? "RMS" : "PEAK"),
-                    box.withTrimmedTop (box.getHeight() * 0.12f).withHeight (box.getHeight() * 0.26f),
-                    juce::Justification::centredLeft);
-        g.drawText ("LOOKAHEAD  " + juce::String (sliders_[4] == 0 ? "OFF"
-                                                                 : sliders_[4] == 1 ? "1 ms" : "3 ms"),
-                    box.withTrimmedTop (box.getHeight() * 0.42f).withHeight (box.getHeight() * 0.26f),
-                    juce::Justification::centredLeft);
-        // 提示这两项也是可点的
+        const int bShow = (band_ >= 0) ? band_ : 0;
+        const float rowH = box.getHeight() / 5.0f;
+        g.setFont (MBTheme::font (MBTheme::regular(), 8.5f));
+
+        struct Row { const char* label; juce::String value; };
+        const Row rows[5] = {
+            { "DETECTOR",  sliders_[3] > 0.5 ? "RMS" : "PEAK" },
+            { "LOOKAHEAD", sliders_[4] == 0 ? "OFF"
+                             : sliders_[4] == 1 ? "1 ms" : "3 ms" },
+            { "FILTERING", getParamNorm ("band" + juce::String (bShow) + "SCFilter") > 0.5f
+                             ? "FREE" : "BAND" },
+            { "SC HIGH-PASS", fmtHzShort (getParamPhysical (
+                             "band" + juce::String (bShow) + "SCLow")) + " Hz" },
+            { "SC LOW-PASS",  fmtHzShort (getParamPhysical (
+                             "band" + juce::String (bShow) + "SCHigh")) + " Hz" },
+        };
+
+        for (int i = 0; i < 5; ++i)
+        {
+            const float y = box.getY() + rowH * (float) i;
+            g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
+            g.drawText (rows[i].label,
+                        juce::Rectangle<float> (box.getX() + box.getWidth() * 0.06f, y,
+                                                box.getWidth() * 0.56f, rowH),
+                        juce::Justification::centredLeft);
+            g.setColour (pal_.text.withMultipliedAlpha (a));
+            g.drawText (rows[i].value,
+                        juce::Rectangle<float> (box.getX() + box.getWidth() * 0.58f, y,
+                                                box.getWidth() * 0.36f, rowH),
+                        juce::Justification::centredRight);
+        }
+
+        // 提示这些行都是可点的
         g.setColour (pal_.accent.withAlpha (0.7f * a));
-        g.setFont (MBTheme::font (MBTheme::regular(), 8.0f));
-        g.drawText ("(click to toggle)",
-                    box.withTrimmedTop (box.getHeight() * 0.72f).withHeight (box.getHeight() * 0.22f),
+        g.setFont (MBTheme::font (MBTheme::regular(), 7.5f));
+        g.drawText ("(click to cycle)",
+                    juce::Rectangle<float> (box.getX() + box.getWidth() * 0.06f,
+                                            box.getBottom() - rowH * 0.45f,
+                                            box.getWidth() * 0.88f, rowH * 0.45f),
                     juce::Justification::centredLeft);
     }
 }

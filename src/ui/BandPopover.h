@@ -74,7 +74,7 @@ public:
     void toggleExpert() { expertOpen_ = ! expertOpen_; repaint(); }
 
     /** Phase C-5：EXPERT 展开内容的两行可点区域。 */
-    enum class ExpertRow { None = 0, Detector, Lookahead };
+    enum class ExpertRow { None = 0, Detector, Lookahead, Filtering, SCLow, SCHigh };
     /** 返回命中的行；None 表示没命中。 */
     ExpertRow hitTestExpertRow (juce::Point<float> p) const;
     /** 点击某行：Detector 翻转 Peak/RMS，Lookahead 循环 Off→1ms→3ms。 */
@@ -124,6 +124,8 @@ private:
     void layoutKnobs (bool force);
     void applyPopoverKnob (int k, double v);
     void applySlider (int k, double v);
+    /** Phase：侧链频率循环（Free 模式的高通/低通频率档位）。 */
+    void setSideChainFreq (int band, bool isLow);
 
     float getParamNorm (const juce::String& id) const;
     float getParamPhysical (const juce::String& id) const;

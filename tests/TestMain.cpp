@@ -4428,8 +4428,9 @@ static void testPopoverControls()
         check (dv.isPopoverExpertOpenForTest(), "T40.16 EXPERT 展开（为测行点击）", "");
 
         const auto ec = dv.popExpertContentRectForTest();
-        const float rowDetY  = ec.getY() + ec.getHeight() * 0.25f;   // 上半 = Detector
-        const float rowLkaY  = ec.getY() + ec.getHeight() * 0.75f;   // 下半 = Lookahead
+        // 5 行等分：0=Detector 1=Lookahead 2=Filtering 3=SC Low 4=SC High
+        const float rowDetY  = ec.getY() + ec.getHeight() * 0.10f;
+        const float rowLkaY  = ec.getY() + ec.getHeight() * 0.30f;
 
         // Detector 行：翻转 Peak/RMS
         const float detBefore = normOf ("band2Detector");
@@ -4450,6 +4451,39 @@ static void testPopoverControls()
         check (std::abs (lkaAfter - lkaBefore) > 0.01f,
                "T40.18 EXPERT Lookahead 行可点（Off→1ms→3ms 循环）",
                juce::String (lkaBefore) + " -> " + juce::String (lkaAfter));
+
+        // ⑧ Phase：侧链滤波三行（Filtering / SC High-Pass / SC Low-Pass）
+        const float rowFilY = ec.getY() + ec.getHeight() * 0.50f;
+        const float rowLoY  = ec.getY() + ec.getHeight() * 0.70f;
+        const float rowHiY  = ec.getY() + ec.getHeight() * 0.90f;
+
+        // Filtering：Band → Free
+        const float filBefore = normOf ("band2SCFilter");
+        dv.mouseDownForTest (ec.getCentreX(), rowFilY);
+        dv.mouseUpForTest (ec.getCentreX(), rowFilY);
+        const float filAfter = normOf ("band2SCFilter");
+        std::cout << "  SC Filtering: " << filBefore << " -> " << filAfter << std::endl;
+        check (std::abs (filAfter - filBefore) > 0.5f,
+               "T40.19 EXPERT Filtering 行可点（Band↔Free）",
+               juce::String (filBefore) + " -> " + juce::String (filAfter));
+
+        // SC High-Pass：20 → 100 → 500 → 2000 循环
+        const float loBefore = phys ("band2SCLow");
+        dv.mouseDownForTest (ec.getCentreX(), rowLoY);
+        dv.mouseUpForTest (ec.getCentreX(), rowLoY);
+        const float loAfter = phys ("band2SCLow");
+        std::cout << "  SC High-Pass: " << loBefore << " -> " << loAfter << " Hz" << std::endl;
+        check (loAfter != loBefore, "T40.20 EXPERT SC High-Pass 行可点（频率档循环）",
+               juce::String (loBefore) + " -> " + juce::String (loAfter));
+
+        // SC Low-Pass：500 → 2000 → 5000 → 20000 循环
+        const float hiBefore = phys ("band2SCHigh");
+        dv.mouseDownForTest (ec.getCentreX(), rowHiY);
+        dv.mouseUpForTest (ec.getCentreX(), rowHiY);
+        const float hiAfter = phys ("band2SCHigh");
+        std::cout << "  SC Low-Pass: " << hiBefore << " -> " << hiAfter << " Hz" << std::endl;
+        check (hiAfter != hiBefore, "T40.21 EXPERT SC Low-Pass 行可点（频率档循环）",
+               juce::String (hiBefore) + " -> " + juce::String (hiAfter));
 
         // 收起，避免影响后续
         dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
