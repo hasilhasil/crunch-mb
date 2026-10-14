@@ -424,9 +424,28 @@ void BandPopover::paint (juce::Graphics& g)
     const auto r = popoverRect();
 
     // 半透明玻璃面板 + 阴影边
-    g.setColour (juce::Colours::black.withAlpha (0.35f * a));
-    g.fillRoundedRectangle (r.translated (0.0f, r.getHeight() * (3.0f / 200.0f)),
-                            r.getWidth() * (12.0f / 472.0f));
+    // ---- 面板阴影：多层渐变（Phase E-3，Pro-MB 投影对标）----
+    // 原来是一层硬边黑影（alpha 0.35 + 下移 3px），看起来像"贴"在界面上。
+    // 现在用三层由深到浅、由近到远的渐变，真正"浮"起来。
+    // Pro-MB 的投影参数约 0 14px 44px rgba(0,0,0,.5)。
+    {
+        const float corner = r.getWidth() * (12.0f / 472.0f);
+        // 三层：近（深、偏移小）、中、远（浅、偏移大）
+        struct Layer { float dy; float alpha; float expand; };
+        const Layer layers[3] = {
+            { 2.0f,  0.30f, 0.0f  },
+            { 6.0f,  0.20f, 3.0f  },
+            { 14.0f, 0.14f, 7.0f  },
+        };
+        for (const auto& L : layers)
+        {
+            const float k = r.getHeight() / 200.0f;      // 设计稿 200px 高 → 比例
+            auto shadow = r.translated (0.0f, L.dy * k).expanded (L.expand * k);
+            g.setColour (juce::Colours::black.withAlpha (L.alpha * a));
+            g.fillRoundedRectangle (shadow, corner + L.expand * k);
+        }
+    }
+
     g.setColour (pal_.popA.withMultipliedAlpha (a));
     g.fillRoundedRectangle (r, r.getWidth() * (12.0f / 472.0f));
     g.setColour (pal_.accent.withAlpha (0.5f * a));

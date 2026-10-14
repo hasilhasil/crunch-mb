@@ -125,9 +125,22 @@ void OutputPanel::paint (juce::Graphics& g)
     const float a = juce::jlimit (0.0f, 1.0f, anim_);
     const auto pr = panelRect();
 
-    g.setColour (juce::Colours::black.withAlpha (0.35f * a));
-    g.fillRoundedRectangle (pr.translated (0.0f, pr.getHeight() * 0.015f),
-                            pr.getWidth() * 0.06f);
+    // ---- Phase E-3：多层渐变投影 ----
+    {
+        const float corner = pr.getWidth() * 0.06f;
+        struct Layer { float dy; float alpha; float expand; };
+        const Layer layers[3] = {
+            { 2.0f,  0.30f, 0.0f },
+            { 6.0f,  0.20f, 3.0f },
+            { 14.0f, 0.14f, 7.0f },
+        };
+        for (const auto& L : layers)
+        {
+            auto shadow = pr.translated (0.0f, L.dy).expanded (L.expand);
+            g.setColour (juce::Colours::black.withAlpha (L.alpha * a));
+            g.fillRoundedRectangle (shadow, corner + L.expand);
+        }
+    }
     g.setColour (pal_.popA.withMultipliedAlpha (a));
     g.fillRoundedRectangle (pr, pr.getWidth() * 0.06f);
     g.setColour (pal_.accent.withAlpha (0.55f * a));
