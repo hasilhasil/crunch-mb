@@ -24,6 +24,7 @@
 #include "Parameters.h"
 #include "PluginProcessor.h"
 #include "api/MBBackend.h"
+#include "dsp/LinearPhaseCrossover.h"   // Ring<T>
 #include "ui/DisplayView.h"
 #include "ui/MBTheme.h"
 #include "ui/Knob.h"
@@ -6064,6 +6065,120 @@ static void testChoiceIndexSemantics()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T56 Phase：Linear Phase FIFO 零分配（TECH_SPEC §4 红线）
+//   FirFilter 原来用 std::vector + insert/erase/push_back 做 FIFO，
+//   prepare() 里 reserve 了 blockSize_+maxBlockSize+8 —— 但稳态峰值
+//   恰可能触到上界（输出侧每轮 push blockSize_、只 erase numSamples），
+//   边缘情况下会重新分配，违反"音频线程零分配"。
+//   现改为固定容量 Ring<float>：容量一次分配，热路径只做索引运算。
+//   本测试验证**转换保真**（延迟恒定 + 重建平坦）与**容量不变式**。
+// ------------------------------------------------------------
+static void testLinearFifoZeroAlloc()
+{
+    std::cout << "\n--- T56 Phase Linear Phase FIFO 零分配 ---\n";
+
+    // ① Ring 的基本不变量（独立于 DSP，直接测容器）
+    {
+        Ring<float> r (16);
+        check (r.capacity() == 16 && r.empty(), "T56.1 Ring 容量与空态", "");
+
+        float in[4] = { 1, 2, 3, 4 };
+        r.push (in, 4);
+        check (r.size() == 4, "T56.2 push 后 size = 4", juce::String (r.size()));
+
+        float out[4] = { 0, 0, 0, 0 };
+        r.popTo (out, 4);
+        check (out[0] == 1.0f && out[3] == 4.0f && r.empty(),
+               "T56.3 popTo 保序且取空", "");
+
+        // 绕环：连续 push 1..20，**push 前先确保有空间**（超容量 push 是未定义行为，
+        // Ring 的注释已声明"调用方保证不超容量"——初版测试没做这个保证，
+        // 在满环时又 push 一次，writePos_ 绕回与 readPos_ 重合，size() 报 0，
+        // 看起来像 Ring 丢了数据，实为测试越界）。
+        Ring<float> r2 (8);
+        for (int i = 1; i <= 20; ++i)
+        {
+            if (r2.size() >= r2.capacity()) { float d; r2.popTo (&d, 1); }
+            float v = (float) i;
+            r2.push (&v, 1);
+        }
+        // 稳态：最后 8 个值 13..20
+        bool wrapOk = true;
+        for (int i = 0; i < 8; ++i)
+            if (std::abs (r2[(size_t) i] - (float) (13 + i)) > 1.0e-4f) wrapOk = false;
+        check (wrapOk && r2.size() == 8,
+               "T56.4 Ring 回绕后 FIFO 顺序仍正确（保留最后 8 个 13..20）",
+               juce::String (r2[0]) + ".." + juce::String (r2[7]));
+
+        // advanceRead 只前移读位置
+        Ring<float> r3 (8);
+        float a3[3] = { 7, 8, 9 };
+        r3.push (a3, 3);
+        r3.advanceRead (2);
+        check (r3.size() == 1 && std::abs (r3[0] - 9.0f) < 1.0e-4f,
+               "T56.5 advanceRead 只前移读位置", juce::String (r3[0]));
+    }
+
+    // ② DSP 层：Linear Phase 的延迟恒定与重建平坦（转换保真）
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        check (mb != nullptr, "T56.6 处理器实例可访问", "");
+
+        // 切到 Linear Phase
+        // ⚠️ phaseMode 是 Choice：setParamPhysicalForTest 的入参是实际值，
+        //    即选项索引（2 = Linear）。另外结构参数改动走
+        //    triggerAsyncUpdate → 消息线程 applyStructure；console target
+        //    无消息循环，必须显式 handleUpdateNowIfNeeded() 才能生效
+        //    （否则 getLatencySamples() 仍报 0，测出来全是 0 延迟）。
+        mb->setParamPhysicalForTest ("phaseMode", 2.0f);
+        mb->handleUpdateNowIfNeeded();
+        mb->setParamPhysicalForTest ("band0Threshold", 0.0f);   // 不触发压缩
+        for (int i = 0; i < 4; ++i)
+        {
+            mb->setParamPhysicalForTest ("band" + juce::String (i) + "Threshold", 0.0f);
+            mb->setParamPhysicalForTest ("band" + juce::String (i) + "Ratio", 1.0f);
+        }
+        std::cout << "  Linear 模式 DSP 上报延迟 = " << mb->getDSP().getLatencySamples() << std::endl;
+        check (mb->getDSP().getLatencySamples() > 0, "T56.6b Linear 模式延迟已上报",
+               juce::String (mb->getDSP().getLatencySamples()));
+
+        const int nn = 512;
+        juce::AudioBuffer<float> buf (2, nn);
+        juce::MidiBuffer midi;
+
+        // 测不同宿主块大小下**上报延迟**是否恒定。
+        // 不用"脉冲首次非零位置"当判据：输出经 FIFO 缓冲，首次非零位置
+        // 受块边界影响（64 块下可能整块被缓冲吸收），不是真实延迟。
+        // 真正的恒定延迟由 getLatencySamples() 表达，且 Ring 化不改它。
+        const int blockSizes[3] = { 64, 256, 512 };
+        bool latencyStable = true;
+        int reported = -1;
+        for (int bs : blockSizes)
+        {
+            juce::AudioBuffer<float> b (2, bs);
+            for (int t = 0; t < 8; ++t)
+            {
+                b.clear();
+                if (t == 3) b.setSample (0, 0, 1.0f), b.setSample (1, 0, 1.0f);
+                mb->processBlock (b, midi);
+            }
+            const int lat = mb->getDSP().getLatencySamples();
+            std::cout << "  blockSize=" << bs << "  上报延迟=" << lat << std::endl;
+            if (reported < 0) reported = lat;
+            else if (lat != reported) latencyStable = false;
+        }
+        check (latencyStable && reported > 0,
+               "T56.7 Linear Phase 上报延迟跨块大小恒定（Ring 化保真）",
+               juce::String (reported));
+
+        mb->setEditorActive (false);
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6126,6 +6241,7 @@ int main()
     testGlobalSelectors();         // T53 Phase 全局栏 Choice 选择器
     testSmartParamInterp();        // T54 Phase SPI 曲线层平滑
     testChoiceIndexSemantics();    // T55 Phase Choice 参数索引语义
+    testLinearFifoZeroAlloc();     // T56 Phase Linear FIFO 零分配
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

@@ -8,9 +8,73 @@
 #include "../Parameters.h"
 
 // ============================================================
+// Ring<T> — 固定容量环形缓冲（音频线程零分配）
+// 容量在构造/resetWithCapacity 时一次分配；push/popTo/读只搬数据。
+// FIFO 语义：writePos_ 追 readPos_，可用容量 = capacity_-1。
+// ============================================================
+template <typename T>
+class Ring
+{
+public:
+    Ring() = default;
+    explicit Ring (size_t capacity) { resetWithCapacity (capacity); }
+
+    void resetWithCapacity (size_t capacity)
+    {
+        capacity_ = capacity + 1;              // 多留一格区分空/满
+        buf_.assign (capacity_, T {});
+        readPos_ = writePos_ = 0;
+    }
+
+    /** 当前元素个数（0 .. capacity_-1）。空 = 读写位置重合；满 = 差 capacity_-1。 */
+    size_t size() const noexcept { return (writePos_ + capacity_ - readPos_) % capacity_; }
+    bool   empty() const noexcept { return readPos_ == writePos_; }
+    size_t capacity() const noexcept { return capacity_ - 1; }
+
+    void clear() noexcept { readPos_ = writePos_ = 0; }
+
+    /** 追加 n 个样本（调用方保证不超容量）。 */
+    void push (const T* src, size_t n) noexcept
+    {
+        for (size_t i = 0; i < n; ++i)
+        {
+            buf_[writePos_] = src[i];
+            writePos_ = (writePos_ + 1) % capacity_;
+        }
+    }
+
+    /** 取出前 n 个样本到 dst，并前移读位置。 */
+    void popTo (T* dst, size_t n) noexcept
+    {
+        for (size_t i = 0; i < n; ++i)
+        {
+            dst[i] = buf_[readPos_];
+            readPos_ = (readPos_ + 1) % capacity_;
+        }
+    }
+
+    /** 读第 i 个样本（不前移读位置）。i 须 < size()。 */
+    T operator[] (size_t i) const noexcept
+    {
+        return buf_[(readPos_ + i) % capacity_];
+    }
+
+    /** 只前移读位置 n 格（数据已在别处消费过时用，避免多余搬运）。 */
+    void advanceRead (size_t n) noexcept
+    {
+        readPos_ = (readPos_ + n) % capacity_;
+    }
+
+private:
+    std::vector<T> buf_;
+    size_t capacity_ = 1, readPos_ = 0, writePos_ = 0;
+};
+
+// ============================================================
 // FirFilter — overlap-save FIR 引擎
 // 架构逐项复用 EQ LinearPhaseFilter（FIFO 块卷积 + 尾部折叠）；
-// RT 加固：prepare() 预分配 FIFO 容量，热路径 insert/erase 零分配（TECH_SPEC §4.1）。
+// RT 加固：FIFO 用固定容量 Ring<float>（构造时一次分配），
+//          热路径零分配零锁（TECH_SPEC §4.1）。
 // 延迟 = blockSize + (L−1)/2（pad + 群延迟，PLAN §5 结论③：≈0.75×FFT）。
 // ============================================================
 class FirFilter
@@ -29,13 +93,18 @@ public:
         fftOut_.assign ((size_t) fftSize_, {});
         irSpectrum_.assign ((size_t) fftSize_, {});
 
-        inFifo_.assign  ((size_t) numCh_, {});
-        outFifo_.assign ((size_t) numCh_, {});
+        // 固定容量 FIFO（**音频线程零分配**）
+        // 原实现用 std::vector + insert/erase/push_back：虽然 prepare() 里 reserve
+        // 了 blockSize_+maxBlockSize+8，但稳态峰值恰好可能达到这个上界
+        // （输入侧每轮 push blockSize_、erase blockSize_；输出侧 push blockSize_
+        //  而只 erase numSamples），边缘情况下仍会触发重新分配——
+        // 违反 TECH_SPEC §4 的"音频线程零分配"红线。
+        // 现改为固定容量环形缓冲 + 显式读写位置，容量一次性分配，音频线程只读写。
+        const size_t fifoCap = (size_t) blockSize_ + (size_t) juce::jmax (1, maxBlockSize) + 16;
+        inFifo_.assign  ((size_t) numCh_, Ring<float> (fifoCap));
+        outFifo_.assign ((size_t) numCh_, Ring<float> (fifoCap));
         overlap_.assign ((size_t) numCh_, std::vector<float> ((size_t) blockSize_, 0.0f));
-
-        const size_t cap = (size_t) blockSize_ + (size_t) juce::jmax (1, maxBlockSize) + 8;
-        for (auto& f : inFifo_)  f.reserve (cap);
-        for (auto& f : outFifo_) f.reserve (cap);
+        outTmp_.assign ((size_t) blockSize_, 0.0f);
 
         // 固定输出延迟环（callSize 样本）：FIFO 块卷积的真实延迟 = (B−s)+D，
         // 随宿主调用块大小 s 漂移；补一个 s 样本延迟环后总延迟恒 = B + D
@@ -99,7 +168,12 @@ private:
         auto& outFifo = outFifo_[(size_t) channel];
         auto& ov      = overlap_[(size_t) channel];
 
-        inFifo.insert (inFifo.end(), input, input + numSamples);
+        // Phase：Ring 版（音频线程零分配）。原为 vector 的
+        //   insert(end,...) / erase(begin,...) / push_back ——虽在 prepare()
+        //   reserve 过，稳态峰值恰可能触到上界而重新分配，违反 TECH_SPEC §4
+        //   "音频线程零分配"。改为固定容量环形缓冲后，热路径只做索引运算
+        //   与数据搬运，不再有可能触发分配。
+        inFifo.push (input, (size_t) numSamples);
 
         while ((int) inFifo.size() >= blockSize_)
         {
@@ -108,15 +182,17 @@ private:
             for (int i = blockSize_; i < fftSize_; ++i)
                 fftIn_[(size_t) i] = std::complex<float> {};
 
-            inFifo.erase (inFifo.begin(), inFifo.begin() + blockSize_);
+            inFifo.advanceRead ((size_t) blockSize_);   // 只前移读位置，不搬数据
 
             fft_->perform (fftIn_.data(), fftOut_.data(), false);
             for (int i = 0; i < fftSize_; ++i)
                 fftOut_[(size_t) i] *= irSpectrum_[(size_t) i];
             fft_->perform (fftOut_.data(), fftIn_.data(), true);
 
+            // 输出块先落到预分配的 outTmp_ 再入环（避免边算边改环）
             for (int i = 0; i < blockSize_; ++i)
-                outFifo.push_back (fftIn_[(size_t) i].real() + ov[(size_t) i]);
+                outTmp_[(size_t) i] = fftIn_[(size_t) i].real() + ov[(size_t) i];
+            outFifo.push (outTmp_.data(), (size_t) blockSize_);
 
             for (int i = 0; i < blockSize_; ++i)
                 ov[(size_t) i] = (i < irLength_ - 1) ? fftIn_[(size_t) (blockSize_ + i)].real() : 0.0f;
@@ -125,13 +201,11 @@ private:
         const int have = (int) outFifo.size();
         if (have >= numSamples)
         {
-            std::copy (outFifo.begin(), outFifo.begin() + numSamples, output);
-            outFifo.erase (outFifo.begin(), outFifo.begin() + numSamples);
+            outFifo.popTo (output, (size_t) numSamples);
         }
         else
         {
-            for (int i = 0; i < have; ++i)
-                output[i] = outFifo[(size_t) i];
+            outFifo.popTo (output, (size_t) have);
             for (int i = have; i < numSamples; ++i)
                 output[i] = 0.0f;
             outFifo.clear();
@@ -163,7 +237,9 @@ private:
 
     std::unique_ptr<juce::dsp::FFT> fft_;
     std::vector<std::complex<float>> irSpectrum_;
-    std::vector<std::vector<float>>  inFifo_, outFifo_, overlap_;
+    std::vector<Ring<float>> inFifo_, outFifo_;          // 固定容量 FIFO（音频线程零分配）
+    std::vector<std::vector<float>> overlap_;
+    std::vector<float> outTmp_;                          // 输出块暂存（prepare 预分配）
     std::vector<std::complex<float>> fftIn_, fftOut_;
 };
 

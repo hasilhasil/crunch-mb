@@ -275,7 +275,7 @@
 [PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
 [PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
 [PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
-  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-109.302dB
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-104.962dB
 [PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
 [PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
 [PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
@@ -326,7 +326,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=84.2969MB  anim#1=167.426MB (+83.1289)  anim#2=169.672MB (+85.375 / +2.24609 for the 2nd round)  editorsx200=169.672MB (+85.375)  theme/resizex50=170.766MB (+86.4688)  resizeStormx400=171.172MB (+86.875)
+  RSS: start=84.9492MB  anim#1=168.832MB (+83.8828)  anim#2=168.762MB (+83.8125 / +-0.0703125 for the 2nd round)  editorsx200=168.762MB (+83.8125)  theme/resizex50=170.387MB (+85.4375)  resizeStormx400=171.047MB (+86.0977)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -562,7 +562,7 @@
 [PASS] T39.12 Freeze + Tiltï¼å»ç»åç»ä¿ç tilt åç§»ï¼+9dB @4kHzï¼
 [PASS] T39.12b å»ç»åå³ tilt ä¸æä½å·²ä¿æåç»
 [PASS] T39.14 å¼æå¸§å°è¾¾ UI å±ï¼é¢è°±å¯è§æ§åç½®ï¼
-  渲染差分: 关Pre=26555px  关Post=23151px  全关=28297px
+  渲染差分: 关Pre=26765px  关Post=23312px  全关=28520px
 [PASS] T39.15 å³ Pre â ç»é¢ææ¾ååï¼Pre å±è§è§çæï¼
 [PASS] T39.16 å³ Post â ç»é¢ææ¾ååï¼Post å±è§è§çæï¼
 [PASS] T39.17 Pre/Post å¨å³ â ååéå¤§äºåå³ä»»ä¸å±ï¼ä¸¤å±å å çæï¼
@@ -785,6 +785,20 @@
   缓存稳定性: slope 48->48  mode 2->2
 [PASS] T55.7 ç»æç¼å­ç¨³å®ï¼æ éå¸§å¤±éï¼
 
+--- T56 Phase Linear Phase FIFO 零分配 ---
+[PASS] T56.1 Ring å®¹éä¸ç©ºæ
+[PASS] T56.2 push å size = 4
+[PASS] T56.3 popTo ä¿åºä¸åç©º
+[PASS] T56.4 Ring åç»å FIFO é¡ºåºä»æ­£ç¡®ï¼ä¿çæå 8 ä¸ª 13..20ï¼
+[PASS] T56.5 advanceRead åªåç§»è¯»ä½ç½®
+[PASS] T56.6 å¤çå¨å®ä¾å¯è®¿é®
+  Linear 模式 DSP 上报延迟 = 3072
+[PASS] T56.6b Linear æ¨¡å¼å»¶è¿å·²ä¸æ¥
+  blockSize=64  上报延迟=3072
+  blockSize=256  上报延迟=3072
+  blockSize=512  上报延迟=3072
+[PASS] T56.7 Linear Phase ä¸æ¥å»¶è¿è·¨åå¤§å°æå®ï¼Ring åä¿çï¼
+
 --- T51 Phase E-4 1px 细线像素对齐 ---
 [PASS] T51.1 ç»çº¿ä¸­å¿æä¸º floor(y)+0.5ï¼æè¿åæ´æ°ï¼
 [PASS] T51.2 alpha 2x æäº®åä»å¨ [a, 1] åï¼ä¸åç½åçï¼
@@ -852,4 +866,4 @@
 [PASS] T52.47 getParamFast æªç¥ ID è¿å 0
 
 ====================================
-PASS 462 / FAIL 0
+PASS 470 / FAIL 0
