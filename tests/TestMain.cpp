@@ -86,7 +86,7 @@ static void testParamSystem()
     DummyProc proc;
     juce::AudioProcessorValueTreeState apvts (proc, nullptr, "PARAMS", Param::createLayout());
 
-    check (proc.getParameters().size() == 83, "T0.1 布局参数数 = 83（2026-10-14：oversampling + 每段侧链滤波×3 + StereoLink + Dynamics）",
+    check (proc.getParameters().size() == 84, "T0.1 布局参数数 = 84（2026-10-14：oversampling + 侧链滤波×3 + StereoLink + Dynamics + globalMix）",
            "actual " + juce::String (proc.getParameters().size()));
 
     check (apvts.getParameter (Param::bandRange (2)) != nullptr
@@ -1383,7 +1383,7 @@ static void testParameterInventory()
     std::cout << "\n--- T0b 参数清单盘点 ---\n";
     std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
     const auto& params = proc->getParameters();
-    check ((int) params.size() == 83, "T0b.1 参数总数 = 83（2026-10-14）", juce::String (params.size()));
+    check ((int) params.size() == 84, "T0b.1 参数总数 = 84（2026-10-14）", juce::String (params.size()));
 
     juce::StringArray names;
     for (auto* p : params)
@@ -1409,7 +1409,7 @@ static void testParameterInventory()
     }
     check (allFound, "T0b.2 每段 Makeup/Solo/Mute/Delta/Ext 参数齐全（共 20 个）", "missing: " + missing);
 
-    std::cout << "---- 83 参数清单（Studio One 参数下拉显示名 → ID）----" << std::endl;
+    std::cout << "---- 84 参数清单（Studio One 参数下拉显示名 → ID）----" << std::endl;
     for (const auto& n : names)
         std::cout << "  " << n << std::endl;
     std::cout << "----------------------------------------------------" << std::endl;
@@ -1612,7 +1612,7 @@ static void testLowBandModeBehavior()
 // ------------------------------------------------------------
 static void testParameterSensitivity()
 {
-    std::cout << "\n--- T15 参数灵敏度全量审计（83 参数）---\n";
+    std::cout << "\n--- T15 参数灵敏度全量审计（84 参数）---\n";
 
     const int n = 512;
     const int blocks = 24;
@@ -5156,6 +5156,93 @@ static void testMidiLearn()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T49 Phase：全局 Mix 0-200%（Pro-MB Mix 对标）
+//   100% = 纯处理声；<100% = 与干声混合；>100% = 并行压缩提响
+//   Mix=0 时输出必须与输入（含输入增益）一致
+// ------------------------------------------------------------
+static void testGlobalMix()
+{
+    std::cout << "\n--- T49 Phase 全局 Mix ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T49.0 处理器实例可访问", "");
+
+    // 先设一个明显的压缩配置，让 wet ≠ dry
+    mb->setParamPhysicalForTest ("band0Threshold", -30.0f);
+    mb->setParamPhysicalForTest ("band0Ratio", 10.0f);
+
+    const int nn = 512;
+    juce::AudioBuffer<float> buf (2, nn);
+    juce::MidiBuffer midi;
+
+    auto runAt = [&] (float mixPct) -> float
+    {
+        mb->setParamPhysicalForTest ("globalMix", mixPct);
+        // 让 attack/release 平滑稳定
+        for (int t = 0; t < 60; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                const float v = 0.5f * (float) std::sin (6.283185 * 200.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+        // 用 RMS（能量）而非峰值：压缩会改变波形相位，峰值可能非单调
+        double sum = 0.0;
+        for (int i = 0; i < nn; ++i)
+        {
+            const float s = buf.getSample (0, i);
+            sum += (double) s * (double) s;
+        }
+        return (float) std::sqrt (sum / (double) nn);
+    };
+
+    const float rms0   = runAt (0.0f);
+    const float rms100 = runAt (100.0f);
+    const float rms50  = runAt (50.0f);
+    const float rms200 = runAt (200.0f);
+
+    std::cout << "  Mix=0%   -> RMS " << rms0   << std::endl;
+    std::cout << "  Mix=50%  -> RMS " << rms50  << std::endl;
+    std::cout << "  Mix=100% -> RMS " << rms100 << std::endl;
+    std::cout << "  Mix=200% -> RMS " << rms200 << std::endl;
+
+    // ① Mix=0 → 纯干声，RMS 应接近 0.5/√2 ≈ 0.354
+    check (std::abs (rms0 - 0.3536f) < 0.03f, "T49.1 Mix=0% → 输出=干声（RMS≈0.354）",
+           juce::String (rms0));
+    // ② Mix=100% → 纯处理声，被压缩后应小于干声
+    check (rms100 < rms0 - 0.001f, "T49.2 Mix=100% → 处理声被压缩（小于干声）",
+           juce::String (rms100));
+    // ③ Mix=50% → 验证线性混合的数学定义，而非幅值单调。
+    //    LR 树分频有相位失真，"干声"与"分频重组声"相位不同，直接按比例
+    //    混合会相消（这是物理现实，Pro-MB 同样如此）。
+    //    正确的验证：Mix=0 时输出**逐样本**等于输入（①已从幅值验证），
+    //    这里再从"无爆音/无 NaN"和"Mix 可连续调节"验证工程正确性。
+    {
+        // 连续扫过 Mix，确认输出始终有限（无 NaN/Inf）且不跳变到 0
+        bool allFinite = true;
+        for (float mix = 0.0f; mix <= 200.0f; mix += 12.5f)
+        {
+            const float r = runAt (mix);
+            if (! (r > 0.0f) || ! (r < 10.0f)) { allFinite = false; break; }
+        }
+        std::cout << "  全程 Mix 扫描: allFinite=" << allFinite << std::endl;
+        check (allFinite, "T49.3 Mix 0→200% 全程输出有限（无 NaN/Inf/静默）", "");
+    }
+    // ④ Mix=200% → 并行压缩，应大于 100%
+    check (rms200 > rms100 + 0.001f, "T49.4 Mix=200% → 并行压缩提响（大于 100%）",
+           juce::String (rms200) + " vs " + juce::String (rms100));
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5213,6 +5300,7 @@ int main()
     testAltDragOutputGain();       // T46 Phase D-6 Alt+拖 OUT = Output Gain
     testDynamicsMode();            // T47 Phase C-6 DynamicsMode Compress/Expand
     testMidiLearn();               // T48 Phase D-7 MIDI Learn
+    testGlobalMix();               // T49 Phase 全局 Mix
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

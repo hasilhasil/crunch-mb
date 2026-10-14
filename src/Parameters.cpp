@@ -83,6 +83,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
                { "Off", "2x", "4x" },
                (int) Oversampling::Off);
 
+    // Phase：全局 Mix 0-200%（Pro-MB 对标）。
+    // 100% = 纯处理声；<100% = 与干声混合（减弱效果）；>100% = 并行压缩提响。
+    addFloat  (pid (ID::globalMix), "Mix", { 0.0f, 200.0f, 1.0f }, 100.0f, "%", fmtPct);
+
     // ================= 每频段参数（13 × 4 = 52，TECH_SPEC §5.2） =================
     for (int i = 0; i < kNumBands; ++i)
     {

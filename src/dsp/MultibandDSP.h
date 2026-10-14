@@ -66,6 +66,7 @@ public:
     {
         float inputGainDb  = 0.0f;
         float outputGainDb = 0.0f;
+        float globalMixPct = 100.0f;   // Phase：全局 Mix 0-200%（Pro-MB 对标）
         int   lookaheadMs  = 0;                                   // 0 / 1 / 3
         std::array<BandParams, Param::kNumBands> bands;
     };
@@ -107,6 +108,7 @@ private:
     std::array<std::array<std::vector<float>, 2>, Param::kNumBands> scStore_;
     std::array<std::vector<float>, 2> outStore_;
     std::array<std::array<std::vector<float>, 2>, Param::kNumBands> gStore_;   // 2026-10-14：L/R 独立增益
+    std::array<std::vector<float>, 2> dryStore_;    // Phase：全局 Mix 的干声参考
 
     // Lookahead：每段每通道环形延迟（容量按 3ms@maxSR 预分配，标量切换零分配）
     std::array<std::array<std::vector<float>, 2>, Param::kNumBands> laBuf_;
@@ -131,6 +133,7 @@ private:
 
     float inGain_  = 1.0f;
     float outGain_ = 1.0f;
+    float globalMixLin_ = 1.0f;   // Phase：全局 Mix 线性比（1.0 = 纯处理声）
 
     void computeGateTargets (const ScalarParams& p) noexcept;
 

@@ -2382,6 +2382,10 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         }
         if (outputPanel_ != nullptr)
         {
+            // 打开前先从参数同步当前值，避免显示过期副本
+            outputPanel_->setOutputGainForTest (getParamPhysical (Param::ID::outputGain));
+            outputPanel_->setGlobalMixForTest (getParamPhysical (Param::ID::globalMix));
+            outputPanel_->setGlobalBypassForTest (isAllBypassed());
             outputPanel_->clickButton();
             applyOutputSettings();
         }
@@ -2757,6 +2761,9 @@ void DisplayView::applyOutputSettings()
     // Output Gain 直接写全局参数（现有 outputGain，±36 dB）
     setParamPhysical (Param::ID::outputGain, outputPanel_->outputGainDb());
 
+    // Phase：全局 Mix 0-200% 已接线 DSP（MultibandDSP::globalMixLin_）
+    setParamPhysical (Param::ID::globalMix, outputPanel_->globalMixPct());
+
     // Global Bypass：与既有全局 BYPASS 胶囊同一语义（四段 Mix=0 宏）
     const bool wantBypass = outputPanel_->globalBypass();
     if (wantBypass != isAllBypassed())
@@ -2768,11 +2775,6 @@ void DisplayView::applyOutputSettings()
             onBandBypassChanged (i, ! allBypassed);
         }
     }
-
-    // TODO(Phase D-4)：全局 Mix 0-200% 需要新增 DSP 参数。
-    // 当前每段 Mix 是 0-100% 的平行压缩比，语义不同（Pro-MB 的全局 Mix 是
-    // 整体干湿比，200% 可做并行压缩提响）。这里先把 UI 值存着，不动 DSP，
-    // 避免引入未定义行为。待 DSP 侧新增 globalMix 参数后再接。
 }
 
 

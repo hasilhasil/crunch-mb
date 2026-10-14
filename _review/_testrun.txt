@@ -1,7 +1,7 @@
 ﻿Crunch MB — Phase 3 DSP 离线断言（含 Phase 2 全量 + DAW 链路回归）
 
 --- T0 参数系统 ---
-[PASS] T0.1 å¸å±åæ°æ° = 83ï¼2026-10-14ï¼oversampling + æ¯æ®µä¾§é¾æ»¤æ³¢Ã3 + StereoLink + Dynamicsï¼
+[PASS] T0.1 å¸å±åæ°æ° = 84ï¼2026-10-14ï¼oversampling + ä¾§é¾æ»¤æ³¢Ã3 + StereoLink + Dynamics + globalMixï¼
 [PASS] T0.2 å³é® ID å¯å¯»åï¼band{i}Range / band{i}Delta / phaseModeï¼
 [PASS] T0.3 clamp åæ³å¼ä¸å
 [PASS] T0.4 clamp è¿è§å¼æ¶æä¸º â¥1 å«åº¦é¾
@@ -9,9 +9,9 @@
 [PASS] T0.6 ç¶æåºååå¾è¿æ æï¼band2Makeup=3.2dB / xover1=333Hzï¼
 
 --- T0b 参数清单盘点 ---
-[PASS] T0b.1 åæ°æ»æ° = 83ï¼2026-10-14ï¼
+[PASS] T0b.1 åæ°æ»æ° = 84ï¼2026-10-14ï¼
 [PASS] T0b.2 æ¯æ®µ Makeup/Solo/Mute/Delta/Ext åæ°é½å¨ï¼å± 20 ä¸ªï¼
----- 83 参数清单（Studio One 参数下拉显示名 → ID）----
+---- 84 参数清单（Studio One 参数下拉显示名 → ID）----
   enabled  |  Enabled
   phaseMode  |  Phase Mode
   linearQuality  |  Linear Quality
@@ -23,6 +23,7 @@
   outputGain  |  Output Gain
   lookahead  |  Lookahead
   oversampling  |  Oversampling
+  globalMix  |  Mix
   band0Threshold  |  Low Threshold
   band0Range  |  Low Range
   band0Ratio  |  Low Ratio
@@ -209,7 +210,7 @@
 [PASS] T13.2 EXT æ£æµï¼åä¾§é¾é©±å¨åç¼©ï¼æ»çº¿é¾è·¯çæï¼
 [PASS] T13.3 æ ä¾§é¾æ¶ fallback INTï¼ä¸è¯¯åç¼©ï¼
 
---- T15 参数灵敏度全量审计（83 参数）---
+--- T15 参数灵敏度全量审计（84 参数）---
   基线输出 RMS = 0.290279
   [PASS] band0Threshold  Δ=-0.065dB  (Low Threshold −20→−45dB（压得更狠）)
   [PASS] band0Range  Δ=2.405dB  (Low Range −6→−29dB（恢复 GR 钳制）)
@@ -274,7 +275,7 @@
 [PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
 [PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
 [PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
-  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-104.966dB
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3472dB  pre@100Hz=-108.976dB
 [PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
 [PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
 [PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
@@ -306,7 +307,7 @@
 [PASS] T20.0 å¤çå¨å®ä¾å¯è®¿é®
   1kHz 区域非底色像素数 = 1709
 [PASS] T20.1 åå±é¢è°±å·²ç»å¶ï¼1kHz åºåæåå®¹ï¼
-  accent 系像素数 = 6303
+  accent 系像素数 = 6304
 [PASS] T20.2 ä»¿ EQ æ²çº¿å·²ç»å¶ï¼accent åç´ å­å¨ï¼
   HM 区间 Range 层像素数 = 45654
 [PASS] T20.3 Range éåå±å·²ç»å¶ï¼HM åºé´æå¡«åï¼
@@ -325,7 +326,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=84.7539MB  anim#1=168.723MB (+83.9688)  anim#2=168.457MB (+83.7031 / +-0.265625 for the 2nd round)  editorsx200=168.457MB (+83.7031)  theme/resizex50=168.859MB (+84.1055)  resizeStormx400=168.887MB (+84.1328)
+  RSS: start=84.6641MB  anim#1=167.938MB (+83.2734)  anim#2=167.848MB (+83.1836 / +-0.0898438 for the 2nd round)  editorsx200=167.848MB (+83.1836)  theme/resizex50=167.031MB (+82.3672)  resizeStormx400=168.551MB (+83.8867)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -548,12 +549,12 @@
 [PASS] T39.4 Tilt 4.5dB/oct å¨ 4kHz å¤ +9dB
   Freeze: held=-6.65113 静音后=-6.65113
 [PASS] T39.5 Freeze å¼ â éé³ä¸æï¼å³°å¼ä¿æï¼
-  Freeze 关 → -23.9444
+  Freeze 关 → -24.0764
 [PASS] T39.6 Freeze å³ â æ¢å¤ä¸è½
 [PASS] T39.7 Low 1024 â 513 ä»
 [PASS] T39.8 Maximum 8192 â 4097 ä»
 [PASS] T39.9 8192 æ¡£ä»è½åºå¸§
-  Slow+8192: loud=-6.71625 阶跃后=-15.5006
+  Slow+8192: loud=-6.71625 阶跃后=-15.6849
 [PASS] T39.10 Slow + Maximum 8192ï¼åºå¸§æ­£å¸¸ä¸ä¸è½åæ¢
   Freeze+Slow: held=-6.65113 静音后=-6.65113
 [PASS] T39.11 Freeze + Slowï¼Freeze ä¼åï¼ä¸æï¼
@@ -561,7 +562,7 @@
 [PASS] T39.12 Freeze + Tiltï¼å»ç»åç»ä¿ç tilt åç§»ï¼+9dB @4kHzï¼
 [PASS] T39.12b å»ç»åå³ tilt ä¸æä½å·²ä¿æåç»
 [PASS] T39.14 å¼æå¸§å°è¾¾ UI å±ï¼é¢è°±å¯è§æ§åç½®ï¼
-  渲染差分: 关Pre=22352px  关Post=18511px  全关=23723px
+  渲染差分: 关Pre=22921px  关Post=18932px  全关=24317px
 [PASS] T39.15 å³ Pre â ç»é¢ææ¾ååï¼Pre å±è§è§çæï¼
 [PASS] T39.16 å³ Post â ç»é¢ææ¾ååï¼Post å±è§è§çæï¼
 [PASS] T39.17 Pre/Post å¨å³ â ååéå¤§äºåå³ä»»ä¸å±ï¼ä¸¤å±å å çæï¼
@@ -704,5 +705,17 @@
 [PASS] T48.6 åç¹ MIDI æé® â éåºå­¦ä¹ æ¨¡å¼
 [PASS] T48.7 éåºåæ§ä»¶è¡ä¸ºæ¢å¤ï¼æ å¼å¸¸ï¼
 
+--- T49 Phase 全局 Mix ---
+[PASS] T49.0 å¤çå¨å®ä¾å¯è®¿é®
+  Mix=0%   -> RMS 0.34713
+  Mix=50%  -> RMS 0.091662
+  Mix=100% -> RMS 0.180503
+  Mix=200% -> RMS 0.183324
+[PASS] T49.1 Mix=0% â è¾åº=å¹²å£°ï¼RMSâ0.354ï¼
+[PASS] T49.2 Mix=100% â å¤çå£°è¢«åç¼©ï¼å°äºå¹²å£°ï¼
+  全程 Mix 扫描: allFinite=1
+[PASS] T49.3 Mix 0â200% å¨ç¨è¾åºæéï¼æ  NaN/Inf/éé»ï¼
+[PASS] T49.4 Mix=200% â å¹¶è¡åç¼©æåï¼å¤§äº 100%ï¼
+
 ====================================
-PASS 365 / FAIL 0
+PASS 370 / FAIL 0

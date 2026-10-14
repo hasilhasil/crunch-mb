@@ -57,6 +57,9 @@ public:
     // ---------- 编辑器开关（懒启动频谱分析，Phase 4.1） ----------
     void setEditorActive (bool active) noexcept;
 
+    /** 测试钩子：按物理值直接设参数（不走 UI）。 */
+    void setParamPhysicalForTest (const juce::String& id, float physical);
+
     // ---------- 参数状态（62 参数，全 UI/API 经此访问） ----------
     juce::AudioProcessorValueTreeState apvts;
 

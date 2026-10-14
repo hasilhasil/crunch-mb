@@ -56,6 +56,7 @@ namespace Param
         inline constexpr const char* outputGain    = "outputGain";
         inline constexpr const char* lookahead     = "lookahead";
         inline constexpr const char* oversampling  = "oversampling";   // 2026-10-14
+        inline constexpr const char* globalMix     = "globalMix";      // Phase：全局干湿比 0-200%
     }
 
     // ---------- 频段参数 ID（"band" + i + PascalCase） ----------

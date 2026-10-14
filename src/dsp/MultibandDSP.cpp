@@ -31,6 +31,8 @@ void MultibandDSP::prepare (double sampleRate, int maxBlockSize, int numChannels
     }
     for (int ch = 0; ch < 2; ++ch)
         outStore_[ch].assign ((size_t) procBlock_, 0.0f);
+    for (int ch = 0; ch < 2; ++ch)
+        dryStore_[ch].assign ((size_t) procBlock_, 0.0f);
 
     // Lookahead 容量：3ms @ (192kHz × 4) = 2304 样本（留余量），标量切换零分配
     laMax_ = (int) std::ceil (0.003 * procRate_) + 16;
@@ -187,6 +189,8 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
 {
     inGain_  = juce::Decibels::decibelsToGain (p.inputGainDb);
     outGain_ = juce::Decibels::decibelsToGain (p.outputGainDb);
+    // Phase：全局 Mix 0-200% → 线性比（100% = 1.0）
+    globalMixLin_ = juce::jlimit (0.0f, 2.0f, p.globalMixPct * 0.01f);
 
     // lookahead 以**墙钟时间**为准：过采样下换算成 procRate_ 下的样本数
     laSamples_ = (int) std::lround (p.lookaheadMs * 0.001 * procRate_);
@@ -309,6 +313,11 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         }
 
         // 4) 每段：检测（INT/EXT）→ 侧链滤波 → 增益 → lookahead 延迟音频 → g·makeup
+        // Phase：全局 Mix 需要干声参考——在输入增益之后、分频之前存一份。
+        for (int ch = 0; ch < chans; ++ch)
+            juce::FloatVectorOperations::copy (dryStore_[(size_t) ch].data(),
+                                               chPtr[ch], n);
+
         for (int b = 0; b < Param::kNumBands; ++b)
         {
             const float* l = bandStore_[b][0].data();
@@ -415,6 +424,20 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
                         acc += signal * gArr[b] + deltaSig * dArr[b];
                     }
                     out[i] = acc;
+                }
+
+                // ---- Phase：全局 Mix（Pro-MB 对标）----
+                // 100% = 纯处理声；<100% = 与干声混合（减弱效果）；
+                // >100% = 并行压缩提响（干声按 (mix−1) 叠加）。
+                // 干声参考在输入增益后、分频前已存（dryStore_），
+                // 保证 Mix=0 时输出与输入完全一致（含输入增益）。
+                if (globalMixLin_ != 1.0f)
+                {
+                    const float wet = out[i];
+                    const float dryRef = dryStore_[(size_t) ch][i];
+                    out[i] = globalMixLin_ <= 1.0f
+                           ? (wet * globalMixLin_ + dryRef * (1.0f - globalMixLin_))
+                           : (wet + dryRef * (globalMixLin_ - 1.0f));
                 }
             }
         }

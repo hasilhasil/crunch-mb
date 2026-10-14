@@ -150,6 +150,17 @@ void CrunchMBAudioProcessor::setEditorActive (bool active) noexcept
     spectrumEngine_.setUIActive (active);
 }
 
+void CrunchMBAudioProcessor::setParamPhysicalForTest (const juce::String& id, float physical)
+{
+    if (auto* p = apvts.getParameter (id))
+    {
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
+        else
+            p->setValueNotifyingHost (physical);
+    }
+}
+
 void CrunchMBAudioProcessor::handleAsyncUpdate()
 {
     applyStructure();      // 消息线程：含 Linear FIR 设计
@@ -166,6 +177,7 @@ void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const 
 {
     sp.inputGainDb  = apvts.getRawParameterValue (Param::ID::inputGain)->load();
     sp.outputGainDb = apvts.getRawParameterValue (Param::ID::outputGain)->load();
+    sp.globalMixPct = apvts.getRawParameterValue (Param::ID::globalMix)->load();
     sp.lookaheadMs  = (int) juce::roundToInt (Param::lookaheadIndexToMs (
         choiceIndex (apvts.getRawParameterValue (Param::ID::lookahead))));
 
