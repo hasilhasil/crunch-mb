@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第十六轮 · API facade 补齐）
+### 进度总览（更新于 2026-10-14，第十七轮 · facade 解耦 UI）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -461,6 +461,7 @@ namespace Anim {
 | **自绘 TextSelect 下拉**（`c4e03d3`） | 顶栏 Display Range 档位选择器原来是 `juce::PopupMenu`——**操作系统外观**（系统色、系统字体、系统圆角），是整个界面里唯一破坏主题一致性的地方。现在换成自绘：同色圆角面板、当前项打勾 + accent 底、hover 高亮、与其他弹层同一套三层投影。点击项即应用并收起；点外面收起且不改已选；打开时再点按钮收起 | **Pro-MB**：drop-down 是自绘的，与插件同色 |
 | **E-4 1px 细线像素对齐**（`18f58f5`） | 所有 1px 分隔线/网格线/刻度线原来直接 `fillRect` 画在任意小数位置，抗鸾齿把覆盖摊到两个边缘，实际亮度只有设定值约一半——细线看起来发灰发虚。现在细线中心对齐到 `floor(y)+0.5`（两边缘对称分摊覆盖），并把 alpha 提亮 2×（钳到 1）补偿中间只剩 ~50% 覆盖。**观感：网格和分隔线从"灰雾"变成"清准细线"** | — （细节抛光，对齐 Pro-MB 的清准分隔线观感） |
 | **IMBBackend facade 补齐**（`1d852e6`） | `TECH_SPEC.md` §8 写着"Crunch MB 原生实现 `IMBBackend` facade，从第一个 commit 起 UI 与外部调用方统一经 facade 访问后端"，但代码里一个字节都没有——§10.4 的 9 条 API 验收项也全部空白。本轮按 `crunch-api-interface.md` v1.0 §2/§3 完整落地：`IPluginBackend` 12 个通用方法（参数面/状态面/实时数据面/分析面/插件面）+ `IMBBackend` 5 个多段扩展。**操作上的变化：现在可以用一套统一 API 读写全部 84 个参数、拉取 metering/历史、拿每段传输曲线与分频响应、做统一控制偏移与交叉点钳制、序列化往返**。为支撑它新增了 `CrossoverBank::getMagnitudeDb`（三相位模式各自的响应算法）、`MultibandDSP` 的三个访问器、以及音频线程供电平历史环形缓冲 | — （规范要求，非 Pro-MB 对标项） |
+| **UI 全面改走 facade**（`fafa3da`） | `PLAN.md` Phase 6 有两半：① 实现 facade（上轮）② **UI 改走 facade，不直触 APVTS/DSP 内部**（本轮）。此前 DisplayView / BandPopover / LinkedDrawer **各持一份**自己的 id→参数缓存，绕过 facade 的钳制与值型拒绝——正是 API 规范 §6.2 列出的 D 类耦合。现在 `src/ui` 内 APVTS 引用数为 **0**，26 处读写全走 `proc_.getBackend()`。为不拖慢 UI 热路径，facade 加了 `getParamFast()`（一次性建哈希表，O(1) 查表；否则 `apvts.getParameter` 是 84 个参数的线性字符串比较，60fps 下每秒上千次扫描）。**操作上无可感知变化——这是纯架构解耦，用户看到的界面行为完全一致**（425 条既有断言零回归即证明） | — （PLAN Phase 6 要求，非 Pro-MB 对标项） |
 
 ### Phase D 待做
 
@@ -713,10 +714,11 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **425**（+138） |
+| `CrunchMBTests` 断言数 | 287 | **431**（+144） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
+| UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
 | 重构引入的真 bug | — | **6 个，全部修复**（R1-R6，均有测试锁定） |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
@@ -763,5 +765,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
+
 
 

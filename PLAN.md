@@ -175,10 +175,11 @@
 - 段 Tab、选中段 attachment 重建、5 个 ⊞ 握柄（线性恒定偏移 + 钳制）、SIDECHAIN EXT 按钮、全局选择器、Bypass 反相显示、三主题 + 统一 accent 色（**无 S/M/BYP/Δ 镜像按钮**）
 - **Gate P5**：与视觉稿一致 + 统一控制断言（4 段 delta 相同、钳制独立）。
 
-### Phase 6 — API facade（前后端分离）
-- `IPluginBackend.h` / `IMBBackend` / `MBBackend` 实现（对照 crunch-api-interface.md v1.0.3）
-- UI 改走 facade（不直触 APVTS/DSP 内部——EQ 审计 D 组问题不得复现）
-- **Gate P6**：TECH_SPEC §10.4 API 验收 9 项全过。
+### Phase 6 — API facade（前后端分离）✅ 完成
+
+- `IPluginBackend.h` / `IMBBackend` / `MBBackend` 实现 ✅（`1d852e6`，对照 crunch-api-interface.md v1.0.4）
+- UI 改走 facade（不直触 APVTS/DSP 内部——EQ 审计 D 组问题不得复现） ✅（`fafa3da`）
+- **Gate P6**：TECH_SPEC §10.4 API 验收 9 项全过 ✅（T52.1-T52.47）
 
 ### Phase 7 — 验收 + 交付
 - TECH_SPEC §10 完整四维验收（功能/音质/性能/API）
