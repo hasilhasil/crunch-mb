@@ -160,6 +160,8 @@ public:
     void applyPopoverKnobForTest (int k, double v);
     juce::Rectangle<float> popSliderRectForTest (int k) const;
     juce::Rectangle<float> popExpertRectForTest() const;
+    /** Phase C-5：EXPERT 展开内容矩形（T40 用）。 */
+    juce::Rectangle<float> popExpertContentRectForTest() const;
     bool isPopoverExpertOpenForTest() const;
     bool  hasSpectrumFrameForTest() const
     {

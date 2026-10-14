@@ -83,6 +83,12 @@ juce::Rectangle<float> DisplayView::popExpertRectForTest() const
                                    : juce::Rectangle<float>();
 }
 
+juce::Rectangle<float> DisplayView::popExpertContentRectForTest() const
+{
+    return bandPopover_ != nullptr ? bandPopover_->popExpertContentRectForTest()
+                                   : juce::Rectangle<float>();
+}
+
 bool DisplayView::isPopoverExpertOpenForTest() const
 {
     return bandPopover_ != nullptr && bandPopover_->isPopoverExpertOpenForTest();
@@ -1856,6 +1862,16 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             bandPopover_->toggleExpert();
             repaint();
             return;
+        }
+        // Phase C-5：EXPERT 展开内容的两行可点（Detector 翻转 / Lookahead 循环）
+        {
+            const auto row = bandPopover_->hitTestExpertRow (p);
+            if (row != BandPopover::ExpertRow::None)
+            {
+                bandPopover_->clickExpertRow (row);
+                repaint();
+                return;
+            }
         }
     }
 

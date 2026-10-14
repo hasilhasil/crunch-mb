@@ -270,7 +270,7 @@
 [PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
 [PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
 [PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
-  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-105.349dB
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-104.665dB
 [PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
 [PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
 [PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
@@ -321,7 +321,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=83.6211MB  anim#1=166.59MB (+82.9688)  anim#2=167.047MB (+83.4258 / +0.457031 for the 2nd round)  editorsx200=167.047MB (+83.4258)  theme/resizex50=167.047MB (+83.4258)  resizeStormx400=167.188MB (+83.5664)
+  RSS: start=83.8945MB  anim#1=165.855MB (+81.9609)  anim#2=166.027MB (+82.1328 / +0.171875 for the 2nd round)  editorsx200=166.027MB (+82.1328)  theme/resizex50=165.855MB (+81.9609)  resizeStormx400=166.352MB (+82.457)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -535,7 +535,7 @@
   Speed[1] tau=20ms: loud=-6.67806dB 阶跃后=-23.5717dB
 [PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
 [PASS] T39.1b é¶è·åç¡®å®ä¸è½
-  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-15.9424dB
+  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-16.1194dB
 [PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
 [PASS] T39.1b é¶è·åç¡®å®ä¸è½
 [PASS] T39.2 Speed ä¸æ¡£ä¸è½éåº¦éå¢ï¼fast < medium < slowï¼
@@ -549,7 +549,7 @@
 [PASS] T39.7 Low 1024 â 513 ä»
 [PASS] T39.8 Maximum 8192 â 4097 ä»
 [PASS] T39.9 8192 æ¡£ä»è½åºå¸§
-  Slow+8192: loud=-6.71625 阶跃后=-15.549
+  Slow+8192: loud=-6.71625 阶跃后=-15.5006
 [PASS] T39.10 Slow + Maximum 8192ï¼åºå¸§æ­£å¸¸ä¸ä¸è½åæ¢
   Freeze+Slow: held=-6.65113 静音后=-6.65113
 [PASS] T39.11 Freeze + Slowï¼Freeze ä¼åï¼ä¸æï¼
@@ -557,7 +557,7 @@
 [PASS] T39.12 Freeze + Tiltï¼å»ç»åç»ä¿ç tilt åç§»ï¼+9dB @4kHzï¼
 [PASS] T39.12b å»ç»åå³ tilt ä¸æä½å·²ä¿æåç»
 [PASS] T39.14 å¼æå¸§å°è¾¾ UI å±ï¼é¢è°±å¯è§æ§åç½®ï¼
-  渲染差分: 关Pre=22558px  关Post=18657px  全关=23934px
+  渲染差分: 关Pre=22139px  关Post=18350px  全关=23502px
 [PASS] T39.15 å³ Pre â ç»é¢ææ¾ååï¼Pre å±è§è§çæï¼
 [PASS] T39.16 å³ Post â ç»é¢ææ¾ååï¼Post å±è§è§çæï¼
 [PASS] T39.17 Pre/Post å¨å³ â ååéå¤§äºåå³ä»»ä¸å±ï¼ä¸¤å±å å çæï¼
@@ -585,8 +585,15 @@
 [PASS] T40.10 EXT ç¹å»ç¿»è½¬ï¼INTâSIDECHAINï¼
 [PASS] T40.11 EXPERT ç¹å»å±å¼
 [PASS] T40.12 EXPERT åç¹æ¶èµ·
+[PASS] T40.14 EXPERT ä¸ºå³ç¼ç«ææ ç­¾ï¼é« > 2Ãå®½ï¼
+[PASS] T40.15 EXPERT æ ç­¾è´´å¨é¢æ¿å³ç¼
+[PASS] T40.16 EXPERT å±å¼ï¼ä¸ºæµè¡ç¹å»ï¼
+  EXPERT Detector: 0 -> 1
+[PASS] T40.17 EXPERT Detector è¡å¯ç¹ï¼ç¿»è½¬ Peak/RMSï¼
+  EXPERT Lookahead: 0 -> 0.5
+[PASS] T40.18 EXPERT Lookahead è¡å¯ç¹ï¼Offâ1msâ3ms å¾ªç¯ï¼
   Makeup（滑杆拖拽后）: 0 -> 2.2
 [PASS] T40.13 mouseUp åæ»æææ½æå¤ä½ï¼åç»­ææ½ä¸åè¢«åï¼
 
 ====================================
-PASS 290 / FAIL 0
+PASS 295 / FAIL 0

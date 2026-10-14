@@ -4409,6 +4409,53 @@ static void testPopoverControls()
         check (! dv.isPopoverExpertOpenForTest(), "T40.12 EXPERT 再点收起", "");
     }
 
+    // ⑥b Phase C-5：EXPERT 右缘竖排 + 展开内容两行可点
+    //     原来这两行只是纯文本，点了没反应；现在 Detector 翻转 Peak/RMS，
+    //     Lookahead 循环 Off→1ms→3ms。
+    {
+        const auto er = dv.popExpertRectForTest();
+        // 竖排标签：高度应远大于宽度（这是"竖排"的几何判据）
+        check (er.getHeight() > er.getWidth() * 2.0f,
+               "T40.14 EXPERT 为右缘竖排标签（高 > 2×宽）",
+               juce::String (er.getWidth()) + "x" + juce::String (er.getHeight()));
+        // 标签应贴在面板右缘
+        const auto pr = dv.popoverRectForTest();
+        check (er.getRight() > pr.getRight() - pr.getWidth() * 0.08f,
+               "T40.15 EXPERT 标签贴在面板右缘", "");
+
+        dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
+        dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
+        check (dv.isPopoverExpertOpenForTest(), "T40.16 EXPERT 展开（为测行点击）", "");
+
+        const auto ec = dv.popExpertContentRectForTest();
+        const float rowDetY  = ec.getY() + ec.getHeight() * 0.25f;   // 上半 = Detector
+        const float rowLkaY  = ec.getY() + ec.getHeight() * 0.75f;   // 下半 = Lookahead
+
+        // Detector 行：翻转 Peak/RMS
+        const float detBefore = normOf ("band2Detector");
+        dv.mouseDownForTest (ec.getCentreX(), rowDetY);
+        dv.mouseUpForTest (ec.getCentreX(), rowDetY);
+        const float detAfter = normOf ("band2Detector");
+        std::cout << "  EXPERT Detector: " << detBefore << " -> " << detAfter << std::endl;
+        check (std::abs (detAfter - detBefore) > 0.5f,
+               "T40.17 EXPERT Detector 行可点（翻转 Peak/RMS）",
+               juce::String (detBefore) + " -> " + juce::String (detAfter));
+
+        // Lookahead 行：循环 Off→1ms→3ms（全局参数）
+        const float lkaBefore = normOf ("lookahead");
+        dv.mouseDownForTest (ec.getCentreX(), rowLkaY);
+        dv.mouseUpForTest (ec.getCentreX(), rowLkaY);
+        const float lkaAfter = normOf ("lookahead");
+        std::cout << "  EXPERT Lookahead: " << lkaBefore << " -> " << lkaAfter << std::endl;
+        check (std::abs (lkaAfter - lkaBefore) > 0.01f,
+               "T40.18 EXPERT Lookahead 行可点（Off→1ms→3ms 循环）",
+               juce::String (lkaBefore) + " -> " + juce::String (lkaAfter));
+
+        // 收起，避免影响后续
+        dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
+        dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
+    }
+
     // ⑦ mouseUp 复位滑杆拖拽态（回归：曾因未复位吞掉后续所有拖拽）
     {
         const auto sr = dv.popSliderRectForTest (0);

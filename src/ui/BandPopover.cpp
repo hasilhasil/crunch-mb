@@ -109,10 +109,61 @@ juce::Rectangle<float> BandPopover::popSliderRect (int k) const
 
 juce::Rectangle<float> BandPopover::expertRect() const
 {
+    // Phase C-5：EXPERT 从底部横排改成**右缘竖排标签**（Pro-MB 的标志性布局）。
+    // 原来占面板左下角一块，现在占右缘一条窄带，点击展开的内容也改成
+    // 从右缘向左展开，不占用面板底部原本属于旋钮/滑杆的空间。
     const auto r = popoverRect();
-    return juce::Rectangle<float> (r.getX() + r.getWidth() * (10.0f / 472.0f),
-                                   r.getBottom() - r.getHeight() * (18.0f / 200.0f),
-                                   r.getWidth() * (140.0f / 472.0f), 12.0f);
+    const float tabW = r.getWidth() * (22.0f / 472.0f);
+    return juce::Rectangle<float> (r.getRight() - tabW, r.getY() + r.getHeight() * (34.0f / 200.0f),
+                                   tabW, r.getHeight() * (100.0f / 200.0f));
+}
+
+juce::Rectangle<float> BandPopover::expertContentRect() const
+{
+    const auto r = popoverRect();
+    const auto er = expertRect();
+    const float ew = r.getWidth() * (200.0f / 472.0f);
+    const float eh = r.getHeight() * (60.0f / 200.0f);
+    return juce::Rectangle<float> (er.getX() - ew - r.getWidth() * (6.0f / 472.0f),
+                                   er.getY(), ew, eh);
+}
+
+BandPopover::ExpertRow BandPopover::hitTestExpertRow (juce::Point<float> p) const
+{
+    if (! open_ || ! expertOpen_)
+        return ExpertRow::None;
+    const auto box = expertContentRect();
+    if (! box.contains (p))
+        return ExpertRow::None;
+    // 两块等分：上 = Detector，下 = Lookahead
+    return (p.y < box.getCentreY()) ? ExpertRow::Detector : ExpertRow::Lookahead;
+}
+
+void BandPopover::clickExpertRow (ExpertRow row)
+{
+    const int b = (band_ >= 0) ? band_ : 0;
+    switch (row)
+    {
+        case ExpertRow::Detector:
+            // 翻转 Peak/RMS（与滑杆 k=3 同语义）
+            applySlider (3, sliders_[3] > 0.5 ? 0.0 : 1.0);
+            break;
+        case ExpertRow::Lookahead:
+            // Off → 1ms → 3ms 循环（lookahead 是全局参数，k=4 只显示不在此写；
+            // 这里显式循环全局 lookahead 参数）
+            {
+                const int cur = (int) juce::roundToInt (
+                    getParamNorm ("lookahead") * 2.0f);
+                const int next = (cur + 1) % 3;
+                setParamNorm ("lookahead", next * 0.5f);
+                sliders_[4] = next;
+            }
+            break;
+        case ExpertRow::None:
+            break;
+    }
+    (void) b;
+    repaint();
 }
 
 // ---------------- 开合 / 动画 ----------------
@@ -434,21 +485,53 @@ void BandPopover::paint (juce::Graphics& g)
         g.drawText (txt, sr, juce::Justification::centred);
     }
 
-    // ---- EXPERT 折叠区 ----
+    // ---- EXPERT 右缘竖排标签（Phase C-5，Pro-MB 对标）----
     const auto er = expertRect();
-    g.setColour (pal_.dim.withMultipliedAlpha (a));
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.0f));
-    g.drawText (juce::String ("EXPERT  ") + (expertOpen_ ? "\xE2\x96\xBC" : "\xE2\x96\xB6"),
-                er, juce::Justification::centredLeft);
+    {
+        // 竖排底带：贴右缘的一条窄带，比面板底色略亮以区分
+        g.setColour (pal_.track.withAlpha (0.75f * a));
+        g.fillRoundedRectangle (er, er.getWidth() * 0.3f);
+        g.setColour (expertOpen_ ? pal_.accent.withAlpha (0.9f * a)
+                                 : pal_.dim.withMultipliedAlpha (a));
+        g.setFont (MBTheme::font (expertOpen_ ? MBTheme::semiBold() : MBTheme::regular(), 9.0f));
 
+        // 竖排文字：逐字符往下排（JUCE 无竖排 drawText，手工排）
+        const juce::String txt = expertOpen_ ? "EXPERT \xE2\x96\xBC" : "EXPERT \xE2\x96\xB6";
+        const float lineH = 10.0f;
+        const float startY = er.getCentreY() - txt.length() * lineH * 0.5f + lineH * 0.5f;
+        for (int i = 0; i < txt.length(); ++i)
+        {
+            const juce::String ch = txt.substring (i, i + 1);
+            if (ch != " ")
+                g.drawText (ch, juce::Rectangle<float> (er.getX(), startY + i * lineH,
+                                                        er.getWidth(), lineH),
+                            juce::Justification::centred);
+        }
+    }
+
+    // ---- EXPERT 展开内容：从右缘向左列出的低频操作项 ----
     if (expertOpen_)
     {
+        const auto box = expertContentRect();
+        g.setColour (pal_.surface.withAlpha (0.96f * a));
+        g.fillRoundedRectangle (box, r.getWidth() * (6.0f / 472.0f));
+        g.setColour (pal_.accent.withAlpha (0.6f * a));
+        g.drawRoundedRectangle (box, r.getWidth() * (6.0f / 472.0f), 1.0f);
+
         g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
         g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
-        g.drawText ("DETECTOR " + juce::String (sliders_[3] > 0.5 ? "RMS" : "PEAK")
-                    + "    LOOKAHEAD " + juce::String (sliders_[4] == 0 ? "OFF"
-                                                                    : sliders_[4] == 1 ? "1 ms" : "3 ms"),
-                    er.withY (er.getBottom() + r.getHeight() * (2.0f / 200.0f)),
+        g.drawText ("DETECTOR  " + juce::String (sliders_[3] > 0.5 ? "RMS" : "PEAK"),
+                    box.withTrimmedTop (box.getHeight() * 0.12f).withHeight (box.getHeight() * 0.26f),
+                    juce::Justification::centredLeft);
+        g.drawText ("LOOKAHEAD  " + juce::String (sliders_[4] == 0 ? "OFF"
+                                                                 : sliders_[4] == 1 ? "1 ms" : "3 ms"),
+                    box.withTrimmedTop (box.getHeight() * 0.42f).withHeight (box.getHeight() * 0.26f),
+                    juce::Justification::centredLeft);
+        // 提示这两项也是可点的
+        g.setColour (pal_.accent.withAlpha (0.7f * a));
+        g.setFont (MBTheme::font (MBTheme::regular(), 8.0f));
+        g.drawText ("(click to toggle)",
+                    box.withTrimmedTop (box.getHeight() * 0.72f).withHeight (box.getHeight() * 0.22f),
                     juce::Justification::centredLeft);
     }
 }

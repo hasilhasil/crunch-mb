@@ -61,8 +61,17 @@ public:
     bool hitTestPanel  (juce::Point<float> p) const;
     bool hitTestSlider (juce::Point<float> p, int& kOut) const;
     juce::Rectangle<float> expertRect() const;
+    /** Phase C-5：EXPERT 展开内容的矩形（右缘标签左侧）。 */
+    juce::Rectangle<float> expertContentRect() const;
     bool isExpertOpen() const noexcept { return expertOpen_; }
     void toggleExpert() { expertOpen_ = ! expertOpen_; repaint(); }
+
+    /** Phase C-5：EXPERT 展开内容的两行可点区域。 */
+    enum class ExpertRow { None = 0, Detector, Lookahead };
+    /** 返回命中的行；None 表示没命中。 */
+    ExpertRow hitTestExpertRow (juce::Point<float> p) const;
+    /** 点击某行：Detector 翻转 Peak/RMS，Lookahead 循环 Off→1ms→3ms。 */
+    void clickExpertRow (ExpertRow row);
 
     // ---- 交互（由 DisplayView 的鼠标处理转发）----
     void beginSliderDrag (int k, float mouseX);
@@ -92,6 +101,8 @@ public:
     juce::Rectangle<float> popSliderRectForTest (int k) const { return popSliderRect (k); }
     /** 测试钩子：EXPERT 区域（T40 用）。 */
     juce::Rectangle<float> popExpertRectForTest() const { return expertRect(); }
+    /** Phase C-5 测试钩子：EXPERT 展开内容矩形。 */
+    juce::Rectangle<float> popExpertContentRectForTest() const { return expertContentRect(); }
     /** 测试钩子：EXPERT 是否展开（T40 用）。 */
     bool isPopoverExpertOpenForTest() const { return expertOpen_; }
 
