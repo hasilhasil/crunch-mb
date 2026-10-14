@@ -4216,6 +4216,67 @@ static void testAnalyzerOptions()
         }
         mb->setEditorActive (false);
     }
+
+    // ---- T39.18：频段圆形电平表（Phase C-3，Pro-MB Threshold 环对标）----
+    // ⚠️ 这条必须**喂音频**才有意义：环由 DSP 的检测电平驱动，
+    //    离线不喂音频时电平恒为 −100dB，环永远不画——这正是之前
+    //    频谱 z-order 回归没被测试抓住的同一个盲区。
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        mb->setEditorActive (true);
+
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+
+        const int nn = 512;
+        juce::AudioBuffer<float> buf (4, nn);
+        juce::MidiBuffer midi;
+
+        // 静默基线：此时四段电平都应 <= −60dB，环不画
+        for (int i = 0; i < nn; ++i)
+        { buf.setSample (0, i, 0.0f); buf.setSample (1, i, 0.0f); }
+        for (int t = 0; t < 20; ++t) { proc->processBlock (buf, midi); dv.tickForTest(); }
+        const float silentLevel = dv.bandLevelDbForTest (0);
+        check (silentLevel <= -60.0f, "T39.18a 静默时段电平低于 −60dB（环不画）",
+               juce::String (silentLevel));
+
+        // 喂 1kHz 大幅值信号：L/H 段应被驱动起来（1kHz 落在 HM/H 边界附近，
+        // 但默认 xover2=1k 所以主要驱动 LM/HM/H）
+        float peakSeen = -100.0f;
+        for (int t = 0; t < 120; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                const float v = 0.7f * (float) std::sin (6.283185 * 1000.0 * kk / 48000.0);
+                buf.setSample (0, i, v); buf.setSample (1, i, v);
+            }
+            proc->processBlock (buf, midi);
+            dv.tickForTest();
+            for (int b = 0; b < 4; ++b)
+                peakSeen = juce::jmax (peakSeen, dv.bandLevelDbForTest (b));
+        }
+        std::cout << "  有声后最高段电平 = " << peakSeen << " dB" << std::endl;
+        check (peakSeen > -40.0f, "T39.18b 喂音频后至少一段电平升到 −40dB 以上（环会画）",
+               juce::String (peakSeen));
+
+        // 弹道：停止喂音后电平应下落，而不是停在峰值
+        for (int i = 0; i < nn; ++i)
+        { buf.setSample (0, i, 0.0f); buf.setSample (1, i, 0.0f); }
+        const float beforeFall = peakSeen;
+        for (int t = 0; t < 30; ++t) { proc->processBlock (buf, midi); dv.tickForTest(); }
+        float afterFall = -100.0f;
+        for (int b = 0; b < 4; ++b)
+            afterFall = juce::jmax (afterFall, dv.bandLevelDbForTest (b));
+        std::cout << "  停止后最高段电平 = " << afterFall << " dB（峰值 " << beforeFall << "）" << std::endl;
+        check (afterFall < beforeFall - 1.0f, "T39.18c 停音后电平下落（弹道生效）",
+               juce::String (afterFall) + " vs " + juce::String (beforeFall));
+
+        mb->setEditorActive (false);
+    }
 }
 
 // ------------------------------------------------------------

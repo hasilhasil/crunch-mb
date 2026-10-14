@@ -165,6 +165,11 @@ public:
     {
         return spectrumView_ != nullptr && spectrumView_->hasFrameForTest();
     }
+    /** Phase C-3 测试钩子：该段平滑后的电平（dB）。 */
+    float bandLevelDbForTest (int b) const
+    {
+        return (b >= 0 && b < Param::kNumBands) ? bandLevelDb_[(size_t) b] : -100.0f;
+    }
     bool  spectrumPathsReadyForTest() const
     {
         return spectrumView_ != nullptr && spectrumView_->pathsReadyForTest();
@@ -390,6 +395,16 @@ private:
     std::array<Tween, Param::kNumBands> bypT_;      // BYP 渐暗 1.0 ↔ 0.45
     std::array<Tween, 3>                divT_;      // 分割线 hover 变色 0 ↔ 1
     std::array<bool,   Param::kNumBands> bandBypassed_ {};   // BYP 状态缓存（检测变化才驱动动画）
+
+    // ---- Phase C-3：频段圆形电平表（Pro-MB Threshold 旋钮外圈环对标）----
+    // 实时值由音频线程写、UI 线程读；这里各存一份平滑后的显示值，
+    // 让环的转动有弹道感而不是每帧跳。
+    // ⚠️ 初值必须是静音底 −100dB，不能是 0：0 会被弹道逻辑当成"当前电平 0dB"，
+    //    导致插件刚打开时四个环显示满刻度再慢慢衰减（T39.18a 抓到过）。
+    std::array<float, Param::kNumBands> bandLevelDb_ { -100, -100, -100, -100 };
+    std::array<float, Param::kNumBands> bandPeakDb_  { -100, -100, -100, -100 };
+    std::array<juce::uint32, Param::kNumBands> bandPeakHoldMs_ {};
+    void updateBandLevels (double nowMs, double dt);
 
     /** 把所有 Tween 推到当前参数状态（无动画）。用于构造/reset/主题切换。 */
     void syncAllTweens();

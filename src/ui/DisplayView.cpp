@@ -578,6 +578,41 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
             const float py = gainToY (baseDb_[(size_t) best]);
             const bool sel = (b == selectedBand_);
             const bool hov = (hoverDotBand_ == b);
+
+            // ---- Phase C-3：圆形电平表环（Pro-MB Threshold 外圈环对标）----
+            // 画在频点外侧：内圈=实时段电平，外圈一点=峰值保持。
+            // 只在有声段有意义，静默段（<= -60dB）不画，避免满屏灰环。
+            {
+                const float lvl = bandLevelDb_[(size_t) b];
+                if (lvl > -60.0f)
+                {
+                    const float ringR = sx (11.0f);
+                    // −60..0 dB → 0..1
+                    const float frac = juce::jlimit (0.0f, 1.0f, (lvl + 60.0f) / 60.0f);
+                    const float a0 = juce::MathConstants<float>::pi * 1.25f;   // 7:30，与旋钮同
+                    const float a1 = a0 + frac * juce::MathConstants<float>::pi * 1.5f;  // 270° 行程
+
+                    juce::Path ring;
+                    ring.addCentredArc (px, py, ringR, ringR, 0.0f, a0, a1, true);
+                    g.setColour (pal_.accent.withAlpha (0.85f));
+                    g.strokePath (ring, juce::PathStrokeType (juce::jmax (1.5f, sx (2.0f)),
+                                                              juce::PathStrokeType::curved,
+                                                              juce::PathStrokeType::rounded));
+
+                    // 峰值保持：环末端一个小亮点
+                    const float pk = bandPeakDb_[(size_t) b];
+                    if (pk > -60.0f)
+                    {
+                        const float pf = juce::jlimit (0.0f, 1.0f, (pk + 60.0f) / 60.0f);
+                        const float pa = a0 + pf * juce::MathConstants<float>::pi * 1.5f;
+                        const float pr = juce::jmax (1.5f, sx (2.2f));
+                        g.setColour (pal_.light ? pal_.inFill : pal_.outLevel);
+                        g.fillEllipse (px + std::sin (pa) * ringR - pr * 0.5f,
+                                       py - std::cos (pa) * ringR - pr * 0.5f, pr, pr);
+                    }
+                }
+            }
+
             if (sel)                                          // #2：仅选中段有外层
             {
                 const float rad = hov ? sx (7.0f) : sx (5.0f);
@@ -837,6 +872,40 @@ void DisplayView::updatePeakHold (float& peakDb, juce::uint32& holdUntilMs,
     }
 }
 
+// ---- Phase C-3：频段圆形电平表弹道 ----
+// 对齐 Pro-MB：Threshold 旋钮外圈那圈环就是该段的实时检测电平。
+// 这里把它画在频段电平点外圈，达到同样效果——不用开 Popover 就知道
+// 每段在被什么电平驱动。
+void DisplayView::updateBandLevels (double nowMs, double dt)
+{
+    const float fallDbPerSec = 60.0f;      // 与 IN/OUT 电平表同弹道
+    const juce::uint32 holdMs = 2000;      // 峰值保持 2s（与 kPeakHoldMs 一致）
+
+    for (int b = 0; b < Param::kNumBands; ++b)
+    {
+        const float raw = proc_.getDSP().getBandDetectorDb (b);
+
+        // 平滑：上升瞬时跟上，下降按 60dB/s（与 IN/OUT 一致的手感）
+        if (raw > bandLevelDb_[(size_t) b])
+            bandLevelDb_[(size_t) b] = raw;
+        else
+            bandLevelDb_[(size_t) b] =
+                juce::jmax (raw, bandLevelDb_[(size_t) b] - fallDbPerSec * (float) dt);
+
+        // 峰值保持
+        if (raw >= bandPeakDb_[(size_t) b])
+        {
+            bandPeakDb_[(size_t) b] = raw;
+            bandPeakHoldMs_[(size_t) b] = (juce::uint32) nowMs + holdMs;
+        }
+        else if ((juce::uint32) nowMs > bandPeakHoldMs_[(size_t) b])
+        {
+            bandPeakDb_[(size_t) b] =
+                juce::jmax (raw, bandPeakDb_[(size_t) b] - fallDbPerSec * (float) dt);
+        }
+    }
+}
+
 void DisplayView::timerCallback()
 {
     const auto nowMs = animNowMs();
@@ -855,6 +924,9 @@ void DisplayView::timerCallback()
 
     updatePeakHold (peakInDb_,  peakInHoldUntilMs_,  inDb,  nowMs, dt);
     updatePeakHold (peakOutDb_, peakOutHoldUntilMs_, outDb, nowMs, dt);
+
+    // Phase C-3：频段圆形电平表弹道
+    updateBandLevels (nowMs, dt);
 
     // ---- Phase 4.3：频谱帧拾取（Phase A：已拆为 SpectrumView）----
     if (spectrumView_ != nullptr)

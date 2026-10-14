@@ -84,6 +84,8 @@ public:
     int   getOversamplingLatencySamples() const noexcept;         // 仅过采样（2026-10-14）
     int   getOversamplingFactor() const noexcept { return osFactor_; }
     float getBandGainDb (int band) const noexcept;
+    /** Phase C-3：该段检测器看到的电平（dB）。供 UI 画圆形电平表。 */
+    float getBandDetectorDb (int band) const noexcept;
     float getBandGateSmoothed (int band) const noexcept;          // 门平滑值（UI/测试）
     bool  gatesActive() const noexcept { return gatesActive_; }
 

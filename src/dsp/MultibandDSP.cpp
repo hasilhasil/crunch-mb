@@ -148,6 +148,14 @@ float MultibandDSP::getBandGainDb (int band) const noexcept
     return comps_[b].getSmoothedGainDb();
 }
 
+float MultibandDSP::getBandDetectorDb (int band) const noexcept
+{
+    // Phase C-3：读音频线程写的检测电平。float 读在本平台是原子的，
+    // 且偶发撕裂只影响一帧的可视化，不影响音频（与 getBandGainDb 同策略）。
+    const int b = juce::jlimit (0, Param::kNumBands - 1, band);
+    return comps_[b].getLastDetectorDb();
+}
+
 float MultibandDSP::getBandGateSmoothed (int band) const noexcept
 {
     const int b = juce::jlimit (0, Param::kNumBands - 1, band);
