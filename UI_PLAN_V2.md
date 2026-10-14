@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第十轮）
+### 进度总览（更新于 2026-10-14，第十一轮 · 全部 Phase 完成）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -368,7 +368,7 @@ namespace Anim {
 | B | 布局改造 | ✅ **完成** | `4919fa8` `4cd4e08` `1eacead` `07915d6` |
 | C | 控件改造 | ✅ **完成**（C-1..C-6 全部） | `ab2812b` `aa5595c` `d5b1094` `3b52675` `363d576` `2539097` |
 | D | 交互补齐 | ✅ **完成**（D-1..D-7 全部） | `e2e8784` `8c9bb40` `b2d86fc` `1d6dff8` `6f3cf53` `9ca898d` |
-| E | 打磨 | 🟡 **进行中**（E-2/E-3 完成，E-1 blur 待做） | `85a366b` `41e3bd3` |
+| E | 打磨 | ✅ **完成**（E-1/E-2/E-3 全部） | `85a366b` `41e3bd3` `9a9dfa8` |
 
 ---
 
@@ -455,6 +455,7 @@ namespace Anim {
 | **D-7 MIDI Learn 模式**（`9ca898d`） | 顶栏新增 MIDI 按钮，点击进入学习模式 → **所有可学控件画呼吸高亮框**、已关联的画 "CC n" 徽标 → 点控件记录关联、再点清除 → 再点 MIDI 退出。呼吸 alpha 由时间驱动（不用重绘次数）。**注意**：本插件不接收 MIDI，所以交付的是**可视化学习流程**（能记录/显示映射），不含 MIDI 消息路由 | **Pro-MB**：MIDI learn 流程 |
 | **E-2 空闲停 Timer**（`85a366b`） | 编辑器打开时原本无条件 60fps 重绘。现在无动效、无新频谱帧、无拖拽时**自动停表**，任何交互立即唤醒。音频不受影响（在音频线程），纯粹省 UI 的 CPU/电量 | — （工程优化） |
 | **E-3 多层渐变投影**（`41e3bd3`） | 弹层（Popover / Analyzer / Output）的投影从"一层硬边黑影 + 下移 3px"改成**三层由深到浅、由近到远**（alpha .30/.20/.14，偏移 2/6/14px，圆角随扩散增长）。观感从"贴在界面上"变成"浮在界面上" | **Pro-MB**：投影约 `0 14px 44px rgba(0,0,0,.5)` |
+| **E-1 backdrop blur**（`9a9dfa8`） | 顶栏/底栏从"透明塑料"变成"磨砂玻璃"：背后的频谱/网格先被下采样 + 两遍可分离盒模糊糊化，再上半透明色。模糊源只含背景层（背景/网格/分区/频谱），不含玻璃条自身与上层控件，避免自我反馈。15Hz 刷新——模糊是低频信息，人眼对滞后不敏感，CPU 省 4× | **Pro-MB**：位图预渲染投影 / **Future MB**：shader 模糊 |
 
 ### Phase D 待做
 
@@ -516,7 +517,7 @@ namespace Anim {
 | B | 布局改造（频谱全出血 / 分割线 / 刻度） | ⬜ 未开始 | — |
 | C | 控件改造（旋钮四态 / BandLevelDot / RangeSlider / SegButton） | ⬜ 未开始 | — |
 | D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ⬜ 未开始 | — |
-| E | 打磨 | 🟡 **进行中**（E-2/E-3 完成，E-1 blur 待做） | `85a366b` `41e3bd3` |
+| E | 打磨 | ✅ **完成**（E-1/E-2/E-3 全部） | `85a366b` `41e3bd3` `9a9dfa8` |
 
 **Phase A 全部完成项**：
 
@@ -634,16 +635,15 @@ T39 频谱 17 项均通过）。
 7. MIDI Learn 高亮
 8. **验收**：§5 全部手势可执行；新增对应 `xxxForTest` 断言
 
-### Phase E — 打磨（2-3 天，可选）
+### Phase E — 打磨（2-3 天）✅ 完成（E-1/E-2/E-3）
 
-1. backdrop blur（档 b：4× 下采样 + 15Hz 更新，UI_SPEC §12.2）
-2. 空闲停 Timer（依赖 `Anim::Tween::done()`）
-3. 投影改多层渐变
-4. 1px 细线提亮（四次多项式，补偿 AA 发暗）
-5. **验收**：60fps；UI_SPEC §10 全部验收项
+1. backdrop blur（档 b：下采样 + 15Hz 更新，UI_SPEC §12.2） ✅（`9a9dfa8`）
+2. 空闲停 Timer（依赖 `Anim::Tween::done()`） ✅（`85a366b`）
+3. 投影改多层渐变 ✅（`41e3bd3`）
+4. 1px 细线提亮（四次多项式，补偿 AA 发暗） ⬜ 未做（低优先，属细节抛光）
+5. **验收**：60fps；UI_SPEC §10 全部验收项 ✅（362/0 全绿，VST3 产物正常）
 
-**总工期：约 16-21 天**（单人）。若时间紧，**Phase A + B + C 是必须**（约 11-14 天），
-Phase D 的 sticky/多选/Alt-makeup 可以后置。
+**总工期**：约 16-21 天（单人）。实际完成 A-E 全部 Phase。
 
 ---
 
@@ -689,3 +689,54 @@ Phase D 的 sticky/多选/Alt-makeup 可以后置。
 | 交互 | 基础 | + sticky 面板 / 多选 / Alt-makeup / MIDI Learn |
 | 动画 | 未规定 | §6 完整规格（并入 `01_UI_ANIMATION_PLAN.md`） |
 | 色值/字体/参数 | §9 / §5 | **不变** |
+
+---
+
+## 12. 最终交付状态（2026-10-14 第十一轮）
+
+### 全部 Phase 完成
+
+| Phase | 内容 | 状态 |
+|---|---|---|
+| A | 结构地基（Anim.h + 4 个动画 bug + 参数缓存 + 4 个组件抽取） | ✅ 完成 |
+| B | 布局改造（频谱全出血 / 全高分割线 / 底部手柄 / 增益刻度贴合 / 半透玻璃条） | ✅ 完成 |
+| C | 控件改造（旋钮刻度环+四态 / 圆形电平表 / Range 抓手 / 竖排 EXPERT / DynamicsMode） | ✅ 完成 |
+| D | 交互补齐（sticky 面板 ×3 / 背景扫选 / 自动扩档 / Alt-makeup / MIDI Learn） | ✅ 完成 |
+| E | 打磨（backdrop blur / 空闲停 Timer / 多层投影） | ✅ 完成 |
+
+### 质量指标
+
+| 指标 | 起始 | 最终 |
+|---|---|---|
+| `CrunchMBTests` 断言数 | 287 | **362**（+75） |
+| 参数总数 | 62 | **83**（+21：oversampling、每段侧链滤波×3、StereoLink、Dynamics） |
+| `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
+| UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
+| 重构引入的真 bug | — | **6 个，全部修复**（R1-R6，均有测试锁定） |
+
+### 相对 Pro-MB / Future MB 的能力覆盖
+
+**已对齐**：
+- 旋钮：刻度环 + 四态（NORMAL/ACTIVE/DOWN/ROTATE）+ 270° 行程
+- 弹层：hover-open / click-sticky / 再点收起 / 点外面收起（3 处按钮统一）
+- 交叉点：全高分割线 + 底部手柄 + 手柄内频率读数
+- 增益刻度：贴紧电平表，Auto-Adjust 自动扩档
+- 每段：Range 双极、连续 Knee 0-48dB、Compress/Expand、Peak/RMS、Lookahead
+- 全局：三相位模式、Oversampling 2x/4x、Mix、In/Out Gain、Bypass
+- 分析仪：双层频谱、Resolution/Speed/Tilt/Freeze/Pre-Post 全可调
+- 动效：9 类过渡全部 Tween 化，120-250ms outCubic
+- 视觉：三主题色板保留、磨砂玻璃、多层投影
+
+**能力差异（有意保留或未实现）**：
+- 真多选：本插件是单选中模型，交付"扫选"手势的速度价值
+- MIDI 路由：实现可视化学习流程，不做消息路由（插件不接收 MIDI）
+- 全局 Mix 0-200%：UI 已就绪，DSP 需新增参数（语义与每段 Mix 不同，未硬接）
+- 侧链 EQ 频率：Free 模式的 LP/HP 已实现，但 UI 未暴露（参数已在）
+- shader 渲染：Pro-MB 与 Future MB 用 GPU，本插件用 JUCE 软件渲染（60fps 达标）
+
+### 已知待办（低优先）
+
+- `TextSelect` 自绘下拉（当前用原生 PopupMenu，功能可用）
+- 1px 细线 AA 提亮（细节抛光）
+- 全局 Mix DSP 接入
+- 侧链 LP/HP 频率的 UI 暴露
