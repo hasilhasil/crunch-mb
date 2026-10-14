@@ -191,19 +191,32 @@ void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
     if (slot < 0)
         return;                                  // 从未发布过：无可衰减的画面
 
-    auto& s = slots_[(size_t) slot];
     const float k = (float) (1.0 - std::exp (-dtSec / juce::jmax (1.0e-4, tauSec)));
+
+    // Phase（线程竞争修复）：原来这里**原地修改 slots_[slot]**，而 UI 线程的
+    // getLatest() 正在读同一个 slot。三缓冲的前提是"只写未发布 slot"，
+    // 原地改已发布 slot 会：
+    //   ① 让 UI 读到撕裂帧（前半新、后半旧）
+    //   ② 版本号在写完后才递增，UI 可能在写中途读到旧版本号而判定"无更新"→丢帧
+    // 现改为 analyseTick 的同款模式：从已发布 slot 读旧值 → 写入 writeSlot_
+    // → 发布 → 轮转。写侧永不出现在 UI 正在读的 slot 里。
+    const auto& src = slots_[(size_t) slot];
+    auto& dst = slots_[(size_t) writeSlot_];
 
     bool stillMoving = false;
     for (int i = 0; i < kDisplayPoints; ++i)
     {
-        s.pre[(size_t) i]  += (-100.0f - s.pre[(size_t) i])  * k;
-        s.post[(size_t) i] += (-100.0f - s.post[(size_t) i]) * k;
-        if (s.pre[(size_t) i] > -99.5f || s.post[(size_t) i] > -99.5f)
+        const float np = src.pre[(size_t) i]  + (-100.0f - src.pre[(size_t) i])  * k;
+        const float nq = src.post[(size_t) i] + (-100.0f - src.post[(size_t) i]) * k;
+        dst.pre[(size_t) i]  = np;
+        dst.post[(size_t) i] = nq;
+        if (np > -99.5f || nq > -99.5f)
             stillMoving = true;
     }
-    publishedSlot_.store (slot, std::memory_order_release);   // 同一 slot 内容更新
+
+    publishedSlot_.store (writeSlot_, std::memory_order_release);
     publishVersion_.fetch_add (1, std::memory_order_release);
+    writeSlot_ = (writeSlot_ + 1) % 3;
 
     if (! stillMoving)
         starvedSinceMs_ = 0;      // 已到底：恢复"保持"语义（等下一次音频再保持新帧）

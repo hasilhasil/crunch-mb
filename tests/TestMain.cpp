@@ -6179,6 +6179,104 @@ static void testLinearFifoZeroAlloc()
     }
 }
 
+// ------------------------------------------------------------
+// T57 Phase：频谱衰减帧不再原地改已发布 slot（线程竞争修复）
+//   publishDecayFrame 原来直接改 slots_[published]，而 UI 线程的 getLatest()
+//   正在读同一个 slot —— 三缓冲的前提是"只写未发布 slot"。
+//   本测试验证行为等价（衰减到 −100）与"发布 slot 会轮转"（证明换了 slot 写）。
+// ------------------------------------------------------------
+static void testSpectrumDecayNoAliasing()
+{
+    std::cout << "\n--- T57 Phase 频谱衰减帧线程安全 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T57.0 处理器实例可访问", "");
+
+    mb->setEditorActive (true);   // 启动后台分析线程
+    auto& eng = mb->getSpectrumEngine();
+
+    // 喂一段音频，让分析器发布若干帧
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int t = 0; t < 60; ++t)
+    {
+        for (int i = 0; i < 512; ++i)
+        {
+            const long kk = (long) (t * 512 + i);
+            const float v = 0.7f * (float) std::sin (6.283185 * 440.0 * kk / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        mb->processBlock (buf, midi);
+        juce::Thread::sleep (8);
+    }
+
+    std::array<float, 512> pre {}, post {};
+    std::vector<float> freqs;
+    bool got = false;
+    for (int i = 0; i < 80 && ! got; ++i)
+    {
+        got = eng.getLatest (pre, post);
+        if (! got) juce::Thread::sleep (10);
+    }
+    check (got, "T57.1 有音频时能取到频谱帧", "");
+    float peakWithAudio = -200.0f;
+    for (float v : pre) peakWithAudio = juce::jmax (peakWithAudio, v);
+    std::cout << "  有音频时峰值 = " << peakWithAudio << " dB" << std::endl;
+    check (peakWithAudio > -60.0f, "T57.2 有音频时频谱有能量", juce::String (peakWithAudio));
+
+    // 停喂音频 → 后台线程走 keep-hold + 衰减路径
+    const int slotBefore = eng.publishedSlotForTest();
+    std::cout << "  停喂前 published slot = " << slotBefore << std::endl;
+
+    float peakDecayed = peakWithAudio;
+    int slotChanges = 0;
+    int lastSlot = slotBefore;
+    for (int i = 0; i < 150; ++i)
+    {
+        juce::Thread::sleep (20);
+        if (eng.getLatest (pre, post))
+        {
+            float pk = -200.0f;
+            for (float v : pre) pk = juce::jmax (pk, v);
+            if (pk < peakDecayed) peakDecayed = pk;
+            const int s = eng.publishedSlotForTest();
+            if (s != lastSlot) { ++slotChanges; lastSlot = s; }
+        }
+    }
+    std::cout << "  衰减后峰值 = " << peakDecayed << " dB  slot 变化次数 = " << slotChanges << std::endl;
+
+    // ① 衰减必须真的发生（行为等价性）
+    check (peakDecayed < peakWithAudio - 1.0f,
+           "T57.3 停喂音频后频谱衰减（换 slot 写也要有衰减）",
+           juce::String (peakWithAudio) + " -> " + juce::String (peakDecayed));
+
+    // ② 发布 slot 必须轮转（证明写的是未发布 slot，不是原地改）
+    check (slotChanges > 0,
+           "T57.4 衰减期间 published slot 有轮转（写的是未发布 slot）",
+           juce::String (slotChanges));
+
+    // ③ 最终应收敛到静音底
+    for (int i = 0; i < 100; ++i)
+    {
+        juce::Thread::sleep (20);
+        if (eng.getLatest (pre, post))
+        {
+            float pk = -200.0f;
+            for (float v : pre) pk = juce::jmax (pk, v);
+            peakDecayed = juce::jmin (peakDecayed, pk);
+        }
+    }
+    std::cout << "  最终峰值 = " << peakDecayed << " dB" << std::endl;
+    check (peakDecayed < -90.0f, "T57.5 衰减最终收敛到静音底（< -90 dB）",
+           juce::String (peakDecayed));
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6242,6 +6340,7 @@ int main()
     testSmartParamInterp();        // T54 Phase SPI 曲线层平滑
     testChoiceIndexSemantics();    // T55 Phase Choice 参数索引语义
     testLinearFifoZeroAlloc();     // T56 Phase Linear FIFO 零分配
+    testSpectrumDecayNoAliasing(); // T57 Phase 频谱衰减帧线程安全
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

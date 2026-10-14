@@ -52,6 +52,12 @@ public:
     // UI 线程：对数频率轴（只需取一次）
     bool getFrequencies (std::vector<float>& freqs);
 
+    /** 测试钩子：当前已发布的 slot 索引（验证衰减帧是否换了 slot 写）。 */
+    int publishedSlotForTest() const noexcept
+    {
+        return publishedSlot_.load (std::memory_order_acquire);
+    }
+
 private:
     void run() override;
     void analyseTick();
