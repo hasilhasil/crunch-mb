@@ -2079,6 +2079,18 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
 {
     ensureTimerRunning();      // Phase E-2：悬停可能触发面板开合动画
     const auto p = e.position;
+
+    // Phase：自绘下拉的 hover 高亮
+    if (dropDownOpen_)
+    {
+        int item = -1;
+        const bool hit = hitTestDropDownItem (p, item);
+        if (hit != (dropDownHover_ == item) || (hit && item != dropDownHover_))
+        {
+            dropDownHover_ = hit ? item : -1;
+            repaint();
+        }
+    }
     lastMousePos_ = p;
     if (bandPopover_ != nullptr)
         bandPopover_->setLastMousePos (p);
@@ -2155,24 +2167,131 @@ bool DisplayView::hitTestDisplayRange (juce::Point<float> p) const
     return r.contains (p);
 }
 
+// ---------------- Phase：自绘 TextSelect 下拉 ----------------
+// Pro-MB drop-down 对标：与插件同色的圆角面板、当前项打勾、hover 高亮。
+// 原生 juce::PopupMenu 是操作系统外观，破坏主题一致性——这是替换它的理由。
+juce::Rectangle<float> DisplayView::dropDownRect() const
+{
+    const float W = (float) getWidth();
+    const float x = W - sx (218.0f);
+    const float y = sy (27.0f);                 // 紧贴按钮下缘
+    const float w = sx (124.0f);
+    const float h = sy (22.0f) * (float) dropDownCount_;
+    return juce::Rectangle<float> (x, y, w, h);
+}
+
+bool DisplayView::hitTestDropDownItem (juce::Point<float> p, int& itemOut) const
+{
+    if (! dropDownOpen_)
+        return false;
+    const auto r = dropDownRect();
+    if (! r.contains (p))
+        return false;
+    const float rowH = sy (22.0f);
+    const int idx = (int) ((p.y - r.getY()) / rowH);
+    if (idx < 0 || idx >= dropDownCount_)
+        return false;
+    itemOut = idx;
+    return true;
+}
+
+void DisplayView::openDropDown (int count)
+{
+    dropDownOpen_ = true;
+    dropDownCount_ = count;
+    dropDownHover_ = -1;
+    repaint();
+}
+
+void DisplayView::closeDropDown()
+{
+    if (! dropDownOpen_)
+        return;
+    dropDownOpen_ = false;
+    dropDownHover_ = -1;
+    repaint();
+}
+
+void DisplayView::clickDropDownItem (int item)
+{
+    if (item < 0 || item >= 5)
+    {
+        closeDropDown();
+        return;
+    }
+    displayRangeMode_ = item;
+    if (displayRangeMode_ != 0)
+    {
+        const float fixed[5] = { 6.0f, 3.0f, 6.0f, 12.0f, 30.0f };
+        curveRangeDb_ = fixed[displayRangeMode_];
+    }
+    closeDropDown();
+}
+
+void DisplayView::drawDropDown (juce::Graphics& g)
+{
+    if (! dropDownOpen_)
+        return;
+    const auto r = dropDownRect();
+    const char* labels[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB",
+                              "+/- 12 dB", "+/- 30 dB" };
+
+    // 多层投影（与弹层面板同一套深度语言）
+    {
+        struct Layer { float dy; float alpha; float expand; };
+        const Layer layers[3] = {
+            { 2.0f, 0.30f, 0.0f },
+            { 6.0f, 0.20f, 3.0f },
+            { 14.0f, 0.14f, 7.0f },
+        };
+        for (const auto& L : layers)
+        {
+            auto shadow = r.translated (0.0f, L.dy).expanded (L.expand);
+            g.setColour (juce::Colours::black.withAlpha (L.alpha));
+            g.fillRoundedRectangle (shadow, r.getWidth() * 0.08f + L.expand);
+        }
+    }
+
+    g.setColour (pal_.popA);
+    g.fillRoundedRectangle (r, r.getWidth() * 0.08f);
+    g.setColour (pal_.accent.withAlpha (0.55f));
+    g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
+
+    const float rowH = sy (22.0f);
+    g.setFont (MBTheme::font (MBTheme::regular(), 10.0f));
+    for (int i = 0; i < dropDownCount_; ++i)
+    {
+        const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
+                                                 r.getWidth(), rowH);
+        const bool cur = (i == displayRangeMode_);
+        const bool hot = (i == dropDownHover_);
+        if (hot && ! cur)
+        {
+            g.setColour (pal_.track.withAlpha (0.7f));
+            g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+        }
+        // 当前项：accent 底 + 白字 + 左侧勾
+        if (cur)
+        {
+            g.setColour (pal_.accent.withAlpha (0.85f));
+            g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+        }
+        g.setColour (cur ? juce::Colours::white
+                         : (hot ? pal_.text : pal_.dim));
+        g.drawText (cur ? juce::String::fromUTF8 ("\xE2\x9C\x93  ") + labels[i] : labels[i],
+                    row.withTrimmedLeft (r.getWidth() * 0.08f),
+                    juce::Justification::centredLeft);
+    }
+}
+
 void DisplayView::openDisplayRangeMenu()
 {
-    juce::PopupMenu m;
-    const char* labels[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB", "+/- 12 dB", "+/- 30 dB" };
-    for (int i = 0; i < 5; ++i)
-        m.addItem (i + 1, labels[i], true, i == displayRangeMode_);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-        [this] (int result)
-        {
-            if (result <= 0 || result > 5) return;
-            displayRangeMode_ = result - 1;
-            if (displayRangeMode_ != 0)
-            {
-                const float fixed[5] = { 6.0f, 3.0f, 6.0f, 12.0f, 30.0f };
-                curveRangeDb_ = fixed[displayRangeMode_];
-            }
-            repaint();
-        });
+    // Phase：改用自绘下拉（Pro-MB drop-down 对标）。
+    // 原来是 juce::PopupMenu —— 操作系统外观，破坏主题一致性。
+    if (dropDownOpen_)
+        closeDropDown();
+    else
+        openDropDown (5);
 }
 
 void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
@@ -2332,11 +2451,22 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         && ! linkedDrawer_->hitTestPanel (p))
         linkedDrawer_->clickOutside();
 
-    // 0a) Display Range 档位：点击弹出二级菜单（Pro-MB drop-down 语义）
+    // 0a) Display Range 档位：自绘下拉（Pro-MB drop-down 语义）
     if (hitTestDisplayRange (p))
     {
         openDisplayRangeMenu();
         return;
+    }
+    // 下拉打开时：项点击 / 点外面收起
+    if (dropDownOpen_)
+    {
+        int item = -1;
+        if (hitTestDropDownItem (p, item))
+        {
+            clickDropDownItem (item);
+            return;
+        }
+        closeDropDown();
     }
 
     // 0e) Phase D-7：MIDI Learn 按钮（顶栏）
@@ -2836,6 +2966,8 @@ void DisplayView::paint (juce::Graphics& g)
     drawGlobalBar (g);
     // Phase D-7：MIDI Learn 高亮覆盖层（最上层，覆盖所有控件）
     drawMidiLearnOverlay (g);
+    // Phase：自绘 TextSelect 下拉（最上层）
+    drawDropDown (g);
 }
 
 void DisplayView::resized()

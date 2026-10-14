@@ -123,6 +123,9 @@ public:
     int   getDisplayRangeModeForTest() const { return displayRangeMode_; }
     /** Phase D-5 测试钩子：设置 Display Range 模式（0=Auto，1..4=固定档）。 */
     void  setDisplayRangeModeForTest (int m) { displayRangeMode_ = juce::jlimit (0, 4, m); }
+    /** Phase 测试钩子：自绘下拉是否打开 / 矩形。 */
+    bool isDropDownOpenForTest() const { return dropDownOpen_; }
+    juce::Rectangle<float> dropDownRectForTest() const { return dropDownRect(); }
     /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
     juce::Rectangle<float> dynamicsSegRectForTest() const
     {
@@ -503,6 +506,20 @@ private:
     void toggleMidiLearn();
     bool handleMidiLearnClick (juce::Point<float> p);
     void drawMidiLearnOverlay (juce::Graphics& g);
+
+    // ---- Phase：自绘 TextSelect 下拉（替换原生 PopupMenu）----
+    // Pro-MB 的 drop-down 是自绘的：与插件同色的圆角面板、当前项打勾、
+    // hover 高亮。原生 juce::PopupMenu 是操作系统外观，破坏主题一致性。
+    // 首个替换对象是顶栏的 Display Range 档位选择器。
+    bool  dropDownOpen_ = false;
+    int   dropDownHover_ = -1;
+    int   dropDownCount_ = 0;
+    juce::Rectangle<float> dropDownRect() const;
+    bool hitTestDropDownItem (juce::Point<float> p, int& itemOut) const;
+    void openDropDown (int count);
+    void closeDropDown();
+    void clickDropDownItem (int item);
+    void drawDropDown (juce::Graphics& g);
 
     // ---- Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）----
     // 玻璃条背后的内容做一次下采样 + 盒模糊，缓存成 Image，15Hz 更新。

@@ -5243,6 +5243,76 @@ static void testGlobalMix()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T50 Phase：自绘 TextSelect 下拉（替换原生 PopupMenu）
+//   Pro-MB drop-down 对标：自绘同色面板、当前项打勾、hover 高亮
+// ------------------------------------------------------------
+static void testSelfDrawnDropDown()
+{
+    std::cout << "\n--- T50 Phase 自绘 TextSelect 下拉 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T50.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // Display Range 按钮：W−218..W−132，y 3..27
+    const float btnX = 920.0f - 218.0f + 43.0f;
+    const float btnY = 3.0f + 12.0f;
+
+    // ① 初始：下拉关闭
+    check (! dv.isDropDownOpenForTest(), "T50.1 初始下拉关闭", "");
+
+    // ② 点击按钮 → 打开下拉
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isDropDownOpenForTest(), "T50.2 点击按钮 → 下拉打开", "");
+
+    // ③ 下拉矩形：应在按钮正下方，且高度 = 5 行 × 22px
+    const auto dr = dv.dropDownRectForTest();
+    check (dr.getY() >= btnY && dr.getWidth() > 80.0f
+           && std::abs (dr.getHeight() - 5.0f * 22.0f) < 1.0f,
+           "T50.3 下拉在按钮下方且高 5 行",
+           juce::String (dr.getWidth()) + "x" + juce::String (dr.getHeight())
+           + " y=" + juce::String (dr.getY()));
+
+    // ④ 点击第 3 项（+/- 6 dB，index 2）→ 模式变为 2
+    const float rowH = 22.0f;
+    const float itemY = dr.getY() + rowH * 2.5f;
+    dv.mouseDownForTest (dr.getCentreX(), itemY);
+    dv.mouseUpForTest (dr.getCentreX(), itemY);
+    std::cout << "  Display Range Mode: " << dv.getDisplayRangeModeForTest() << std::endl;
+    check (dv.getDisplayRangeModeForTest() == 2, "T50.4 点击第 3 项 → 模式=2（±6 dB）",
+           juce::String (dv.getDisplayRangeModeForTest()));
+    // 点击项后下拉应收起
+    check (! dv.isDropDownOpenForTest(), "T50.5 点击项后下拉收起", "");
+
+    // ⑤ 再次打开 → 点外面 → 收起且模式不变
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isDropDownOpenForTest(), "T50.6 再次打开下拉", "");
+    dv.mouseDownForTest (80.0f, 90.0f);
+    dv.mouseUpForTest (80.0f, 90.0f);
+    check (! dv.isDropDownOpenForTest(), "T50.7 点外面 → 下拉收起", "");
+    check (dv.getDisplayRangeModeForTest() == 2, "T50.8 点外面不改变已选模式",
+           juce::String (dv.getDisplayRangeModeForTest()));
+
+    // ⑥ 再点一次按钮（下拉关闭时）→ 打开；打开时再点 → 收起（toggle）
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isDropDownOpenForTest(), "T50.9 点按钮 → 打开", "");
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (! dv.isDropDownOpenForTest(), "T50.10 打开时再点按钮 → 收起", "");
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5301,6 +5371,7 @@ int main()
     testDynamicsMode();            // T47 Phase C-6 DynamicsMode Compress/Expand
     testMidiLearn();               // T48 Phase D-7 MIDI Learn
     testGlobalMix();               // T49 Phase 全局 Mix
+    testSelfDrawnDropDown();       // T50 Phase 自绘 TextSelect 下拉
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
