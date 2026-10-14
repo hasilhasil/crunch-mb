@@ -471,7 +471,7 @@ cmake --build build --config Release
 ## 10. 验收标准
 
 ### 10.1 功能验收
-- [ ] 62 参数全部经 APVTS 注册、可自动化、正确序列化
+- [x] 84 参数全部经 APVTS 注册、可自动化、正确序列化（62 → 84：oversampling + 每段侧链滤波×3 + StereoLink + Dynamics + globalMix）
 - [ ] 四频段压缩器独立工作，各参数独立生效
 - [ ] 三种相位模式正确切换，延迟正确上报
 - [ ] 交叉点拖拽 + 最小带宽约束（1 八度）正确执行
@@ -505,12 +505,13 @@ cmake --build build --config Release
 - [ ] 频谱后台线程不阻塞音频线程（pushSamples 全程无锁）
 
 ### 10.4 API 验收
-- [ ] `IPluginBackend` 全部通用接口正确实现
-- [ ] `IMBBackend` 多段扩展接口正确实现
-- [ ] 62 参数的 `ParamInfo` 元数据完整（范围/默认值/单位/类别）
-- [ ] `setParam` 实际值 ↔ normalized 转换正确，越界钳制正确
-- [ ] `setBandGroupDelta` 线性恒定偏移正确（非比例缩放），4 段钳制独立
-- [ ] `setCrossover` 最小带宽钳制正确（1 八度）
-- [ ] `readMultibandHistory` 无锁读取正确（counter 对齐）
-- [ ] `getTransferCurve` / `getFrequencyResponse` 返回值正确
-- [ ] `getStateSnapshot` / `loadState` 序列化往返无损
+- [x] `IPluginBackend` 全部通用接口正确实现（`1d852e6` + T52）
+- [x] `IMBBackend` 多段扩展接口正确实现（`1d852e6` + T52）
+- [x] 84 参数的 `ParamInfo` 元数据完整（范围/默认值/单位/类别）——由 APVTS 派生，不会与注册表漂移
+- [x] `setParam` 实际值 ↔ normalized 转换正确，越界钳制正确
+- [x] `setBandGroupDelta` 线性恒定偏移正确（非比例缩放），4 段钳制独立
+- [x] `setCrossover` 最小带宽钳制正确（1 八度）
+- [x] `readMultibandHistory` 无锁读取正确（counter 对齐）
+- [x] `getTransferCurve` / `getFrequencyResponse` 返回值正确（三相位模式各自的响应算法）
+- [x] `getStateSnapshot` / `loadState` 序列化往返无损（含幂等性）
+

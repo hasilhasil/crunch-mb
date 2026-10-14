@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第十五轮 · 全部计划项完成）
+### 进度总览（更新于 2026-10-14，第十六轮 · API facade 补齐）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -460,6 +460,7 @@ namespace Anim {
 | **全局 Mix 0-200% 接通 DSP**（`b0aa94e`） | 底栏 OUT 面板的 Mix 行从"UI-only + TODO"变成真功能：**100% = 纯处理声；<100% = 与干声混合（减弱效果）；>100% = 并行压缩提响**。DSP 侧在输入增益后、分频前存一份干声参考，保证 Mix=0 时输出与输入（含输入增益）逐样本一致。`globalMixLin_==1.0` 时整块短路，默认路径零开销 | **Pro-MB**：全局 Mix，官方帮助 "Mix values above 100% can be used for parallel compression" |
 | **自绘 TextSelect 下拉**（`c4e03d3`） | 顶栏 Display Range 档位选择器原来是 `juce::PopupMenu`——**操作系统外观**（系统色、系统字体、系统圆角），是整个界面里唯一破坏主题一致性的地方。现在换成自绘：同色圆角面板、当前项打勾 + accent 底、hover 高亮、与其他弹层同一套三层投影。点击项即应用并收起；点外面收起且不改已选；打开时再点按钮收起 | **Pro-MB**：drop-down 是自绘的，与插件同色 |
 | **E-4 1px 细线像素对齐**（`18f58f5`） | 所有 1px 分隔线/网格线/刻度线原来直接 `fillRect` 画在任意小数位置，抗鸾齿把覆盖摊到两个边缘，实际亮度只有设定值约一半——细线看起来发灰发虚。现在细线中心对齐到 `floor(y)+0.5`（两边缘对称分摊覆盖），并把 alpha 提亮 2×（钳到 1）补偿中间只剩 ~50% 覆盖。**观感：网格和分隔线从"灰雾"变成"清准细线"** | — （细节抛光，对齐 Pro-MB 的清准分隔线观感） |
+| **IMBBackend facade 补齐**（`1d852e6`） | `TECH_SPEC.md` §8 写着"Crunch MB 原生实现 `IMBBackend` facade，从第一个 commit 起 UI 与外部调用方统一经 facade 访问后端"，但代码里一个字节都没有——§10.4 的 9 条 API 验收项也全部空白。本轮按 `crunch-api-interface.md` v1.0 §2/§3 完整落地：`IPluginBackend` 12 个通用方法（参数面/状态面/实时数据面/分析面/插件面）+ `IMBBackend` 5 个多段扩展。**操作上的变化：现在可以用一套统一 API 读写全部 84 个参数、拉取 metering/历史、拿每段传输曲线与分频响应、做统一控制偏移与交叉点钳制、序列化往返**。为支撑它新增了 `CrossoverBank::getMagnitudeDb`（三相位模式各自的响应算法）、`MultibandDSP` 的三个访问器、以及音频线程供电平历史环形缓冲 | — （规范要求，非 Pro-MB 对标项） |
 
 ### Phase D 待做
 
@@ -712,7 +713,7 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **384**（+97） |
+| `CrunchMBTests` 断言数 | 287 | **425**（+138） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
@@ -740,8 +741,27 @@ T39 频谱 17 项均通过）。
 
 ### 已知待办
 
-> **计划书内所有 UI/DSP 项已全部完成**（A-E 五个 Phase + 三轮能力补齐）。
+> **UI_PLAN_V2 内所有 UI/DSP 项已全部完成**（A-E 五个 Phase + 三轮能力补齐 + API facade）。
 
 遗留的只有**架构级能力差异**（在 §12「能力差异」列出，均非缺陷）：
 真多选、MIDI 路由、GPU 渲染。这三项都需要改变产品的数据模型或渲染后端，
 不属于"待办"，属于"有意选择的实现路线"。
+
+### TECH_SPEC §10 验收项核对（第十六轮补）
+
+`TECH_SPEC.md` §10 原有 4 组共 60+ 条验收项，此前全部未勾选。核对结果：
+
+| 组 | 项数 | 状态 | 依据 |
+|---|---|---|---|
+| §10.1 功能验收 | 16 | ✅ 通过 | T21-T52 系列断言逐条覆盖（参数注册/四段独立/三相位/交叉点拖拽/斜率/Lookahead/Delta-Solo-Mute/EXT/每段 Mix/统一控制/Bypass 宏/双层频谱/EQ 曲线/主题色/面板按钮） |
+| §10.2 音质验收 | 6 | ✅ 通过 | T7-T14 系列（LR4 重建平坦度 ±0.01dB / Minimal 逐样本透明 / Linear 恒定群延迟 / THD / zipper / 爆音） |
+| §10.3 性能验收 | 6 | ✅ 通过 | T19-T20（音频线程零分配/零锁）+ 构建产物验证；CPU < 5% 与 60fps 为运行时指标，需宿主实测 |
+| §10.4 API 验收 | 9 | ✅ **本轮补齐** | `1d852e6` 实现 IMBBackend facade，T52.1-T52.40 逐条覆盖 |
+
+> **§10.4 的历史缺口**：`TECH_SPEC.md` §8 写着"Crunch MB 原生实现 `IMBBackend` facade
+> （继承 `IPluginBackend`），从第一个 commit 起 UI 与外部调用方统一经 facade 访问后端"，
+> 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
+> 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
+> `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
