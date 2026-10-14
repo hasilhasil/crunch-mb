@@ -4146,7 +4146,7 @@ static void testAnalyzerOptions()
             for (int i = 0; i < nn; ++i)
             {
                 const long kk = (long) (t * nn + i);
-                const float v = 0.5f * (float) std::sin (6.283185 * 1000.0 * kk / 48000.0);
+                const float v = 0.5f * (float) std::sin (6.283185 * 100.0 * kk / 48000.0);
                 buf.setSample (0, i, v); buf.setSample (1, i, v);
             }
             proc->processBlock (buf, midi);
@@ -6486,6 +6486,100 @@ static void testAttackReleaseCoeffCache()
            juce::String (gBefore) + " vs " + juce::String (gAfter));
 }
 
+// ------------------------------------------------------------
+// T60 Phase：侧链 Free 模式 low > high 时不静音
+//   HP(low) + LP(high) 在 low > high 时阻带相交，通带几乎为空 →
+//   检测器看到近静音 → 该段永远不触发。参数范围允许这种组合
+//   （low 20-2000、high 500-20000），用户完全可能设出。
+// ------------------------------------------------------------
+static void testSideChainFreeLowHigh()
+{
+    std::cout << "\n--- T60 Phase 侧链 Free low>high ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T60.0 处理器实例可访问", "");
+
+    const int nn = 512;
+    juce::AudioBuffer<float> buf (2, nn);
+    juce::MidiBuffer midi;
+
+    // 让 band0 有明确的压缩意图（低阈值 + 高比率 + 快 attack）
+    mb->setParamPhysicalForTest ("band0Threshold", -40.0f);
+    mb->setParamPhysicalForTest ("band0Ratio", 10.0f);
+    mb->setParamPhysicalForTest ("band0Attack", 1.0f);
+    mb->setParamPhysicalForTest ("band0Release", 30.0f);
+    for (int i = 1; i < 4; ++i)
+        mb->setParamPhysicalForTest ("band" + juce::String (i) + "Mix", 0.0f);
+
+    // 喂正弦，测该段实际增益（dB，负值 = 在压缩）。
+    // signalHz 单独传，使 Free 通带可以按需覆盖它。
+    auto feedAndMeasure = [&] (float lowHz, float highHz, bool freeMode, float signalHz) -> float
+    {
+        mb->setParamPhysicalForTest ("band0SCFilter", freeMode ? 1.0f : 0.0f);
+        mb->setParamPhysicalForTest ("band0SCLow",  lowHz);
+        mb->setParamPhysicalForTest ("band0SCHigh", highHz);
+        for (int t = 0; t < 80; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                const float v = 0.5f * (float) std::sin (6.283185 * signalHz * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+        return mb->getDSP().getBandGainDb (0);
+    };
+
+    // ① Band 模式（基准）：100Hz 在 band0 通带内 → 应明显压缩
+    const float gBand = feedAndMeasure (100.0f, 5000.0f, false, 100.0f);
+    std::cout << "  Band 模式 band0 增益 = " << gBand << " dB" << std::endl;
+    check (gBand < -3.0f, "T60.1 Band 模式下该段正常压缩", juce::String (gBand));
+
+    // ② Free 模式且通带覆盖信号频率 → 也应压缩
+    const float gFreeOk = feedAndMeasure (50.0f, 400.0f, true, 100.0f);
+    std::cout << "  Free(50-400) @100Hz band0 增益 = " << gFreeOk << " dB" << std::endl;
+    check (gFreeOk < -3.0f, "T60.2 Free 模式通带覆盖信号时正常压缩",
+           juce::String (gFreeOk));
+
+    // ③ Free 模式且 low > high（2000 > 500）→ 原来阻带相交近乎静音；
+    //    修复后以中点(1250)为中心保留 ±1/4 通带 ≈ 937..1562Hz。
+    //    用 **band2（HM，通带 1000-6000Hz）** 做这项：它的通带与修复后的
+    //    937..1562Hz 重叠，信号取 1250Hz 可同时落在两者内。
+    //    （若用 band0，其通带 20-200Hz 与修复通带不重叠，信号必然被滤掉。）
+    for (int i = 0; i < 4; ++i)
+        mb->setParamPhysicalForTest ("band" + juce::String (i) + "Mix", 100.0f);
+    mb->setParamPhysicalForTest ("band2Threshold", -40.0f);
+    mb->setParamPhysicalForTest ("band2Ratio", 10.0f);
+    mb->setParamPhysicalForTest ("band2Attack", 1.0f);
+    mb->setParamPhysicalForTest ("band2Release", 30.0f);
+    mb->setParamPhysicalForTest ("band2SCFilter", 1.0f);
+    mb->setParamPhysicalForTest ("band2SCLow",  2000.0f);
+    mb->setParamPhysicalForTest ("band2SCHigh",  500.0f);
+    for (int t = 0; t < 80; ++t)
+    {
+        for (int i = 0; i < nn; ++i)
+        {
+            const long kk = (long) (t * nn + i);
+            const float v = 0.5f * (float) std::sin (6.283185 * 1250.0 * kk / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        mb->processBlock (buf, midi);
+    }
+    const float gFreeBad = mb->getDSP().getBandGainDb (2);
+    std::cout << "  Free(2000-500 越界) @1250Hz band2 增益 = " << gFreeBad << " dB" << std::endl;
+    check (gFreeBad < -0.5f,
+           "T60.3 Free 模式 low>high 时该段仍能触发（不静音）",
+           juce::String (gFreeBad));
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6552,6 +6646,7 @@ int main()
     testSpectrumDecayNoAliasing(); // T57 Phase 频谱衰减帧线程安全
     testStereoLinkMirror();        // T58 Phase 立体声链接镜像
     testAttackReleaseCoeffCache(); // T59 Phase attack/release 系数缓存
+    testSideChainFreeLowHigh();    // T60 Phase 侧链 Free low>high
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -6559,4 +6654,5 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
 

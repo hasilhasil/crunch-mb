@@ -66,8 +66,24 @@ private:
     {
         const double sr = sampleRate_;
         // 钳到 Nyquist 之内，避免 fc >= fs/2 时系数爆炸
-        const float lo = juce::jlimit (10.0f, (float) (sr * 0.45), lowHz_);
-        const float hi = juce::jlimit (20.0f, (float) (sr * 0.49), highHz_);
+        const float nyq = (float) (sr * 0.5);
+        float lo = juce::jlimit (10.0f, nyq * 0.90f, lowHz_);
+        float hi = juce::jlimit (20.0f, nyq * 0.98f, highHz_);
+
+        // Phase（可用性修复）：low > high 时 HP 与 LP 的阻带相交，
+        // 通带几乎为空 → 检测器看到近静音 → **该段永远不触发**。
+        // 参数范围允许这种组合（low 20-2000、high 500-20000），
+        // 用户完全可能设出 low=2000/high=500。
+        // Pro-MB 的 Free 模式保证 low <= high；这里改为取中点后各让一半，
+        // 保证 [lo, hi] 是非空区间且仍以用户意图的中值为中心。
+        if (lo > hi)
+        {
+            const float mid = 0.5f * (lo + hi);
+            const float halfWidth = 0.25f * juce::jmax (1.0f, mid);   // 1/4 音程宽的可用通带
+            lo = juce::jmax (10.0f, mid - halfWidth);
+            hi = juce::jmin (nyq * 0.98f, mid + halfWidth);
+        }
+
         const float q  = 0.70710678f;      // Butterworth
         for (int i = 0; i < kSections; ++i)
         {
@@ -77,8 +93,10 @@ private:
     }
 
     double sampleRate_ = 48000.0;
-    float  lowHz_  = 20.0f;
-    float  highHz_ = 20000.0f;
+    // Phase：初值与 Parameters.cpp 的注册默认值对齐（100 / 5000），
+    // 避免 setParameters 尚未被调用时滤波器用在错误频率上。
+    float  lowHz_  = 100.0f;
+    float  highHz_ = 5000.0f;
     bool   free_   = false;
 
     BiquadFilter hp_[kSections];
