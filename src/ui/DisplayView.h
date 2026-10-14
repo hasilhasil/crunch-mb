@@ -126,6 +126,8 @@ public:
     /** Phase 测试钩子：自绘下拉是否打开 / 矩形。 */
     bool isDropDownOpenForTest() const { return dropDownOpen_; }
     juce::Rectangle<float> dropDownRectForTest() const { return dropDownRect(); }
+    /** Phase 测试钩子：下拉项数。 */
+    int dropDownCountForTest() const { return dropDownCount_; }
     /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
     juce::Rectangle<float> dynamicsSegRectForTest() const
     {
@@ -522,16 +524,31 @@ private:
     // ---- Phase：自绘 TextSelect 下拉（替换原生 PopupMenu）----
     // Pro-MB 的 drop-down 是自绘的：与插件同色的圆角面板、当前项打勾、
     // hover 高亮。原生 juce::PopupMenu 是操作系统外观，破坏主题一致性。
-    // 首个替换对象是顶栏的 Display Range 档位选择器。
+    // 首个替换对象是顶栏的 Display Range 档位选择器；
+    // 其后是全局栏的 Phase / Slope / Quality / Lookahead 四个选择器
+    // （RESEARCH_UI §五 P1：原来是画着 ▼ 却点不动的静态文字）。
     bool  dropDownOpen_ = false;
     int   dropDownHover_ = -1;
     int   dropDownCount_ = 0;
+    /** 当前下拉绑定到哪个全局参数（空 = Display Range 档位）。 */
+    juce::String dropDownParamId_;
+    /** 该参数是 Choice 型时的选项表（Display Range 用内置档位，不用它）。 */
+    juce::StringArray dropDownChoices_;
+    /** 全局选择器下拉的锚点（global bar 内被点项的位置）。 */
+    float globalBarY_ = 0.0f;
+    float globalBarAnchorX_ = 0.0f;
+    /** global bar 内四个全局 Choice 选择器的矩形与参数 id（绘制/命中共用）。 */
+    juce::Array<juce::Rectangle<float>> globalSelectorRects_;
+    juce::StringArray globalSelectorIds_;
     juce::Rectangle<float> dropDownRect() const;
     bool hitTestDropDownItem (juce::Point<float> p, int& itemOut) const;
     void openDropDown (int count);
     void closeDropDown();
     void clickDropDownItem (int item);
     void drawDropDown (juce::Graphics& g);
+    /** 打开绑定到某个全局 Choice 参数的下拉。 */
+    void openGlobalParamDropDown (const juce::String& paramId,
+                                  juce::Rectangle<float> anchorRect);
 
     // ---- Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）----
     // 玻璃条背后的内容做一次下采样 + 盒模糊，缓存成 Image，15Hz 更新。

@@ -839,16 +839,38 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     // Phase E-4：hairline 提亮
     drawHairlineH (g, y0, 0.0f, W, pal_.gridZ.withAlpha (0.6f));
 
-    // 全局选择器（Phase 4.4 接下拉）
+    // 全局选择器（Phase / Slope / Quality / Lookahead）
+    // RESEARCH_UI §五 P1：原来是"画着 ▼ 却点不动的静态文字"。
+    // 现在每项都可点，弹出与 Display Range 同一套的自绘下拉（Pro-MB drop-down 对标）。
     g.setFont (MBTheme::font (MBTheme::regular(), 11.5f));
     float x = sx (14.0f);
-    auto item = [&] (const juce::String& label, const juce::String& value)
+    globalBarY_ = y0;
+    auto item = [&] (const juce::String& label, const juce::String& paramId)
     {
         g.setColour (pal_.dim);
         g.drawText (label, juce::Rectangle<float> (x, y0 + sy (8.0f), sx (52.0f), sy (16.0f)),
                     juce::Justification::centredLeft);
         x += sx (52.0f);
-        g.setColour (pal_.text);
+
+        // 当前值：Choice 型取选项表对应项（不再写死）
+        juce::String value = "-";
+        for (const auto& pi : proc_.getBackend().listParams())
+        {
+            if (pi.id != paramId || ! pi.isChoice) continue;
+            const float norm = proc_.getBackend().getParamFast (paramId);
+            const int idx = juce::roundToInt (norm * (float) juce::jmax (1, pi.choices.size() - 1));
+            if (idx >= 0 && idx < pi.choices.size())
+                value = pi.choices[idx];
+            break;
+        }
+
+        globalSelectorRects_.add (juce::Rectangle<float> (
+            x, y0 + sy (8.0f), sx (110.0f), sy (16.0f)));
+        globalSelectorIds_.add (paramId);
+
+        // 可点提示：hover 时提亮（与 Pro-MB 全局栏一致）
+        const bool hot = globalSelectorRects_.getLast().contains (lastMousePos_);
+        g.setColour (hot ? pal_.accent : pal_.text);
         g.drawText (value + " " + juce::String::fromUTF8 ("\xE2\x96\xBC"),
                     juce::Rectangle<float> (x, y0 + sy (8.0f), sx (110.0f), sy (16.0f)),
                     juce::Justification::centredLeft);
@@ -857,10 +879,10 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
         g.fillRect (x, y0 + sy (9.0f), 1.0f, sy (14.0f));
         x += sx (10.0f);
     };
-    item ("Phase:", "Natural Phase");
-    item ("Slope:", "24 dB/oct");
-    item ("Quality:", "Medium");
-    item ("Lookahead:", "Off");
+    item ("Phase:",    Param::ID::phaseMode);
+    item ("Slope:",    Param::ID::xoverSlope);
+    item ("Quality:",  Param::ID::linearQuality);
+    item ("Lookahead:", Param::ID::lookahead);
 
     // Analyzer 按钮（Pro-MB 底栏 Analyzer 对标）——占据原 IN 读数位置；
     // 点击弹出二级菜单（Resolution / Speed / Tilt / Freeze / Pre-Post）。
@@ -2181,13 +2203,30 @@ void DisplayView::drawHairlineV (juce::Graphics& g, float x, float y0, float y1,
 // ---------------- Phase：自绘 TextSelect 下拉 ----------------
 // Pro-MB drop-down 对标：与插件同色的圆角面板、当前项打勾、hover 高亮。
 // 原生 juce::PopupMenu 是操作系统外观，破坏主题一致性——这是替换它的理由。
+//
+// 两种用法：
+//   · Display Range 档位（dropDownParamId_ 为空）——内置 5 档
+//   · 全局 Choice 参数（phaseMode / xoverSlope / linearQuality / lookahead）
+//     ——选项表从 APVTS 的 AudioParameterChoice 取（RESEARCH_UI §五 P1）
 juce::Rectangle<float> DisplayView::dropDownRect() const
 {
-    const float W = (float) getWidth();
-    const float x = W - sx (218.0f);
-    const float y = sy (27.0f);                 // 紧贴按钮下缘
-    const float w = sx (124.0f);
-    const float h = sy (22.0f) * (float) dropDownCount_;
+    if (dropDownParamId_.isEmpty())
+    {
+        const float W = (float) getWidth();
+        const float x = W - sx (218.0f);
+        const float y = sy (27.0f);                 // 紧贴按钮下缘
+        const float w = sx (124.0f);
+        const float h = sy (22.0f) * (float) dropDownCount_;
+        return juce::Rectangle<float> (x, y, w, h);
+    }
+
+    // 全局选择器：锚定在被点的那一项下方，行高稍矮（global bar 只有 32px）
+    const float w = sx (150.0f);
+    const float rowH = sy (19.0f);
+    const float h = rowH * (float) dropDownCount_;
+    const float y = globalBarY_ + sy (8.0f) + sy (16.0f);
+    const float x = juce::jmax (sx (8.0f),
+                        juce::jmin (globalBarAnchorX_, (float) getWidth() - w - sx (8.0f)));
     return juce::Rectangle<float> (x, y, w, h);
 }
 
@@ -2198,7 +2237,7 @@ bool DisplayView::hitTestDropDownItem (juce::Point<float> p, int& itemOut) const
     const auto r = dropDownRect();
     if (! r.contains (p))
         return false;
-    const float rowH = sy (22.0f);
+    const float rowH = dropDownParamId_.isEmpty() ? sy (22.0f) : sy (19.0f);
     const int idx = (int) ((p.y - r.getY()) / rowH);
     if (idx < 0 || idx >= dropDownCount_)
         return false;
@@ -2220,23 +2259,68 @@ void DisplayView::closeDropDown()
         return;
     dropDownOpen_ = false;
     dropDownHover_ = -1;
+    dropDownParamId_.clear();
+    dropDownChoices_.clear();
     repaint();
 }
 
 void DisplayView::clickDropDownItem (int item)
 {
-    if (item < 0 || item >= 5)
+    if (item < 0 || item >= dropDownCount_)
     {
         closeDropDown();
         return;
     }
-    displayRangeMode_ = item;
-    if (displayRangeMode_ != 0)
+
+    if (dropDownParamId_.isEmpty())
     {
-        const float fixed[5] = { 6.0f, 3.0f, 6.0f, 12.0f, 30.0f };
-        curveRangeDb_ = fixed[displayRangeMode_];
+        // ---- Display Range 档位（内置 5 档）----
+        displayRangeMode_ = item;
+        if (displayRangeMode_ != 0)
+        {
+            const float fixed[5] = { 6.0f, 3.0f, 6.0f, 12.0f, 30.0f };
+            curveRangeDb_ = fixed[displayRangeMode_];
+        }
+    }
+    else
+    {
+        // ---- 全局 Choice 参数：写 normalized 索引 ----
+        const float norm = (float) item / (float) juce::jmax (1, dropDownCount_ - 1);
+        proc_.getBackend().setParamNormFast (dropDownParamId_, norm);
     }
     closeDropDown();
+}
+
+void DisplayView::openGlobalParamDropDown (const juce::String& paramId,
+                                           juce::Rectangle<float> anchorRect)
+{
+    // 从 facade 拿该参数的选项表（Choice 型才有）
+    dropDownChoices_.clear();
+    for (const auto& pi : proc_.getBackend().listParams())
+    {
+        if (pi.id == paramId && pi.isChoice)
+        {
+            dropDownChoices_ = pi.choices;
+            break;
+        }
+    }
+    if (dropDownChoices_.isEmpty())
+        return;
+
+    // 已经开着同一个参数的下拉 → 视为再次点击，收起
+    if (dropDownOpen_ && dropDownParamId_ == paramId)
+    {
+        closeDropDown();
+        return;
+    }
+
+    dropDownParamId_  = paramId;
+    dropDownCount_    = dropDownChoices_.size();
+    dropDownHover_    = -1;
+    globalBarY_       = anchorRect.getY();
+    globalBarAnchorX_ = anchorRect.getX();
+    dropDownOpen_     = true;
+    repaint();
 }
 
 void DisplayView::drawDropDown (juce::Graphics& g)
@@ -2244,8 +2328,26 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     if (! dropDownOpen_)
         return;
     const auto r = dropDownRect();
-    const char* labels[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB",
+    const bool globalMode = ! dropDownParamId_.isEmpty();
+    const float rowH = globalMode ? sy (19.0f) : sy (22.0f);
+
+    // 当前选中索引（两种模式各自的来源）
+    int curIdx = 0;
+    juce::StringArray labels;
+    if (globalMode)
+    {
+        labels = dropDownChoices_;
+        const float norm = proc_.getBackend().getParamFast (dropDownParamId_);
+        curIdx = juce::roundToInt (norm * (float) juce::jmax (1, dropDownCount_ - 1));
+        curIdx = juce::jlimit (0, dropDownCount_ - 1, curIdx);
+    }
+    else
+    {
+        const char* dr[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB",
                               "+/- 12 dB", "+/- 30 dB" };
+        for (int i = 0; i < dropDownCount_; ++i) labels.add (dr[i]);
+        curIdx = juce::jlimit (0, 4, displayRangeMode_);
+    }
 
     // 多层投影（与弹层面板同一套深度语言）
     {
@@ -2268,13 +2370,12 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     g.setColour (pal_.accent.withAlpha (0.55f));
     g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
 
-    const float rowH = sy (22.0f);
-    g.setFont (MBTheme::font (MBTheme::regular(), 10.0f));
+    g.setFont (MBTheme::font (MBTheme::regular(), globalMode ? 10.0f : 10.0f));
     for (int i = 0; i < dropDownCount_; ++i)
     {
         const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
                                                  r.getWidth(), rowH);
-        const bool cur = (i == displayRangeMode_);
+        const bool cur = (i == curIdx);
         const bool hot = (i == dropDownHover_);
         if (hot && ! cur)
         {
@@ -2461,6 +2562,17 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen()
         && ! linkedDrawer_->hitTestPanel (p))
         linkedDrawer_->clickOutside();
+
+    // 0c) 全局栏四个 Choice 选择器（Phase / Slope / Quality / Lookahead）
+    //     RESEARCH_UI §五 P1：原来是画着 ▼ 却点不动的静态文字。
+    for (int i = 0; i < globalSelectorRects_.size(); ++i)
+    {
+        if (globalSelectorRects_[i].contains (p))
+        {
+            openGlobalParamDropDown (globalSelectorIds_[i], globalSelectorRects_[i]);
+            return;
+        }
+    }
 
     // 0a) Display Range 档位：自绘下拉（Pro-MB drop-down 语义）
     if (hitTestDisplayRange (p))

@@ -5699,6 +5699,134 @@ static void testBackendFacade()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T53 Phase：全局栏 Choice 选择器（RESEARCH_UI §五 P1）
+//   Phase / Slope / Quality / Lookahead 原来是"画着 ▼ 却点不动的静态文字"
+// ------------------------------------------------------------
+static void testGlobalSelectors()
+{
+    std::cout << "\n--- T53 Phase 全局栏 Choice 选择器 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T53.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    // globalSelectorRects_ 是 drawGlobalBar 里填充的，必须先真实绘制一遍
+    {
+        juce::Image img (juce::Image::ARGB, 920, 620, true);
+        juce::Graphics g (img);
+        dv.paintForTest (g);
+    }
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 全局栏四个选择器的 x 起点（与 drawGlobalBar 的 item() 布局一致）：
+    //   第 i 项起点 = 14 + i*(52+118+10)，值区宽 110
+    const float barY = 620.0f - 32.0f;
+    auto selX = [] (int i) { return 14.0f + 52.0f + (float) i * (52.0f + 118.0f + 10.0f) + 55.0f; };
+    const float selY = barY + 8.0f + 8.0f;
+
+    const char* ids[4] = { Param::ID::phaseMode, Param::ID::xoverSlope,
+                           Param::ID::linearQuality, Param::ID::lookahead };
+
+    // ① 初始：下拉关闭
+    check (! dv.isDropDownOpenForTest(), "T53.1 初始下拉关闭", "");
+
+    // ② 点第一个选择器（Phase）→ 打开绑定到 phaseMode 的下拉
+    dv.mouseDownForTest (selX (0), selY);
+    dv.mouseUpForTest (selX (0), selY);
+    check (dv.isDropDownOpenForTest(), "T53.2 点 Phase 选择器 → 下拉打开", "");
+
+    // ③ 下拉应为 3 项（Natural / Minimal / Linear）
+    check (dv.dropDownCountForTest() == 3,
+           "T53.3 Phase 下拉 3 项", juce::String (dv.dropDownCountForTest()));
+
+    // ④ 点第 3 项（Linear Phase，index 2）→ phaseMode 写入
+    {
+        const auto dr = dv.dropDownRectForTest();
+        const float rowH = dr.getHeight() / 3.0f;
+        const float itemY = dr.getY() + rowH * 2.5f;
+        dv.mouseDownForTest (dr.getCentreX(), itemY);
+        dv.mouseUpForTest (dr.getCentreX(), itemY);
+
+        const float pm = mb->apvts.getRawParameterValue (Param::ID::phaseMode)->load();
+        std::cout << "  phaseMode after pick: " << pm << std::endl;
+        // ⚠️ getRawParameterValue 返回 denormalised 值，Choice 参数的"实际值"
+        //    就是选项索引。3 项选第 3 项（index 2）→ 读回 2，不是 normalized 1.0。
+        check (std::abs (pm - 2.0f) < 0.01f,
+               "T53.4 选 Linear Phase（第 3 项）→ phaseMode 索引 = 2",
+               juce::String (pm));
+        // 选完自动收起
+        check (! dv.isDropDownOpenForTest(), "T53.5 选完自动收起", "");
+    }
+
+    // ⑤ Slope 选择器：4 项，选 48 dB/oct（index 3）
+    {
+        dv.mouseDownForTest (selX (1), selY);
+        dv.mouseUpForTest (selX (1), selY);
+        check (dv.isDropDownOpenForTest() && dv.dropDownCountForTest() == 4,
+               "T53.6 Slope 下拉 4 项", juce::String (dv.dropDownCountForTest()));
+
+        const auto dr = dv.dropDownRectForTest();
+        const float rowH = dr.getHeight() / 4.0f;
+        const float itemY = dr.getY() + rowH * 3.5f;
+        dv.mouseDownForTest (dr.getCentreX(), itemY);
+        dv.mouseUpForTest (dr.getCentreX(), itemY);
+
+        const float sl = mb->apvts.getRawParameterValue (Param::ID::xoverSlope)->load();
+        std::cout << "  xoverSlope after pick: " << sl << std::endl;
+        // 4 项选第 4 项（index 3）→ 读回 3
+        check (std::abs (sl - 3.0f) < 0.01f,
+               "T53.7 选 48 dB/oct（第 4 项）→ xoverSlope 索引 = 3",
+               juce::String (sl));
+    }
+
+    // ⑥ Lookahead 选择器：3 项，选 3 ms（index 2）
+    {
+        dv.mouseDownForTest (selX (3), selY);
+        dv.mouseUpForTest (selX (3), selY);
+        check (dv.isDropDownOpenForTest() && dv.dropDownCountForTest() == 3,
+               "T53.8 Lookahead 下拉 3 项", juce::String (dv.dropDownCountForTest()));
+
+        const auto dr = dv.dropDownRectForTest();
+        const float rowH = dr.getHeight() / 3.0f;
+        const float itemY = dr.getY() + rowH * 2.5f;
+        dv.mouseDownForTest (dr.getCentreX(), itemY);
+        dv.mouseUpForTest (dr.getCentreX(), itemY);
+
+        const float la = mb->apvts.getRawParameterValue (Param::ID::lookahead)->load();
+        std::cout << "  lookahead after pick: " << la << std::endl;
+        // 3 项选第 3 项（index 2）→ 读回 2
+        check (std::abs (la - 2.0f) < 0.01f,
+               "T53.9 选 3 ms（第 3 项）→ lookahead 索引 = 2", juce::String (la));
+    }
+
+    // ⑦ 再点同一选择器 → 收起（toggle）
+    dv.mouseDownForTest (selX (3), selY);
+    dv.mouseUpForTest (selX (3), selY);
+    check (dv.isDropDownOpenForTest(), "T53.10 点 Lookahead → 打开", "");
+    dv.mouseDownForTest (selX (3), selY);
+    dv.mouseUpForTest (selX (3), selY);
+    check (! dv.isDropDownOpenForTest(), "T53.11 再点同一选择器 → 收起", "");
+
+    // ⑧ 打开时点外面 → 收起且不改值
+    {
+        dv.mouseDownForTest (selX (0), selY);
+        dv.mouseUpForTest (selX (0), selY);
+        const float before = mb->apvts.getRawParameterValue (Param::ID::phaseMode)->load();
+        dv.mouseDownForTest (80.0f, 90.0f);
+        dv.mouseUpForTest (80.0f, 90.0f);
+        const float after = mb->apvts.getRawParameterValue (Param::ID::phaseMode)->load();
+        check (! dv.isDropDownOpenForTest() && std::abs (before - after) < 1.0e-4f,
+               "T53.12 点外面 → 收起且不改值", juce::String (after));
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5758,6 +5886,7 @@ int main()
     testMidiLearn();               // T48 Phase D-7 MIDI Learn
     testGlobalMix();               // T49 Phase 全局 Mix
     testSelfDrawnDropDown();       // T50 Phase 自绘 TextSelect 下拉
+    testGlobalSelectors();         // T53 Phase 全局栏 Choice 选择器
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -5765,3 +5894,4 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
