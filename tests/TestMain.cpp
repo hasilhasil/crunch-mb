@@ -4730,6 +4730,97 @@ static void testBandSweepMultiSelect()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T44 Phase D-4：OUT 按钮 + Output 面板 sticky 语义
+//   同一套状态机推广到第三个按钮（Analyzer / LINKED / Output）
+// ------------------------------------------------------------
+static void testOutputPanelSticky()
+{
+    std::cout << "\n--- T44 Phase D-4 Output 面板 sticky 语义 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T44.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+
+    // OUT 按钮：W−196..W−118，y = H−32+5，高 22（与 drawGlobalBar 一致）
+    const float btnX = 920.0f - 196.0f + 39.0f;     // 胶囊中心
+    const float btnY = 620.0f - 32.0f + 5.0f + 11.0f;
+
+    // ① 初始：关闭且非 sticky
+    check (! dv.isOutputOpenForTest() && ! dv.isOutputStickyForTest(),
+           "T44.1 Output 面板初始关闭且非 sticky", "");
+
+    // ② 悬停 → 打开，不 sticky
+    dv.mouseMoveForTest (btnX, btnY);
+    check (dv.isOutputOpenForTest() && ! dv.isOutputStickyForTest(),
+           "T44.2 悬停 OUT 按钮 → 面板打开且不 sticky", "");
+
+    // ③ 鼠标移开 → 非 sticky 自动收起
+    dv.mouseMoveForTest (80.0f, 90.0f);
+    check (! dv.isOutputOpenForTest(),
+           "T44.3 鼠标移开 → 非 sticky 面板自动收起", "");
+
+    // ④ 点击 → 变 sticky 并保持打开
+    dv.mouseMoveForTest (btnX, btnY);
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isOutputOpenForTest() && dv.isOutputStickyForTest(),
+           "T44.4 点击 OUT 按钮 → 变 sticky 并保持打开", "");
+
+    // ⑤ 鼠标移开 → sticky 不收起
+    dv.mouseMoveForTest (80.0f, 90.0f);
+    check (dv.isOutputOpenForTest() && dv.isOutputStickyForTest(),
+           "T44.5 鼠标移开 → sticky 面板不收起", "");
+
+    // ⑥ 再点 → 收起并解除 sticky
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (! dv.isOutputOpenForTest() && ! dv.isOutputStickyForTest(),
+           "T44.6 再点 OUT 按钮 → 收起并解除 sticky", "");
+
+    // ⑦ Output Gain 行点击 → 写全局 outputGain 参数
+    {
+        const float ogBefore = [&] {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::ID::outputGain)
+                        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                            return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return 0.0f;
+        }();
+
+        dv.mouseMoveForTest (btnX, btnY);
+        dv.mouseDownForTest (btnX, btnY);
+        dv.mouseUpForTest (btnX, btnY);
+        check (dv.isOutputStickyForTest(), "T44.7 前置：Output 面板已 sticky", "");
+
+        const auto pr = dv.outputPanelRectForTest();
+        const float rowY = pr.getY() + pr.getHeight() * 0.20f;   // 第一行 = Output Gain
+        dv.mouseDownForTest (pr.getCentreX(), rowY);
+        dv.mouseUpForTest (pr.getCentreX(), rowY);
+
+        const float ogAfter = [&] {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::ID::outputGain)
+                        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                            return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return 0.0f;
+        }();
+        std::cout << "  Output Gain: " << ogBefore << " -> " << ogAfter << " dB" << std::endl;
+        check (std::abs (ogAfter - ogBefore) > 0.5f,
+               "T44.8 Output Gain 行点击写入全局参数",
+               juce::String (ogBefore) + " -> " + juce::String (ogAfter));
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4782,6 +4873,7 @@ int main()
     testAnalyzerPanelSticky();      // T41 Phase D Analyzer 面板 sticky 语义
     testLinkedDrawerSticky();       // T42 Phase D-2 LINKED 抽屉 sticky 语义
     testBandSweepMultiSelect();     // T43 Phase D-3 显示背景拖拽多选
+    testOutputPanelSticky();       // T44 Phase D-4 Output 面板 sticky 语义
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

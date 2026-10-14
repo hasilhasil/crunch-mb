@@ -54,6 +54,8 @@ target_sources(CrunchMB PRIVATE
     src/ui/Anim.h
     src/ui/AnalyzerPanel.cpp
     src/ui/AnalyzerPanel.h
+    src/ui/OutputPanel.cpp
+    src/ui/OutputPanel.h
     src/ui/BandPopover.cpp
     src/ui/BandPopover.h
     src/ui/DisplayView.cpp
@@ -105,6 +107,8 @@ target_sources(CrunchMBTests PRIVATE
     src/ui/Anim.h
     src/ui/AnalyzerPanel.cpp
     src/ui/AnalyzerPanel.h
+    src/ui/OutputPanel.cpp
+    src/ui/OutputPanel.h
     src/ui/BandPopover.cpp
     src/ui/BandPopover.h
     src/ui/DisplayView.cpp

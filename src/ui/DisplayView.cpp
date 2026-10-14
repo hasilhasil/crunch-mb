@@ -56,6 +56,11 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     analyzerPanel_->setHostBounds (getLocalBounds());
     analyzerPanel_->onSettingsChanged = [this] { applyAnalyzerSettings(); };
     addAndMakeVisible (*analyzerPanel_);
+    // Phase D-4：Output 自绘面板（同一套 sticky 语义）
+    outputPanel_ = std::make_unique<OutputPanel>();
+    outputPanel_->setHostBounds (getLocalBounds());
+    outputPanel_->onSettingsChanged = [this] { applyOutputSettings(); };
+    addAndMakeVisible (*outputPanel_);
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -222,6 +227,8 @@ void DisplayView::setTheme (MBTheme::Theme t)
         spectrumView_->setTheme (t);
     if (analyzerPanel_ != nullptr)
         analyzerPanel_->setTheme (t);
+    if (outputPanel_ != nullptr)
+        outputPanel_->setTheme (t);
     curvePathsValid_ = false;
     repaint();
 }
@@ -846,19 +853,28 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
                     anBtn, juce::Justification::centred);
     }
 
-    // OUT 读数（保留）
-    g.setColour (pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
-    const juce::uint32 nowMs = animNowMs();
-    if (nowMs >= nextMeterLabelMs_)
+    // OUT 按钮（Phase D-4：从纯读数升级为可点按钮，Pro-MB Output 面板对标）
+    // 悬停打开 Output 面板（非 sticky），点击变 sticky。
+    auto outBtn = juce::Rectangle<float> (W - sx (196.0f), y0 + sy (5.0f),
+                                          sx (78.0f), sy (22.0f));
+    const bool outHot = outputPanel_ != nullptr
+                     && (outputPanel_->isSticky()
+                         || outBtn.contains (lastMousePos_));
+    g.setColour (outHot ? pal_.accent.withAlpha (0.85f) : pal_.track);
+    g.fillRoundedRectangle (outBtn, sx (11.0f));
+    g.setColour (outHot ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
     {
-        labelInDb_  = meterInDb_;
-        labelOutDb_ = meterOutDb_;
-        nextMeterLabelMs_ = nowMs + 250;
+        const juce::uint32 nowMs2 = animNowMs();
+        if (nowMs2 >= nextMeterLabelMs_)
+        {
+            labelInDb_  = meterInDb_;
+            labelOutDb_ = meterOutDb_;
+            nextMeterLabelMs_ = nowMs2 + 250;
+        }
+        g.drawText ("OUT " + juce::String (labelOutDb_, 1),
+                    outBtn, juce::Justification::centred);
     }
-    g.drawText ("OUT " + juce::String (labelOutDb_, 2) + " dB",
-                juce::Rectangle<float> (W - sx (130.0f), y0 + sy (8.0f), sx (110.0f), sy (16.0f)),
-                juce::Justification::centredRight);
 
     // BYPASS 胶囊（C10：可点按；命中区与绘制严格一致）
     auto byp = juce::Rectangle<float> (W - sx (108.0f), y0 + sy (5.0f), sx (92.0f), sy (22.0f));
@@ -1034,6 +1050,9 @@ void DisplayView::timerCallback()
     // Phase D：Analyzer 面板开合动画
     if (analyzerPanel_ != nullptr)
         analyzerPanel_->advance (nowMs);
+    // Phase D-4：Output 面板开合动画
+    if (outputPanel_ != nullptr)
+        outputPanel_->advance (nowMs);
 
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
     advanceTweens (nowMs);
@@ -1666,6 +1685,19 @@ bool DisplayView::hitTestGlobalBypass (juce::Point<float> p) const
     return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 }
 
+bool DisplayView::hitTestOutputButton (juce::Point<float> p) const
+{
+    // Phase D-4：OUT 按钮（W−196..W−118，y = H−32+5，高 22），与 drawGlobalBar 一致。
+    // ⚠️ 不能依赖 outputBtnRect_——那个成员是在 drawGlobalBar 里赋值的，
+    //    而悬停命中发生在任何绘制之前（首次悬停时矩形还是空的）。
+    //    这正是 T44.2 失败的原因：悬停打不开面板。
+    const float W = (float) getWidth();
+    const float x0 = W - sx (196.0f), x1 = W - sx (118.0f);
+    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
+    const float y1 = y0 + sy (22.0f);
+    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+}
+
 // #7：自绘频率输入框 —— Phase A 已拆为 FreqInputEditor 组件。
 // 这里只保留"打开"逻辑（关闭/绘制/键盘都在组件内）。
 void DisplayView::openFreqEditor (int index, int band)
@@ -1714,6 +1746,10 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->hoverButton (linkedDrawer_->hitTestButton (p)
                                      || linkedDrawer_->hitTestPanel (p));
+    // Phase D-4：OUT 按钮同样的悬停/sticky 语义
+    if (outputPanel_ != nullptr)
+        outputPanel_->hoverButton (hitTestOutputButton (p)
+                                   || outputPanel_->panelRect().contains (p));
 
     int b = -1, j = -1;
     const bool onBtn = hitTestButton (p, b, j) != 0;
@@ -1958,6 +1994,31 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             onBandBypassChanged (i, ! allBypassed);
         repaint();
         return;
+    }
+
+    // 0d) Phase D-4：OUT 按钮 → Output 面板（悬停打开 / 点击 sticky）
+    if (hitTestOutputButton (p))
+    {
+        if (outputPanel_ != nullptr)
+        {
+            outputPanel_->clickButton();
+            applyOutputSettings();
+        }
+        repaint();
+        return;
+    }
+    // Output 面板行点击
+    if (outputPanel_ != nullptr && outputPanel_->isOpen())
+    {
+        int row = -1;
+        if (outputPanel_->hitTestRow (p, row))
+        {
+            outputPanel_->clickRow (row);
+            repaint();
+            return;
+        }
+        if (! outputPanel_->panelRect().contains (p))
+            outputPanel_->clickOutside();
     }
 
     // 1) 按钮列（S/M/BYP/Δ）
@@ -2292,6 +2353,31 @@ void DisplayView::syncSpectrumLayers()
         spectrumView_->setLayerVisible (analyzerPreOn_, analyzerPostOn_);
 }
 
+void DisplayView::applyOutputSettings()
+{
+    if (outputPanel_ == nullptr)
+        return;
+    // Output Gain 直接写全局参数（现有 outputGain，±36 dB）
+    setParamPhysical (Param::ID::outputGain, outputPanel_->outputGainDb());
+
+    // Global Bypass：与既有全局 BYPASS 胶囊同一语义（四段 Mix=0 宏）
+    const bool wantBypass = outputPanel_->globalBypass();
+    if (wantBypass != isAllBypassed())
+    {
+        const bool allBypassed = isAllBypassed();
+        for (int i = 0; i < 4; ++i)
+        {
+            toggleBypass (i, ! allBypassed);
+            onBandBypassChanged (i, ! allBypassed);
+        }
+    }
+
+    // TODO(Phase D-4)：全局 Mix 0-200% 需要新增 DSP 参数。
+    // 当前每段 Mix 是 0-100% 的平行压缩比，语义不同（Pro-MB 的全局 Mix 是
+    // 整体干湿比，200% 可做并行压缩提响）。这里先把 UI 值存着，不动 DSP，
+    // 避免引入未定义行为。待 DSP 侧新增 globalMix 参数后再接。
+}
+
 
 void DisplayView::openAnalyzerMenu()
 {
@@ -2375,6 +2461,11 @@ void DisplayView::resized()
     {
         analyzerPanel_->setBounds (getLocalBounds());
         analyzerPanel_->setHostBounds (getLocalBounds());
+    }
+    if (outputPanel_ != nullptr)
+    {
+        outputPanel_->setBounds (getLocalBounds());
+        outputPanel_->setHostBounds (getLocalBounds());
     }
     // Phase A：频谱 Path 按新坐标重建（它不是子组件，不需要 setBounds）
     if (spectrumView_ != nullptr)

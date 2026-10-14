@@ -14,6 +14,7 @@
 #include "FreqInputEditor.h"
 #include "SpectrumView.h"
 #include "AnalyzerPanel.h"
+#include "OutputPanel.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -206,6 +207,22 @@ public:
     bool isAnalyzerStickyForTest() const
     {
         return analyzerPanel_ != nullptr && analyzerPanel_->isSticky();
+    }
+
+    /** Phase D-4 测试钩子 */
+    bool isOutputOpenForTest() const
+    {
+        return outputPanel_ != nullptr && outputPanel_->isOpen();
+    }
+    bool isOutputStickyForTest() const
+    {
+        return outputPanel_ != nullptr && outputPanel_->isSticky();
+    }
+    /** Phase D-4 测试钩子：Output 面板矩形。 */
+    juce::Rectangle<float> outputPanelRectForTest() const
+    {
+        return outputPanel_ != nullptr ? outputPanel_->panelRect()
+                                       : juce::Rectangle<float>();
     }
     bool  isPopoverExpertOpenForTest() const;
     bool  hasSpectrumFrameForTest() const
@@ -482,9 +499,13 @@ private:
     void applyAnalyzerSettings();
     /** Phase A：把 Pre/Post 开关同步给 SpectrumView 子组件。 */
     void syncSpectrumLayers();
+    /** Phase D-4：把 OutputPanel 的设置应用到处理器。 */
+    void applyOutputSettings();
     bool hitTestAnalyzerButton (juce::Point<float> p) const;
     /** Phase D：Analyzer 自绘面板（Pro-MB hover-open / click-sticky 语义）。 */
     std::unique_ptr<AnalyzerPanel> analyzerPanel_;
+    /** Phase D-4：Output 自绘面板（同一套 sticky 语义）。 */
+    std::unique_ptr<OutputPanel> outputPanel_;
 
     // ---- Phase 5.2 / 5.3：抽屉与 Popover 组件（UI_PLAN_V2 §3.2）----
     // Phase A：两者均已拆为独立组件。DisplayView 只持 unique_ptr，
@@ -496,6 +517,8 @@ private:
 
     bool  isAllBypassed() const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
+    /** Phase D-4：底栏 OUT 按钮（可点，悬停打开 Output 面板）。 */
+    bool hitTestOutputButton (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;
     void openDisplayRangeMenu();
     /** O6 方案1：抽屉与 Popover 互斥。 */
