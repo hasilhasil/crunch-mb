@@ -42,9 +42,21 @@ public:
 
     // ---- 状态 ----
     bool  isOpen() const noexcept { return open_; }
+    bool  isSticky() const noexcept { return sticky_; }
     float anim()  const noexcept { return anim_; }
     void  setOpen (bool open);                     // 触发开/关（驱动动画）
     void  toggle();
+
+    /**
+     * Phase D-2：Pro-MB sticky 语义（与 AnalyzerPanel 同一套状态机）。
+     *   hoverButton(true)  -> 非 sticky 时打开
+     *   hoverButton(false) -> 非 sticky 时自动收起；sticky 时不动
+     *   clickButton()      -> 变 sticky 并保持打开；已 sticky 则收起并解除
+     *   clickOutside()     -> 收起并解除 sticky
+     */
+    void hoverButton (bool hovering);
+    bool clickButton();
+    void clickOutside();
 
     /** 每帧推进动画。返回 true 表示仍在动画中（需要继续 repaint）。 */
     bool advance (double nowMs);
@@ -97,6 +109,7 @@ private:
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
 
     bool  open_ = false;
+    bool  sticky_ = false;   // Phase D-2：sticky 面板不随鼠标移开而收起
     float anim_ = 0.0f;
     float animTarget_ = 0.0f;
     Tween tween_;

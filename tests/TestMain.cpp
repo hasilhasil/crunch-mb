@@ -4542,6 +4542,194 @@ static void testAnalyzerPanelSticky()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T42 Phase D-2：LINKED 抽屉 sticky 语义
+//   与 T41（Analyzer）同一套状态机，验证推广到第二个按钮后行为一致
+// ------------------------------------------------------------
+static void testLinkedDrawerSticky()
+{
+    std::cout << "\n--- T42 Phase D-2 LINKED 抽屉 sticky 语义 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T42.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+
+    // 抽屉梯形按钮：宽 456 居中，底边贴 global bar 上缘
+    const float cw = 456.0f, ch = 29.0f;
+    const float cx = (920.0f - cw) * 0.5f;
+    const float cy = 620.0f - 32.0f - ch + 1.0f;
+    const float btnX = cx + cw * 0.5f;
+    const float btnY = cy + ch * 0.5f;
+
+    // ① 初始：关闭且非 sticky
+    check (! dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
+           "T42.1 抽屉初始关闭且非 sticky", "");
+
+    // ② 悬停按钮 → 打开，但不 sticky
+    dv.mouseMoveForTest (btnX, btnY);
+    check (dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
+           "T42.2 悬停抽屉按钮 → 打开且不 sticky", "");
+
+    // ③ 鼠标移开 → 非 sticky 自动收起
+    dv.mouseMoveForTest (80.0f, 90.0f);
+    check (! dv.isLinkedOpenForTest(),
+           "T42.3 鼠标移开 → 非 sticky 抽屉自动收起", "");
+
+    // ④ 点击 → 变 sticky 并保持打开
+    dv.mouseMoveForTest (btnX, btnY);
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
+           "T42.4 点击抽屉按钮 → 变 sticky 并保持打开", "");
+
+    // ⑤ 鼠标移开 → sticky 不收起
+    dv.mouseMoveForTest (80.0f, 90.0f);
+    check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
+           "T42.5 鼠标移开 → sticky 抽屉不收起", "");
+
+    // ⑥ 再点 → 收起并解除 sticky
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (! dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
+           "T42.6 再点抽屉按钮 → 收起并解除 sticky", "");
+
+    mb->setEditorActive (false);
+}
+
+// ------------------------------------------------------------
+// T43 Phase D-3：显示背景拖拽多选（Pro-MB multi-select）
+//   Pro-MB 官方帮助："click and drag across the display background
+//   to quickly select multiple bands"
+//   本插件是单选中模型，所以可感知表现是：拖动过程中选中段跟随光标
+//   连续切换，且起手那段被取消（再拖回来恢复）。
+// ------------------------------------------------------------
+static void testBandSweepMultiSelect()
+{
+    std::cout << "\n--- T43 Phase D-3 显示背景拖拽多选 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T43.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 四段中心频率（默认 xover 200/1000/6000Hz）
+    const float fL  = 60.0f;
+    const float fLM = 450.0f;
+    const float fHM = 2400.0f;
+    const float fH  = 12000.0f;
+    // 扫描线 y：取绘图区上部（150），远离曲线/频点/Range 缘所在的中间带
+    const float sweepY = 150.0f;
+
+    // ① 在 band1(LM) 背景按下 → 应进入多选拖拽态
+    dv.mouseDownForTest (freqToXforTest (fLM), sweepY);
+    check (dv.isBandSweepActiveForTest(), "T43.1 背景按下 → 进入多选拖拽态", "");
+    check (dv.getSelectedBandForTest() == 1, "T43.1b 按下即选中该段",
+           juce::String (dv.getSelectedBandForTest()));
+
+    // ② 拖到 band2(HM) → 选中跟随到 HM
+    dv.mouseDragForTest (freqToXforTest (fHM), sweepY);
+    check (dv.getSelectedBandForTest() == 2, "T43.2 拖到 HM → 选中跟随到 HM",
+           juce::String (dv.getSelectedBandForTest()));
+
+    // ③ 继续拖到 band3(H) → 选中跟随到 H
+    dv.mouseDragForTest (freqToXforTest (fH), sweepY);
+    check (dv.getSelectedBandForTest() == 3, "T43.3 拖到 H → 选中跟随到 H",
+           juce::String (dv.getSelectedBandForTest()));
+
+    // ④ 拖回 band0(L) → 选中跟随回 L
+    dv.mouseDragForTest (freqToXforTest (fL), sweepY);
+    check (dv.getSelectedBandForTest() == 0, "T43.4 拖回 L → 选中跟随回 L",
+           juce::String (dv.getSelectedBandForTest()));
+
+    // ⑤ 松手 → 多选态结束
+    dv.mouseUpForTest (freqToXforTest (fL), sweepY);
+    check (! dv.isBandSweepActiveForTest(), "T43.5 松手 → 多选态结束", "");
+
+    // ⑥ 回归：多选不得劫走曲线拖拽（O5-A Makeup）
+    //    曲线上按下 → curvePending_ 布防 → BandSweep 不应接管
+    {
+        const float cx2 = freqToXforTest (fHM);
+        const float cy2 = dv.curveYAtFreqForTest (fHM);
+        const float mkBefore = [&] {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::bandMakeup (2))
+                        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                            return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return 0.0f;
+        }();
+        dv.mouseDownForTest (cx2, cy2);
+        dv.mouseDragForTest (cx2, cy2 - 120.0f);
+        dv.mouseUpForTest (cx2, cy2 - 120.0f);
+        const float mkAfter = [&] {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::bandMakeup (2))
+                        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                            return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+            return 0.0f;
+        }();
+        std::cout << "  Makeup（曲线拖拽）: " << mkBefore << " -> " << mkAfter << std::endl;
+        check (std::abs (mkAfter - mkBefore) > 0.02f,
+               "T43.6 多选不劫走曲线拖拽（O5-A Makeup 仍生效）",
+               juce::String (mkBefore) + " -> " + juce::String (mkAfter));
+    }
+
+    // ⑦ 回归：多选不得劫走 Range 缘拖拽
+    //    注意：hitTestRangeEdge 只测**选中段**，所以先选中 band2
+    {
+        dv.mouseDownForTest (freqToXforTest (fHM), sweepY);
+        dv.mouseUpForTest (freqToXforTest (fHM), sweepY);
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+        check (dv.getSelectedBandForTest() == 2, "T43.7 前置：已选中 band2",
+               juce::String (dv.getSelectedBandForTest()));
+
+        float ex = 0.0f, ey = 0.0f;
+        const bool found = dv.findRangeEdgePointForTest (2, ex, ey);
+
+        if (found)
+        {
+            const float rBefore = [&] {
+                for (auto* pp : proc->getParameters())
+                    if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                        if (pw->getParameterID() == Param::bandRange (2))
+                            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                                return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+                return 0.0f;
+            }();
+            dv.mouseDownForTest (ex, ey);
+            dv.mouseDragForTest (ex, ey + 80.0f);
+            dv.mouseUpForTest (ex, ey + 80.0f);
+            const float rAfter = [&] {
+                for (auto* pp : proc->getParameters())
+                    if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                        if (pw->getParameterID() == Param::bandRange (2))
+                            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (pp))
+                                return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
+                return 0.0f;
+            }();
+            std::cout << "  Range（缘拖拽）: " << rBefore << " -> " << rAfter << std::endl;
+            check (std::abs (rAfter - rBefore) > 0.2f,
+                   "T43.7 多选不劫走 Range 缘拖拽",
+                   juce::String (rBefore) + " -> " + juce::String (rAfter));
+        }
+        else
+            check (false, "T43.7 多选不劫走 Range 缘拖拽", "未找到 Range 缘测试点");
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4592,6 +4780,8 @@ int main()
     testAnalyzerOptions();          // T39 Analyzer 单选项 + 组合（内部测试）
     testPopoverControls();          // T40 Phase 5.3.2 Popover 控件接线
     testAnalyzerPanelSticky();      // T41 Phase D Analyzer 面板 sticky 语义
+    testLinkedDrawerSticky();       // T42 Phase D-2 LINKED 抽屉 sticky 语义
+    testBandSweepMultiSelect();     // T43 Phase D-3 显示背景拖拽多选
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

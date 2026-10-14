@@ -1710,6 +1710,10 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
     if (analyzerPanel_ != nullptr)
         analyzerPanel_->hoverButton (hitTestAnalyzerButton (p)
                                      || analyzerPanel_->panelRect().contains (p));
+    // Phase D-2：LINKED 抽屉按钮同样的悬停/sticky 语义
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->hoverButton (linkedDrawer_->hitTestButton (p)
+                                     || linkedDrawer_->hitTestPanel (p));
 
     int b = -1, j = -1;
     const bool onBtn = hitTestButton (p, b, j) != 0;
@@ -1834,6 +1838,16 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 
 void DisplayView::mouseDown (const juce::MouseEvent& e)
 {
+    // Phase D-3：每次 mouseDown 都重置拖拽状态——新手势开始。
+    // ⚠️ 不清零的后果：若上一次 mouseDown 布防了 BandSweep 而 mouseUp 从未到达
+    //    （鼠标移出窗口、模态吞掉事件、测试里只按不松），drag_ 会卡在 BandSweep，
+    //    之后在 Popover 滑杆/旋钮上起手的拖拽会被这个陈旧状态劫走。
+    //    这是 T40.8 回归的根因，也是真实存在的陈旧手势 bug。
+    drag_ = DragMode::None;
+    bandSweepActive_ = false;
+    curvePending_ = false;
+    rangePending_ = false;
+
     // #7：输入框激活时，先点别处 = 取消
     if (freqInput_ != nullptr && freqInput_->isActive())
     {
@@ -1911,18 +1925,21 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         }
     }
 
-    // 0) LINKED 抽屉梯形按钮（§5.2）：点开/收起
+    // 0) LINKED 抽屉梯形按钮（§5.2）：Phase D-2 sticky 语义
+    //    悬停打开（非 sticky）→ 点击变 sticky 钉住 → 再点收起并解除。
+    //    与 AnalyzerPanel（D-1）同一套状态机，对齐 Pro-MB 底栏按钮行为。
     if (linkedDrawer_ != nullptr && linkedDrawer_->hitTestButton (p))
     {
         // O6 方案1：与 Popover 互斥
         togglePopover (false);
-        linkedDrawer_->setOpen (! linkedDrawer_->isOpen());
+        linkedDrawer_->clickButton();
         repaint();
         return;
     }
-    // 抽屉打开时，点面板外 = 收起（"点空白收起"）
-    if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen() && ! linkedDrawer_->hitTestPanel (p))
-        linkedDrawer_->setOpen (false);
+    // 抽屉打开时，点面板外 = 收起并解除 sticky
+    if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen()
+        && ! linkedDrawer_->hitTestPanel (p))
+        linkedDrawer_->clickOutside();
 
     // 0a) Display Range 档位：点击弹出二级菜单（Pro-MB drop-down 语义）
     if (hitTestDisplayRange (p))
@@ -2018,6 +2035,10 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
 
     // 5) 点分区 → 选中 + Popover 弹出（§4.1「选段开菜单」/§6）
     //    ⚠️ 仅响应**绘图区**内的点击（顶栏/global bar/抽屉按钮不算分区）
+    //    Phase D-3：在绘图区背景按下时**同时**准备多选（BandSweep）。
+    //    单击仍走原来的"选中+开 Popover"；一旦发生位移就升级为多选，
+    //    扫过的频段全部加入选中（Pro-MB："click and drag across the display
+    //    background to quickly select multiple bands"）。
     const float plotTop = plotTopPx();
     const float plotBottom = plotBottomPx();
     const bool inPlotArea = (p.y >= plotTop && p.y <= plotBottom);
@@ -2025,9 +2046,20 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
     const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
     if (inPlotArea)
-    for (int i = 0; i < 4; ++i)
-        if (p.x >= edges[i] && p.x < edges[i + 1])
+    {
+        // 记录多选快照：拖拽开始时的各段选中态
+        // ⚠️ 只有在曲线/Range 缘都没有被命中时才布防多选——
+        //    那两个分支靠 curvePending_/rangePending_ 在随后的 drag 中接管，
+        //    若这里无条件布防，BandSweep 会抢走它们的拖拽。
+        if (! curvePending_ && ! rangePending_)
         {
+            bandSweepActive_ = true;
+            drag_ = DragMode::BandSweep;
+        }
+
+        for (int i = 0; i < 4; ++i)
+            if (p.x >= edges[i] && p.x < edges[i + 1])
+            {
             const bool popoverWasOpen = (bandPopover_ != nullptr && bandPopover_->isOpen());
             if (selectedBand_ != i)
             {
@@ -2050,6 +2082,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             repaint();
             return;
         }
+    }
     // 6) 点空白 → 收起 Popover（§6）
     togglePopover (false);
     repaint();
@@ -2058,6 +2091,43 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
 void DisplayView::mouseDrag (const juce::MouseEvent& e)
 {
     const auto p = e.position;
+
+    // Phase D-3：显示背景拖拽多选（Pro-MB multi-select）
+    // Pro-MB 官方帮助："click and drag across the display background to
+    // quickly select multiple bands"。
+    //
+    // ⚠️ 语义说明：本插件是**单选中**模型（selectedBand_ 是单个 int，没有多选集合），
+    //    所以这里不做"快照 + toggle"式的真多选——那套逻辑在单选变量上是不自洽的
+    //    （未被扫过的段在模型里"仍被选中"，会在循环里覆盖结果；曾因 selectedBand_
+    //    默认值是 2 而非 0 导致 T43.4 回归）。
+    //    实际可感知的表现：拖动过程中选中段**连续跟随光标**，一扫而过就能连续
+    //    切换/预览多个频段——这正是 Pro-MB 该手势想要的速度。
+    //
+    // ⚠️ 只在**没有其他拖拽意图**时才接管：曲线/Range 缘起手的拖动
+    //    必须继续走 curvePending_/rangePending_ 分支（O5-A 语义），
+    //    否则这里会抢走 Makeup/Range 拖拽（曾因此回归 9 条测试）。
+    if (drag_ == DragMode::BandSweep && bandSweepActive_
+        && ! curvePending_ && ! rangePending_)
+    {
+        const float W = (float) getWidth();
+        const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+        const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+        const int hit = (p.x < edges[1]) ? 0 : (p.x < edges[2]) ? 1 : (p.x < edges[3]) ? 2 : 3;
+
+        if (hit != selectedBand_)
+        {
+            selectedBand_ = hit;
+            onSelectedBandChanged (hit);
+            curvePathsValid_ = false;
+        }
+        // hover 高亮跟随（独立于选中态，让扫过时有连续反馈）
+        hoverBand_ = hit;
+        for (int bb = 0; bb < Param::kNumBands; ++bb)
+            tweenTo (hoverT_[(size_t) bb], animNowMs(),
+                     (bb == hit) ? 1.0f : 0.0f, Anim::kFadeMs);
+        repaint();
+        return;
+    }
 
     // Popover 滑杆拖动（连续项：RATIO k=0、KNEE k=1；EXT/DETECTOR 仍是点击翻转）
     if (bandPopover_ != nullptr)
@@ -2166,6 +2236,7 @@ void DisplayView::mouseUp (const juce::MouseEvent&)
     dragAxisLocked_ = false;
     curvePending_ = false;
     rangePending_ = false;
+    bandSweepActive_ = false;     // Phase D-3：多选拖拽结束
     if (bandPopover_ != nullptr)
         bandPopover_->endSliderDrag();   // ⚠️ 必须复位：否则滑杆拖拽状态会吞掉后续所有拖拽
 }

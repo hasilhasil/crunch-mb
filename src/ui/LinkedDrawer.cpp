@@ -89,6 +89,43 @@ void LinkedDrawer::toggle()
     setOpen (! open_);
 }
 
+// ---------------- Phase D-2：Pro-MB sticky 语义 ----------------
+// 与 AnalyzerPanel 同一套状态机（悬停打开 / 点击 sticky / 再点或点外面收起）。
+void LinkedDrawer::hoverButton (bool hovering)
+{
+    // 只有**非 sticky** 时才跟随悬停开合。sticky 面板已"钉住"，悬停不影响它。
+    if (sticky_)
+        return;
+    if (hovering == open_)
+        return;
+    setOpen (hovering);
+}
+
+bool LinkedDrawer::clickButton()
+{
+    if (! sticky_)
+    {
+        // 第一次点击：变 sticky 并保持打开
+        sticky_ = true;
+        setOpen (true);
+    }
+    else
+    {
+        // 已 sticky：再点 = 收起并解除 sticky
+        sticky_ = false;
+        setOpen (false);
+    }
+    return true;
+}
+
+void LinkedDrawer::clickOutside()
+{
+    if (! open_ && ! sticky_)
+        return;
+    sticky_ = false;                 // 点外面 = 完全收起（连 sticky 一起解除）
+    setOpen (false);
+}
+
 bool LinkedDrawer::advance (double nowMs)
 {
     anim_ = tween_.value (nowMs);

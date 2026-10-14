@@ -191,6 +191,13 @@ public:
     juce::Rectangle<float> popExpertRectForTest() const;
     /** Phase C-5：EXPERT 展开内容矩形（T40 用）。 */
     juce::Rectangle<float> popExpertContentRectForTest() const;
+    /** Phase D-2 测试钩子：LINKED 抽屉是否 sticky。 */
+    bool isLinkedStickyForTest() const
+    {
+        return linkedDrawer_ != nullptr && linkedDrawer_->isSticky();
+    }
+    /** Phase D-3 测试钩子：是否正在多选拖拽。 */
+    bool isBandSweepActiveForTest() const { return bandSweepActive_; }
     /** Phase D 测试钩子：Analyzer 面板是否打开 / 是否 sticky。 */
     bool isAnalyzerOpenForTest() const
     {
@@ -385,7 +392,7 @@ private:
     int  hoverDividers_ = -1;        // C2：hover/拖动中的分割线（主题色高亮）
 
     // ---- Phase 4.4 交互状态 ----
-    enum class DragMode { None, Divider, Makeup, Range, DotFreq };
+    enum class DragMode { None, Divider, Makeup, Range, DotFreq, BandSweep };
     DragMode drag_ = DragMode::None;
     int  dragIndex_ = -1;            // 分割线索引 0..2
     int  dragBand_ = -1;             // Makeup 拖动作用的段（C4 可跨段）
@@ -403,6 +410,14 @@ private:
     float dragStartX_ = 0.0f;
     float dragStartRange_ = 0.0f;
     bool mouseDownOnButton_ = false;
+
+    // ---- Phase D-3：显示背景拖拽多选（Pro-MB multi-select）----
+    // Pro-MB 官方帮助原话："click and drag across the display background to
+    // quickly select multiple bands"。在频谱背景上（不命中任何控件）按下并拖动，
+    // 扫过的频段全部变为选中态。
+    // 注意与既有拖拽的分辨：只有在**背景**上起手才算 BandSweep，
+    // 曲线/频点/分割线/Range 缘起手仍走各自的分支。
+    bool bandSweepActive_ = false;
     std::array<float, 4> bypassMemo_ { { 100.0f, 100.0f, 100.0f, 100.0f } };  // BYP 宏记忆（DESIGN §6.6）
 
     void setParamNorm (const juce::String& id, float norm) const;
