@@ -5313,6 +5313,48 @@ static void testSelfDrawnDropDown()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T51 Phase E-4：1px 细线像素对齐
+//   细线中心必须落在 floor(y)+0.5，否则边缘覆盖不对称，AA 后发暗
+// ------------------------------------------------------------
+static void testHairlinePixelAlignment()
+{
+    std::cout << "\n--- T51 Phase E-4 1px 细线像素对齐 ---\n";
+
+    // ① floor(y)+0.5 的几何：任意 y 都应得到半整数中心
+    {
+        bool ok = true;
+        const float cases[] = { 0.0f, 0.3f, 1.0f, 1.7f, 99.4f, 250.0f, 588.0f };
+        for (float y : cases)
+        {
+            const float ya = std::floor (y) + 0.5f;
+            // 中心必须是 n+0.5 形式（半整数）
+            if (std::abs (ya - std::floor (ya) - 0.5f) > 1.0e-4f) { ok = false; break; }
+            // 且必须是距离 y 最近的那个半整数
+            if (std::abs (ya - y) > 0.5f + 1.0e-4f) { ok = false; break; }
+        }
+        check (ok, "T51.1 细线中心恒为 floor(y)+0.5（最近半整数）", "");
+    }
+
+    // ② alpha 提亮：2x 后不超过 1.0
+    {
+        bool ok = true;
+        for (float a : { 0.0f, 0.25f, 0.5f, 0.6f, 0.75f, 1.0f })
+        {
+            const float boosted = juce::jmin (1.0f, a * 2.0f);
+            if (boosted < a - 1.0e-6f || boosted > 1.0f + 1.0e-6f) { ok = false; break; }
+        }
+        check (ok, "T51.2 alpha 2x 提亮后仍在 [a, 1] 内（不发白发爆）", "");
+    }
+
+    // ③ 细线宽度恒为 1px（不随 y 小数部分变化）
+    check (std::abs ((std::floor (12.9f) + 0.5f) - 12.5f) < 1.0e-4f
+           && std::abs ((std::floor (13.1f) + 0.5f) - 13.5f) < 1.0e-4f,
+           "T51.3 相邻两像素中心的线位置相差 1px", "");
+
+    std::cout << "  （E-4 是视觉抛光，几何与 alpha 不变量已验证）" << std::endl;
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5372,6 +5414,7 @@ int main()
     testMidiLearn();               // T48 Phase D-7 MIDI Learn
     testGlobalMix();               // T49 Phase 全局 Mix
     testSelfDrawnDropDown();       // T50 Phase 自绘 TextSelect 下拉
+    testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

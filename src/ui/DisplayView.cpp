@@ -309,12 +309,15 @@ void DisplayView::drawGrid (juce::Graphics& g)
         const float db = (float) i;
         if (std::abs (db) > curveRangeDisplay_ + 1.0e-4f) continue;
         g.setColour (std::abs (db) < 0.01f ? pal_.gridZ : pal_.grid);
-        g.fillRect (0.0f, gainToY (db), (float) getWidth(), 1.0f);
+        // Phase E-4：hairline 提亮，抵消 AA 发暗
+        drawHairlineH (g, gainToY (db), 0.0f, (float) getWidth(),
+                       std::abs (db) < 0.01f ? pal_.gridZ : pal_.grid);
     }
     for (int db = 0; db >= -100; db -= 20)
     {
         g.setColour (pal_.grid.withAlpha (0.55f));
-        g.fillRect (0.0f, specDbToY ((float) db), (float) getWidth(), 1.0f);
+        drawHairlineH (g, specDbToY ((float) db), 0.0f, (float) getWidth(),
+                       pal_.grid.withAlpha (0.55f));
     }
     for (float f : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
         g.fillRect (freqToX (f), top, 1.0f, bottom - top);
@@ -697,7 +700,9 @@ void DisplayView::drawMeters (juce::Graphics& g)
     g.fillRect (sx (kMeterX), top, sx (kMeterW), bottom - top);
     g.setColour (pal_.grid);
     for (int db = 0; db >= -60; db -= 20)
-        g.fillRect (sx (kMeterX), meterY ((float) db), sx (kMeterW), 1.0f);
+        // Phase E-4：hairline 提亮
+        drawHairlineH (g, meterY ((float) db), sx (kMeterX),
+                       sx (kMeterX) + sx (kMeterW), pal_.grid);
 
     // IN 柱：inputFill 平涂 0.35α
     const float yIn = meterY (meterInDb_);
@@ -767,9 +772,8 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     // 对齐 Pro-MB：顶栏是压在频谱之上的半透明条，频谱从它下面透出来。
     g.setColour (pal_.surfaceA);
     g.fillRect (0.0f, 0.0f, W, h);
-    // 底缘 1px 分隔（比之前的 gridZ 更淡，玻璃条不需要硬边）
-    g.setColour (pal_.gridZ.withAlpha (0.6f));
-    g.fillRect (0.0f, h - 1.0f, W, 1.0f);
+    // 底缘 1px 分隔（Phase E-4：用 hairline 提亮，抵消 AA 发暗）
+    drawHairlineH (g, h - 1.0f, 0.0f, W, pal_.gridZ.withAlpha (0.6f));
 
     // A9：模式信息文字已删除（用户不需要这行解释）
     // 段名（选中段）
@@ -840,8 +844,8 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     }
     g.setColour (pal_.surfaceA);
     g.fillRect (0.0f, y0, W, h);
-    g.setColour (pal_.gridZ.withAlpha (0.6f));
-    g.fillRect (0.0f, y0, W, 1.0f);
+    // Phase E-4：hairline 提亮
+    drawHairlineH (g, y0, 0.0f, W, pal_.gridZ.withAlpha (0.6f));
 
     // 全局选择器（Phase 4.4 接下拉）
     g.setFont (MBTheme::font (MBTheme::regular(), 11.5f));
@@ -2165,6 +2169,30 @@ bool DisplayView::hitTestDisplayRange (juce::Point<float> p) const
     const float W = (float) getWidth();
     const juce::Rectangle<float> r (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f));
     return r.contains (p);
+}
+
+// ---------------- Phase E-4：1px 细线 AA 提亮 ----------------
+// 1px 线的抗鸾齿问题：线的两个边缘各被覆盖约 0.5px，中间只有 ~50% 不透明，
+// 结果亮度约为设定值的一半，细线看起来发灰发虚。
+// 补偿两步：
+//   1) 像素对齐——把线中心放到 floor(y)+0.5，让边缘对称分摊，覆盖最大化；
+//   2) alpha 提亮——按覆盖率倒数放大 alpha，让最终视觉亮度接近设定值。
+void DisplayView::drawHairlineH (juce::Graphics& g, float y, float x0, float x1,
+                                 juce::Colour c) const
+{
+    const float ya = std::floor (y) + 0.5f;
+    const float alpha = juce::jmin (1.0f, c.getFloatAlpha() * 2.0f);
+    g.setColour (c.withMultipliedAlpha (alpha / juce::jmax (1.0e-4f, c.getFloatAlpha())));
+    g.fillRect (x0, ya, x1 - x0, 1.0f);
+}
+
+void DisplayView::drawHairlineV (juce::Graphics& g, float x, float y0, float y1,
+                                 juce::Colour c) const
+{
+    const float xa = std::floor (x) + 0.5f;
+    const float alpha = juce::jmin (1.0f, c.getFloatAlpha() * 2.0f);
+    g.setColour (c.withMultipliedAlpha (alpha / juce::jmax (1.0e-4f, c.getFloatAlpha())));
+    g.fillRect (xa, y0, 1.0f, y1 - y0);
 }
 
 // ---------------- Phase：自绘 TextSelect 下拉 ----------------

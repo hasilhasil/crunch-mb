@@ -507,6 +507,18 @@ private:
     bool handleMidiLearnClick (juce::Point<float> p);
     void drawMidiLearnOverlay (juce::Graphics& g);
 
+    // ---- Phase E-4：1px 细线 AA 提亮 ----
+    // 1px 线用 fillRect/drawRoundedRectangle 画时，抗锯齿把边缘各吃掉约
+    // 0.5px 的覆盖，实际亮度只有设定值的 ~50%，看起来发灰发虚。
+    // 补偿：把线对齐到像素中心（y 取 floor+0.5），并对 alpha 做提亮。
+    // 这是细节抛光，不改变布局与语义。
+    /** 画一条水平 1px 细线（像素对齐 + AA 提亮）。 */
+    void drawHairlineH (juce::Graphics& g, float y, float x0, float x1,
+                        juce::Colour c) const;
+    /** 画一条垂直 1px 细线（像素对齐 + AA 提亮）。 */
+    void drawHairlineV (juce::Graphics& g, float x, float y0, float y1,
+                        juce::Colour c) const;
+
     // ---- Phase：自绘 TextSelect 下拉（替换原生 PopupMenu）----
     // Pro-MB 的 drop-down 是自绘的：与插件同色的圆角面板、当前项打勾、
     // hover 高亮。原生 juce::PopupMenu 是操作系统外观，破坏主题一致性。
