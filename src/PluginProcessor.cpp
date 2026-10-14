@@ -180,6 +180,8 @@ void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const 
         bp.makeupDb    = apvts.getRawParameterValue (Param::bandMakeup (b))->load();
         bp.mixPct      = apvts.getRawParameterValue (Param::bandMix (b))->load();
         bp.kneeDb      = apvts.getRawParameterValue (Param::bandKnee (b))->load();   // 2026-10-14：连续 dB
+        // Phase C-6：动态模式 Compress/Expand
+        bp.dynamics    = choiceIndex (apvts.getRawParameterValue (Param::bandDynamics (b)));
         // 2026-10-14：侧链滤波 + 立体声链接
         bp.scFree      = choiceIndex (apvts.getRawParameterValue (Param::bandSCFilter (b))) == (int) Param::SCFilter::Free;
         bp.scLowHz     = apvts.getRawParameterValue (Param::bandSCLow  (b))->load();

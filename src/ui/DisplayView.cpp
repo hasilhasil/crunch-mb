@@ -1983,6 +1983,13 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             repaint();
             return;
         }
+        // Phase C-6：Dynamics 分段按钮（Compress/Expand）
+        if (bandPopover_->hitTestDynamicsSeg (p))
+        {
+            bandPopover_->clickDynamicsSeg();
+            repaint();
+            return;
+        }
         // Phase C-5：EXPERT 展开内容的两行可点（Detector 翻转 / Lookahead 循环）
         {
             const auto row = bandPopover_->hitTestExpertRow (p);

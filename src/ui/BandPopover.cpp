@@ -128,6 +128,34 @@ juce::Rectangle<float> BandPopover::expertContentRect() const
                                    er.getY(), ew, eh);
 }
 
+// ---------------- Phase C-6：Dynamics 分段按钮 ----------------
+// Pro-MB 的 segmented control：两段等宽，选中段用 accent 底 + 白字，
+// 未选中段透明底 + dim 字。点击翻转 Compress/Expand。
+juce::Rectangle<float> BandPopover::dynamicsSegRect() const
+{
+    const auto r = popoverRect();
+    // 放在滑杆行上方、旋钮行下方（r 的 118/200 处），宽约为面板的 40%
+    const float w = r.getWidth() * (188.0f / 472.0f);
+    const float h = r.getHeight() * (20.0f / 200.0f);
+    const float x = r.getX() + r.getWidth() * (10.0f / 472.0f);
+    const float y = r.getY() + r.getHeight() * (118.0f / 200.0f);
+    return juce::Rectangle<float> (x, y, w, h);
+}
+
+bool BandPopover::hitTestDynamicsSeg (juce::Point<float> p) const
+{
+    return open_ && dynamicsSegRect().contains (p);
+}
+
+bool BandPopover::clickDynamicsSeg()
+{
+    dynamicsExpand_ = ! dynamicsExpand_;
+    const int b = (band_ >= 0) ? band_ : 0;
+    setParamNorm ("band" + juce::String (b) + "Dynamics", dynamicsExpand_ ? 1.0f : 0.0f);
+    repaint();
+    return true;
+}
+
 BandPopover::ExpertRow BandPopover::hitTestExpertRow (juce::Point<float> p) const
 {
     if (! open_ || ! expertOpen_)
@@ -344,6 +372,8 @@ void BandPopover::syncFromParams()
     sliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");
     sliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");
     sliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");
+    sliders_[4] = getParamNorm ("lookahead") * 2.0f;   // 全局 lookahead 的索引 0..2
+    dynamicsExpand_ = sliders_[3] >= 0.0f && getParamNorm ("band" + juce::String (b) + "Dynamics") > 0.5f;
 }
 
 void BandPopover::tickEditCursors (juce::uint32 nowMs)
@@ -457,6 +487,35 @@ void BandPopover::paint (juce::Graphics& g)
                     juce::Rectangle<float> (cx - unitW * 0.5f, kr.getBottom() - r.getHeight() * (12.0f / 200.0f),
                                             unitW, 11.0f),
                     juce::Justification::centredTop);
+    }
+
+    // ---- Phase C-6：Dynamics 分段按钮（Compress / Expand，Pro-MB segmented 对标）----
+    {
+        const auto seg = dynamicsSegRect();
+        const float halfW = seg.getWidth() * 0.5f;
+        const juce::String labels[2] = { "COMPRESS", "EXPAND" };
+        for (int i = 0; i < 2; ++i)
+        {
+            const bool on = ((i == 1) == dynamicsExpand_);
+            auto cell = juce::Rectangle<float> (seg.getX() + halfW * (float) i, seg.getY(),
+                                                halfW, seg.getHeight());
+            if (on)
+            {
+                g.setColour (pal_.accent.withAlpha (0.90f * a));
+                g.fillRoundedRectangle (cell.reduced (r.getWidth() * 0.004f),
+                                        cell.getHeight() * 0.28f);
+                g.setColour (juce::Colours::white.withAlpha (0.95f * a));
+            }
+            else
+            {
+                g.setColour (pal_.dim.withMultipliedAlpha (a));
+            }
+            g.setFont (MBTheme::font (on ? MBTheme::semiBold() : MBTheme::regular(), 9.5f));
+            g.drawText (labels[i], cell, juce::Justification::centred);
+        }
+        // 外框（分段控件的容器感）
+        g.setColour (pal_.gridZ.withMultipliedAlpha (a));
+        g.drawRoundedRectangle (seg, seg.getHeight() * 0.28f, 1.0f);
     }
 
     // ---- 滑杆行：RATIO / KNEE(0-48dB) / EXT ----

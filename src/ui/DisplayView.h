@@ -123,6 +123,12 @@ public:
     int   getDisplayRangeModeForTest() const { return displayRangeMode_; }
     /** Phase D-5 测试钩子：设置 Display Range 模式（0=Auto，1..4=固定档）。 */
     void  setDisplayRangeModeForTest (int m) { displayRangeMode_ = juce::jlimit (0, 4, m); }
+    /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
+    juce::Rectangle<float> dynamicsSegRectForTest() const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->dynamicsSegRectForTest()
+                                       : juce::Rectangle<float>();
+    }
     // 测试钩子：各层 Path 是否有内容（T29 闪烁回归）
     std::string getCurvePathLenForTest() const { return curvePath_.isEmpty() ? "" : "x"; }
     std::string getRangeEdgeLenForTest (int b) const

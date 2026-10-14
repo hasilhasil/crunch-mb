@@ -52,8 +52,16 @@ float BandCompressor::computeTargetGainDb (float levelDb) const noexcept
     // Range 符号决定方向（Pro-MB / Future MB 语义）：
     //   Range < 0 → 向下压缩：阈值以上衰减（经典 compressor）
     //   Range > 0 → 向上压缩：阈值以下抬升（从噪声底压缩动态范围）
+    //
+    // Phase C-6：DynamicsMode（Pro-MB Compress/Expand 分段按钮对标）
+    //   Compress → 以上逻辑（朝阈值方向压）
+    //   Expand   → 反向：阈值以上**抬升**、阈值以下**衰减**（扩大动态范围），
+    //              用于修复被过度压缩的音轨、或做"门限扩展"式的清晰化。
+    //              数学上就是把 Compress 的增益曲线取负号（幅度按 Range 钳制）。
     const bool upward = rangeDb_ > 0.0f;
+    const bool expand = (dynamicsMode_ == DynamicsMode::Expand);
     const float lim = std::abs (rangeDb_);          // |Range| = 增益变化幅度上限
+    const float sign = expand ? -1.0f : 1.0f;       // Expand = Compress 曲线取负
 
     float gainDb = 0.0f;
 
@@ -94,6 +102,8 @@ float BandCompressor::computeTargetGainDb (float levelDb) const noexcept
             gainDb = over > 0.0f ? slope * over : 0.0f;
         }
     }
+
+    gainDb *= sign;                     // Phase C-6：Expand 模式取负
 
     // |增益变化| ≤ |Range|
     return juce::jlimit (-lim, lim, gainDb);

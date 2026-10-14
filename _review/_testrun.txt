@@ -1,7 +1,7 @@
 ﻿Crunch MB — Phase 3 DSP 离线断言（含 Phase 2 全量 + DAW 链路回归）
 
 --- T0 参数系统 ---
-[PASS] T0.1 å¸å±åæ°æ° = 79ï¼2026-10-14 æ°å¢ oversampling + æ¯æ®µä¾§é¾æ»¤æ³¢Ã3 + StereoLinkï¼
+[PASS] T0.1 å¸å±åæ°æ° = 83ï¼2026-10-14ï¼oversampling + æ¯æ®µä¾§é¾æ»¤æ³¢Ã3 + StereoLink + Dynamicsï¼
 [PASS] T0.2 å³é® ID å¯å¯»åï¼band{i}Range / band{i}Delta / phaseModeï¼
 [PASS] T0.3 clamp åæ³å¼ä¸å
 [PASS] T0.4 clamp è¿è§å¼æ¶æä¸º â¥1 å«åº¦é¾
@@ -9,9 +9,9 @@
 [PASS] T0.6 ç¶æåºååå¾è¿æ æï¼band2Makeup=3.2dB / xover1=333Hzï¼
 
 --- T0b 参数清单盘点 ---
-[PASS] T0b.1 åæ°æ»æ° = 79ï¼2026-10-14ï¼
+[PASS] T0b.1 åæ°æ»æ° = 83ï¼2026-10-14ï¼
 [PASS] T0b.2 æ¯æ®µ Makeup/Solo/Mute/Delta/Ext åæ°é½å¨ï¼å± 20 ä¸ªï¼
----- 79 参数清单（Studio One 参数下拉显示名 → ID）----
+---- 83 参数清单（Studio One 参数下拉显示名 → ID）----
   enabled  |  Enabled
   phaseMode  |  Phase Mode
   linearQuality  |  Linear Quality
@@ -32,6 +32,7 @@
   band0Mix  |  Low Mix
   band0Knee  |  Low Knee
   band0Detector  |  Low Detector
+  band0Dynamics  |  Low Dynamics
   band0SCFilter  |  Low Side Chain Filtering
   band0SCLow  |  Low Side Chain Low Frequency
   band0SCHigh  |  Low Side Chain High Frequency
@@ -49,6 +50,7 @@
   band1Mix  |  Low Mid Mix
   band1Knee  |  Low Mid Knee
   band1Detector  |  Low Mid Detector
+  band1Dynamics  |  Low Mid Dynamics
   band1SCFilter  |  Low Mid Side Chain Filtering
   band1SCLow  |  Low Mid Side Chain Low Frequency
   band1SCHigh  |  Low Mid Side Chain High Frequency
@@ -66,6 +68,7 @@
   band2Mix  |  High Mid Mix
   band2Knee  |  High Mid Knee
   band2Detector  |  High Mid Detector
+  band2Dynamics  |  High Mid Dynamics
   band2SCFilter  |  High Mid Side Chain Filtering
   band2SCLow  |  High Mid Side Chain Low Frequency
   band2SCHigh  |  High Mid Side Chain High Frequency
@@ -83,6 +86,7 @@
   band3Mix  |  High Mix
   band3Knee  |  High Knee
   band3Detector  |  High Detector
+  band3Dynamics  |  High Dynamics
   band3SCFilter  |  High Side Chain Filtering
   band3SCLow  |  High Side Chain Low Frequency
   band3SCHigh  |  High Side Chain High Frequency
@@ -205,7 +209,7 @@
 [PASS] T13.2 EXT æ£æµï¼åä¾§é¾é©±å¨åç¼©ï¼æ»çº¿é¾è·¯çæï¼
 [PASS] T13.3 æ ä¾§é¾æ¶ fallback INTï¼ä¸è¯¯åç¼©ï¼
 
---- T15 参数灵敏度全量审计（79 参数）---
+--- T15 参数灵敏度全量审计（83 参数）---
   基线输出 RMS = 0.290279
   [PASS] band0Threshold  Δ=-0.065dB  (Low Threshold −20→−45dB（压得更狠）)
   [PASS] band0Range  Δ=2.405dB  (Low Range −6→−29dB（恢复 GR 钳制）)
@@ -270,7 +274,7 @@
 [PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
 [PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
 [PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
-  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-105.029dB
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-105.195dB
 [PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
 [PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
 [PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
@@ -321,7 +325,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=83.3281MB  anim#1=168.781MB (+85.4531)  anim#2=169.496MB (+86.168 / +0.714844 for the 2nd round)  editorsx200=169.496MB (+86.168)  theme/resizex50=169.316MB (+85.9883)  resizeStormx400=169.164MB (+85.8359)
+  RSS: start=84.0156MB  anim#1=165.914MB (+81.8984)  anim#2=166.199MB (+82.1836 / +0.285156 for the 2nd round)  editorsx200=166.199MB (+82.1836)  theme/resizex50=166.375MB (+82.3594)  resizeStormx400=167.07MB (+83.0547)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -535,7 +539,7 @@
   Speed[1] tau=20ms: loud=-6.67806dB 阶跃后=-23.5717dB
 [PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
 [PASS] T39.1b é¶è·åç¡®å®ä¸è½
-  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-16.1194dB
+  Speed[2] tau=60ms: loud=-6.67755dB 阶跃后=-15.9424dB
 [PASS] T39.1 åå¸§ä»çº§æ­£å¸¸
 [PASS] T39.1b é¶è·åç¡®å®ä¸è½
 [PASS] T39.2 Speed ä¸æ¡£ä¸è½éåº¦éå¢ï¼fast < medium < slowï¼
@@ -557,7 +561,7 @@
 [PASS] T39.12 Freeze + Tiltï¼å»ç»åç»ä¿ç tilt åç§»ï¼+9dB @4kHzï¼
 [PASS] T39.12b å»ç»åå³ tilt ä¸æä½å·²ä¿æåç»
 [PASS] T39.14 å¼æå¸§å°è¾¾ UI å±ï¼é¢è°±å¯è§æ§åç½®ï¼
-  渲染差分: 关Pre=22352px  关Post=18511px  全关=23723px
+  渲染差分: 关Pre=22921px  关Post=18932px  全关=24317px
 [PASS] T39.15 å³ Pre â ç»é¢ææ¾ååï¼Pre å±è§è§çæï¼
 [PASS] T39.16 å³ Post â ç»é¢ææ¾ååï¼Post å±è§è§çæï¼
 [PASS] T39.17 Pre/Post å¨å³ â ååéå¤§äºåå³ä»»ä¸å±ï¼ä¸¤å±å å çæï¼
@@ -662,5 +666,25 @@
 [PASS] T46.5 æ¾æ â éåº OutputGain ææ½æ
 [PASS] T46.6 æ  Alt ç¹å»ä»æå¼ Output é¢æ¿ï¼D-4 ä¸åå½ï¼
 
+--- T47 Phase C-6 DynamicsMode Compress/Expand ---
+  Compress: 0dBFS->-15  -40dBFS->0
+[PASS] T47.1 Compressï¼éå¼ä»¥ä¸è¡°å â15 dB
+[PASS] T47.2 Compressï¼éå¼ä»¥ä¸ä¸å¨
+  Expand:   0dBFS->15  -40dBFS->-0
+[PASS] T47.3 Expandï¼éå¼ä»¥ä¸æ¬å +15 dBï¼Compress åè´ï¼
+[PASS] T47.4 Expandï¼éå¼ä»¥ä¸ä»ä¸å¨
+[PASS] T47.5 Expand ä¸ Compress æ¹åç¸å
+  Expand(Range=-6): 0dBFS->6
+[PASS] T47.6 Expand ä»å |Range| é³å¶ï¼â¤ 6 dBï¼
+[PASS] T47.7 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T47.8 æå¼ band2 Popover
+[PASS] T47.9 Dynamics åæ®µæé®ä¸ºæ¨ªåï¼å®½ > 3Ãé«ï¼
+  band2Dynamics norm: 0
+[PASS] T47.10 é»è®¤ Compress
+  点击 EXPAND 后: 1
+[PASS] T47.11 ç¹å» EXPAND â åæ°ç¿»è½¬ä¸º Expand
+  点击 COMPRESS 后: 0
+[PASS] T47.12 ç¹å» COMPRESS â ç¿»å Compress
+
 ====================================
-PASS 342 / FAIL 0
+PASS 354 / FAIL 0

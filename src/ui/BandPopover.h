@@ -63,6 +63,13 @@ public:
     juce::Rectangle<float> expertRect() const;
     /** Phase C-5：EXPERT 展开内容的矩形（右缘标签左侧）。 */
     juce::Rectangle<float> expertContentRect() const;
+
+    /** Phase C-6：Dynamics 分段按钮（Compress/Expand，Pro-MB segmented 对标）。 */
+    juce::Rectangle<float> dynamicsSegRect() const;
+    bool hitTestDynamicsSeg (juce::Point<float> p) const;
+    /** 返回 true 表示状态翻转了。 */
+    bool clickDynamicsSeg();
+    bool dynamicsIsExpand() const noexcept { return dynamicsExpand_; }
     bool isExpertOpen() const noexcept { return expertOpen_; }
     void toggleExpert() { expertOpen_ = ! expertOpen_; repaint(); }
 
@@ -91,6 +98,8 @@ public:
     double sliderValue (int k) const { return sliders_[(size_t) k]; }
 
     // ---- 测试钩子 ----
+    /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
+    juce::Rectangle<float> dynamicsSegRectForTest() const { return dynamicsSegRect(); }
     double popoverValueForTest (int k) const { return values_[(size_t) k]; }
     juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
     /** 测试钩子：直接施加一次滑杆值（applySlider 为 private）。 */
@@ -149,6 +158,7 @@ private:
     std::array<double, kPopKnobs> values_ {};             // 物理值
     std::array<float,  kPopKnobs> normValues_ {};         // 归一化 0..1
     std::array<double, 5> sliders_ { 4.0, 1.0, 0.0, 0.0, 0.0 };  // Ratio/Knee/Ext/Detector/(Lookahead)
+    bool dynamicsExpand_ = false;      // Phase C-6：false=Compress true=Expand
 
     std::unordered_map<juce::String, juce::AudioProcessorParameter*> paramMap_;
 

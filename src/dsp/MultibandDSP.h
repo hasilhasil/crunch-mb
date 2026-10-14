@@ -36,6 +36,7 @@ public:
         float thresholdDb = -20.0f;
         float rangeDb     = -30.0f;
         float kneeDb      = 6.0f;       // 连续 0–48 dB（2026-10-14，原 bool softKnee）
+        int   dynamics    = 0;          // 0=Compress 1=Expand（Phase C-6）
         float scLowHz     = 20.0f;      // 侧链高通（仅 Free 模式，2026-10-14）
         float scHighHz    = 20000.0f;   // 侧链低通（仅 Free 模式）
         bool  scFree      = false;      // false=Band（自身频段触发），true=Free（滤波后触发）

@@ -11,6 +11,11 @@
 // 音频线程热路径零分配零锁（TECH_SPEC §4）。
 // ============================================================
 
+// Phase C-6：动态模式（Pro-MB Compress/Expand 分段按钮对标）
+//   Compress → 朝阈值方向压（经典）
+//   Expand   → 反向，扩大动态范围（修复过缩音轨 / 门限扩展式清晰化）
+enum class DynamicsMode { Compress = 0, Expand = 1 };
+
 class BandCompressor
 {
 public:
@@ -19,6 +24,9 @@ public:
 
     void setParameters (float thresholdDb, float ratio, float attackMs, float releaseMs,
                         float rangeDb, float kneeDb, bool useRmsDetector) noexcept;
+
+    /** Phase C-6：动态模式（Compress / Expand）。 */
+    void setDynamicsMode (DynamicsMode m) noexcept { dynamicsMode_ = m; }
 
     // 立体声联动处理（就地乘平滑增益）
     void processSample (float& left, float& right) noexcept;
@@ -45,6 +53,7 @@ private:
     float ratio_       = 4.0f;
     float rangeDb_     = -30.0f;
     float kneeWidthDb_ = 6.0f;      // 连续 0–48 dB；0 = 硬膝（2026-10-14）
+    DynamicsMode dynamicsMode_ = DynamicsMode::Compress;   // Phase C-6
     bool  useRms_      = false;
 
     float attackCoeff_  = 0.0f;   // exp(-1/(tau*fs)) 形式，63%@tau

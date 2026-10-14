@@ -14,6 +14,7 @@ namespace Param
     enum class PhaseMode     { Natural = 0, Minimal = 1, Linear = 2 };
     enum class Detector      { Peak = 0, RMS = 1 };
     enum class SCFilter      { Band = 0, Free = 1 };          // 2026-10-14 侧链滤波模式
+    enum class Dynamics      { Compress = 0, Expand = 1 };    // Phase C-6
     enum class Slope         { Slope12 = 0, Slope24 = 1, Slope36 = 2, Slope48 = 3 };
     enum class Lookahead     { Off = 0, Ms1 = 1, Ms3 = 2 };
     enum class LinearQuality { Low = 0, Medium = 1, High = 2 };
@@ -67,6 +68,7 @@ namespace Param
     inline juce::String bandMix       (int i) { return "band" + juce::String (i) + "Mix"; }
     inline juce::String bandKnee      (int i) { return "band" + juce::String (i) + "Knee"; }
     inline juce::String bandDetector  (int i) { return "band" + juce::String (i) + "Detector"; }
+    inline juce::String bandDynamics  (int i) { return "band" + juce::String (i) + "Dynamics"; }   // Phase C-6
     inline juce::String bandSCFilter  (int i) { return "band" + juce::String (i) + "SCFilter"; }   // 2026-10-14
     inline juce::String bandSCLow     (int i) { return "band" + juce::String (i) + "SCLow"; }
     inline juce::String bandSCHigh    (int i) { return "band" + juce::String (i) + "SCHigh"; }

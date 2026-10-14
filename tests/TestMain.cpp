@@ -86,7 +86,7 @@ static void testParamSystem()
     DummyProc proc;
     juce::AudioProcessorValueTreeState apvts (proc, nullptr, "PARAMS", Param::createLayout());
 
-    check (proc.getParameters().size() == 79, "T0.1 布局参数数 = 79（2026-10-14 新增 oversampling + 每段侧链滤波×3 + StereoLink）",
+    check (proc.getParameters().size() == 83, "T0.1 布局参数数 = 83（2026-10-14：oversampling + 每段侧链滤波×3 + StereoLink + Dynamics）",
            "actual " + juce::String (proc.getParameters().size()));
 
     check (apvts.getParameter (Param::bandRange (2)) != nullptr
@@ -1383,7 +1383,7 @@ static void testParameterInventory()
     std::cout << "\n--- T0b 参数清单盘点 ---\n";
     std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
     const auto& params = proc->getParameters();
-    check ((int) params.size() == 79, "T0b.1 参数总数 = 79（2026-10-14）", juce::String (params.size()));
+    check ((int) params.size() == 83, "T0b.1 参数总数 = 83（2026-10-14）", juce::String (params.size()));
 
     juce::StringArray names;
     for (auto* p : params)
@@ -1409,7 +1409,7 @@ static void testParameterInventory()
     }
     check (allFound, "T0b.2 每段 Makeup/Solo/Mute/Delta/Ext 参数齐全（共 20 个）", "missing: " + missing);
 
-    std::cout << "---- 79 参数清单（Studio One 参数下拉显示名 → ID）----" << std::endl;
+    std::cout << "---- 83 参数清单（Studio One 参数下拉显示名 → ID）----" << std::endl;
     for (const auto& n : names)
         std::cout << "  " << n << std::endl;
     std::cout << "----------------------------------------------------" << std::endl;
@@ -1612,7 +1612,7 @@ static void testLowBandModeBehavior()
 // ------------------------------------------------------------
 static void testParameterSensitivity()
 {
-    std::cout << "\n--- T15 参数灵敏度全量审计（79 参数）---\n";
+    std::cout << "\n--- T15 参数灵敏度全量审计（83 参数）---\n";
 
     const int n = 512;
     const int blocks = 24;
@@ -4955,6 +4955,104 @@ static void testAltDragOutputGain()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T47 Phase C-6：DynamicsMode（Compress / Expand）
+//   DSP：Expand = Compress 增益曲线取负（幅度仍受 |Range| 钳制）
+//   UI：Popover 里的 COMPRESS/EXPAND 分段按钮（Pro-MB segmented 对标）
+// ------------------------------------------------------------
+static void testDynamicsMode()
+{
+    std::cout << "\n--- T47 Phase C-6 DynamicsMode Compress/Expand ---\n";
+
+    // ---- ① DSP：静态传输曲线验证 ----
+    {
+        BandCompressor c;
+        c.prepare (48000.0);
+        // 硬膝，ratio 4，thr −20，Range −30（向下）
+        c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -30.0f, 0.0f, false);
+
+        c.setDynamicsMode (DynamicsMode::Compress);
+        const float gCompUp  = c.getStaticGainDb (0.0f);     // 0 dBFS → over=+20 → −15 dB
+        const float gCompDn  = c.getStaticGainDb (-40.0f);   // −40 dBFS → over=−20 → 0 dB
+        std::cout << "  Compress: 0dBFS->" << gCompUp << "  -40dBFS->" << gCompDn << std::endl;
+        check (std::abs (gCompUp - (-15.0f)) < 1.0e-3f, "T47.1 Compress：阈值以上衰减 −15 dB",
+               juce::String (gCompUp));
+        check (std::abs (gCompDn) < 1.0e-4f, "T47.2 Compress：阈值以下不动", juce::String (gCompDn));
+
+        c.setDynamicsMode (DynamicsMode::Expand);
+        const float gExpUp   = c.getStaticGainDb (0.0f);     // 取负 → +15 dB
+        const float gExpDn   = c.getStaticGainDb (-40.0f);   // 仍 0
+        std::cout << "  Expand:   0dBFS->" << gExpUp << "  -40dBFS->" << gExpDn << std::endl;
+        check (std::abs (gExpUp - 15.0f) < 1.0e-3f, "T47.3 Expand：阈值以上抬升 +15 dB（Compress 取负）",
+               juce::String (gExpUp));
+        check (std::abs (gExpDn) < 1.0e-4f, "T47.4 Expand：阈值以下仍不动", juce::String (gExpDn));
+        check ((gCompUp < 0.0f) && (gExpUp > 0.0f), "T47.5 Expand 与 Compress 方向相反", "");
+
+        // Range 钳制对 Expand 同样生效
+        c.setParameters (-20.0f, 4.0f, 10.0f, 100.0f, -6.0f, 0.0f, false);   // Range −6
+        c.setDynamicsMode (DynamicsMode::Expand);
+        const float gExpClamp = c.getStaticGainDb (0.0f);
+        std::cout << "  Expand(Range=-6): 0dBFS->" << gExpClamp << std::endl;
+        check (gExpClamp <= 6.0f + 1.0e-4f, "T47.6 Expand 仍受 |Range| 钳制（≤ 6 dB）",
+               juce::String (gExpClamp));
+    }
+
+    // ---- ② UI：分段按钮 ----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        check (mb != nullptr, "T47.7 处理器实例可访问", "");
+
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+        // 打开 band2 的 Popover
+        dv.mouseDownForTest (freqToXforTest (2449.0f), 150.0f);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        check (dv.isPopoverOpenForTest() && dv.getPopoverBandForTest() == 2,
+               "T47.8 打开 band2 Popover", "");
+
+        const auto seg = dv.dynamicsSegRectForTest();
+        check (seg.getWidth() > seg.getHeight() * 3.0f,
+               "T47.9 Dynamics 分段按钮为横向（宽 > 3×高）",
+               juce::String (seg.getWidth()) + "x" + juce::String (seg.getHeight()));
+
+        const auto dynOf = [&] () -> float
+        {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::bandDynamics (2))
+                        return pw->getValue();
+            return -1.0f;
+        };
+
+        const float dynBefore = dynOf();
+        std::cout << "  band2Dynamics norm: " << dynBefore << std::endl;
+        check (dynBefore < 0.5f, "T47.10 默认 Compress", juce::String (dynBefore));
+
+        // 点击右半（EXPAND）→ 翻转为 Expand
+        dv.mouseDownForTest (seg.getRight() - seg.getWidth() * 0.25f, seg.getCentreY());
+        dv.mouseUpForTest (seg.getRight() - seg.getWidth() * 0.25f, seg.getCentreY());
+        const float dynAfter = dynOf();
+        std::cout << "  点击 EXPAND 后: " << dynAfter << std::endl;
+        check (dynAfter > 0.5f, "T47.11 点击 EXPAND → 参数翻转为 Expand",
+               juce::String (dynAfter));
+
+        // 再点左半（COMPRESS）→ 翻回
+        dv.mouseDownForTest (seg.getX() + seg.getWidth() * 0.25f, seg.getCentreY());
+        dv.mouseUpForTest (seg.getX() + seg.getWidth() * 0.25f, seg.getCentreY());
+        const float dynBack = dynOf();
+        std::cout << "  点击 COMPRESS 后: " << dynBack << std::endl;
+        check (dynBack < 0.5f, "T47.12 点击 COMPRESS → 翻回 Compress",
+               juce::String (dynBack));
+
+        mb->setEditorActive (false);
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5010,6 +5108,7 @@ int main()
     testOutputPanelSticky();       // T44 Phase D-4 Output 面板 sticky 语义
     testAutoExpandRange();         // T45 Phase D-5 拖动超范围自动扩档
     testAltDragOutputGain();       // T46 Phase D-6 Alt+拖 OUT = Output Gain
+    testDynamicsMode();            // T47 Phase C-6 DynamicsMode Compress/Expand
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

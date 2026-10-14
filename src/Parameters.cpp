@@ -99,6 +99,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         // 2026-10-14：Knee 从 Hard/Soft 二态改为连续 0–48 dB（Pro-MB 对标）。
         addFloat  (pid (bandKnee     (i)), bn + " Knee",     { 0.0f, 48.0f, 0.1f }, 6.0f, "dB", fmtDb2);
         addChoice (pid (bandDetector (i)), bn + " Detector", { "Peak", "RMS"  }, (int) Detector::Peak);
+        // Phase C-6：动态模式 Compress/Expand（Pro-MB 分段按钮对标）
+        addChoice (pid (bandDynamics (i)), bn + " Dynamics", { "Compress", "Expand" }, (int) Dynamics::Compress);
 
         // 2026-10-14：侧链滤波（Pro-MB Free 模式对标）+ 立体声连续链接
         addChoice (pid (bandSCFilter  (i)), bn + " Side Chain Filtering", { "Band", "Free" }, (int) SCFilter::Band);

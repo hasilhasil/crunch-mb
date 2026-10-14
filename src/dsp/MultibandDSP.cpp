@@ -197,6 +197,9 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
         const auto& bp = p.bands[(size_t) b];
         comps_[b].setParameters (bp.thresholdDb, bp.ratio, bp.attackMs, bp.releaseMs,
                                  bp.rangeDb, bp.kneeDb, bp.useRms);
+        // Phase C-6：动态模式（Compress / Expand）
+        comps_[b].setDynamicsMode (bp.dynamics == 1 ? DynamicsMode::Expand
+                                                    : DynamicsMode::Compress);
         comps_[b].setStereoLink (juce::jlimit (0.0f, 1.0f, bp.stereoLink * 0.01f));   // 2026-10-14
         scFilters_[(size_t) b].setParameters (bp.scLowHz, bp.scHighHz, bp.scFree);     // 2026-10-14
         makeupLin_[b]  = juce::Decibels::decibelsToGain (bp.makeupDb);
