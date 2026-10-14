@@ -22,6 +22,69 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     // cachedX_ 为 0 会让所有分区边界计算退化成负数 → 选段/命中全错。
     pollStructureParams();
     haveDrawnGain_ = false;
+
+    // Phase A：参数查找缓存（一次性建表，此后 O(1)）
+    buildParamCache();
+    // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
+    syncAllTweens();
+}
+
+void DisplayView::buildParamCache()
+{
+    paramMap_.clear();
+    for (auto* p : proc_.getParameters())
+        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            paramMap_[pw->getParameterID()] = pw;
+}
+
+void DisplayView::syncAllTweens()
+{
+    const double nowMs = animNowMs();
+    for (int b = 0; b < Param::kNumBands; ++b)
+    {
+        bandBypassed_[(size_t) b] = isBandBypassed (b);
+        selT_[(size_t) b].snapTo   ((b == selectedBand_) ? 1.0f : 0.0f);
+        hoverT_[(size_t) b].snapTo ((b == hoverBand_) ? 1.0f : 0.0f);
+        bypT_[(size_t) b].snapTo   (bandBypassed_[(size_t) b] ? 0.0f : 1.0f);
+    }
+    for (int e = 0; e < 3; ++e)
+        divT_[(size_t) e].snapTo ((e == hoverDividers_) ? 1.0f : 0.0f);
+    drawerTween_.snapTo (linkedOpen_ ? 1.0f : 0.0f);
+    popoverTween_.snapTo (popoverOpen_ ? 1.0f : 0.0f);
+    linkedAnimTarget_  = linkedOpen_ ? 1.0f : 0.0f;
+    popoverAnimTarget_ = popoverOpen_ ? 1.0f : 0.0f;
+    linkedAnim_  = linkedAnimTarget_;
+    popoverAnim_ = popoverAnimTarget_;
+    (void) nowMs;
+}
+
+bool DisplayView::advanceTweens (double nowMs)
+{
+    bool any = false;
+    for (int b = 0; b < Param::kNumBands; ++b)
+    {
+        if (! selT_[(size_t) b].done (nowMs))   any = true;
+        if (! hoverT_[(size_t) b].done (nowMs)) any = true;
+        if (! bypT_[(size_t) b].done (nowMs))   any = true;
+    }
+    for (int e = 0; e < 3; ++e)
+        if (! divT_[(size_t) e].done (nowMs))   any = true;
+    return any;
+}
+
+void DisplayView::onSelectedBandChanged (int newBand)
+{
+    const double nowMs = animNowMs();
+    for (int b = 0; b < Param::kNumBands; ++b)
+        tweenTo (selT_[(size_t) b], nowMs, (b == newBand) ? 1.0f : 0.0f, Anim::kFadeMs);
+}
+
+void DisplayView::onBandBypassChanged (int band, bool bypassed)
+{
+    if (band < 0 || band >= Param::kNumBands)
+        return;
+    const double nowMs = animNowMs();
+    tweenTo (bypT_[(size_t) band], nowMs, bypassed ? 0.0f : 1.0f, Anim::kFadeMs);
 }
 
 DisplayView::~DisplayView()
@@ -186,24 +249,24 @@ void DisplayView::drawPartitions (juce::Graphics& g)
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
     const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+    const double nowMs = animNowMs();
 
     for (int b = 0; b < 4; ++b)
     {
-        const bool sel = (b == selectedBand_);
-        const bool byp = getParamBool ("band" + juce::String (b) + "Mix") == false
-                      && proc_.apvts.getRawParameterValue (
-                             "band" + juce::String (b) + "Mix")->load() < 0.5f;
-        // P3：BYP 段 dim（Pro-MB：bypassed band 在显示里变暗）
-        const float dimK = byp ? 0.45f : 1.0f;
+        // Phase A：选中填充 / BYP 渐暗都走 Tween（原为开关量硬跳）
+        const float selK = selT_[(size_t) b].value (nowMs);       // 0..1
+        const float bypK = bypT_[(size_t) b].value (nowMs);       // 0..1（1 = 正常）
+        const float dimK = 0.45f + 0.55f * bypK;                  // P3：BYP 段 dim（Pro-MB：bypassed band 在显示里变暗）
         const float x0 = edges[b] + 1.0f, w = edges[b + 1] - edges[b] - 2.0f;
         const float h = sy (kDesignH);
-        g.setColour (pal_.accent.withAlpha ((sel ? 0.10f : 0.05f) * dimK));
+        const float fillA = 0.05f + 0.05f * selK;                 // 0.05 ↔ 0.10
+        g.setColour (pal_.accent.withAlpha (fillA * dimK));
         g.fillRect (x0, 0.0f, w, h);   // 分区底色全高（mockup: height=620），描边则贴绘图区
-        if (sel)
+        if (selK > 0.01f)
         {
             // A2.1/C2/#4：只画上/下两条横边；描边贴**绘图区边界**（状态栏下缘 / global bar 上缘），
             // 不再伸进状态栏；左边框取消（避免与分割线双边重叠变厚）
-            g.setColour (pal_.accent.withAlpha (0.9f * dimK));
+            g.setColour (pal_.accent.withAlpha (0.9f * selK * dimK));
             g.drawHorizontalLine ((int) plotTopPx(), x0, x0 + w);
             g.drawHorizontalLine ((int) plotBottomPx(), x0, x0 + w);
             if (b == 3)
@@ -278,20 +341,25 @@ void DisplayView::drawScales (juce::Graphics& g)
 void DisplayView::drawCrossovers (juce::Graphics& g)
 {
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const double nowMs = animNowMs();
 
     for (int e = 0; e < 3; ++e)
     {
         const float x = nx[e];
-        // C2：hover/拖动中的分割线转主题色，其余默认灰
-        const bool hot = (hoverDividers_ == e);
-        g.setColour (hot ? pal_.accent : pal_.gridZ);
+        // Phase A：hover/拖动主题色渐变（原为硬跳 hot ? accent : gridZ）
+        const float hot = divT_[(size_t) e].value (nowMs);
+        const bool dragging = (drag_ == DragMode::Divider && dragBand_ == e);
+        const juce::Colour c = pal_.gridZ.interpolatedWith (pal_.accent,
+                                                            juce::jlimit (0.0f, 1.0f, hot));
+        g.setColour (c);
         g.fillRect (x - 0.75f, 0.0f, 1.5f, sy (588.0f));
 
-        // 手柄 12×26 @ y=500（圆角）
+        // 手柄 12×26 @ y=500（圆角）。hover/拖动时高亮。
         auto handle = juce::Rectangle<float> (x - sx (6.0f), sy (500.0f), sx (12.0f), sy (26.0f));
-        g.setColour (pal_.track);
+        g.setColour (pal_.track.interpolatedWith (pal_.accent,
+                                                  juce::jlimit (0.0f, 1.0f, hot * 0.55f)));
         g.fillRoundedRectangle (handle, sx (4.0f));
-        g.setColour (pal_.gridZ);
+        g.setColour (dragging ? pal_.accent : pal_.gridZ);
         g.drawRoundedRectangle (handle, sx (4.0f), 1.0f);
     }
 }
@@ -332,10 +400,14 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
             g.fillEllipse (sxp, sy (42.0f + j * 9.0f) - 1.5f, 3.0f, 3.0f);
         }
 
-        // C6–C9：S/M/BYP/Δ 按钮列（24×24，hover 或选中该段时显示）
+        // C6–C9：S/M/BYP/Δ 按钮列（24×24，hover 或选中该段时淡入）
         //     band3 的右缘 = 电平表左边界−8 → 按钮在分区右侧且不压音量表
-        const bool showBtns = (b == selectedBand_ || b == hoverBand_);
-        if (showBtns)
+        // Phase A：UI_SPEC §4.2 原话"hover 该段时淡入、移出淡出"——用 hoverT_ 驱动 alpha。
+        //         选中态常驻（selT_ 已含），hover 在上层叠加。
+        const float hoverK = hoverT_[(size_t) b].value (animNowMs());
+        const float selK   = selT_[(size_t) b].value (animNowMs());
+        const float btnA   = juce::jmax (selK, hoverK);       // 选中常驻 / hover 淡入
+        if (btnA > 0.01f)
         {
             const float edge = (b < 3) ? nx[b]
                                        : juce::jmin (W, sx (kMeterX) - sx (8.0f));
@@ -348,15 +420,17 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
                 {
                     case 0: on = getParamBool ("band" + juce::String (b) + "Solo");  break;
                     case 1: on = getParamBool ("band" + juce::String (b) + "Mute");  break;
-                    // 2026-10-14：同上，BYP 判定用物理 Mix 值比 50%
+                    // 2026-10-14：BYP 判定用物理 Mix 值比 50%
                     case 2: on = getParamPhysical ("band" + juce::String (b) + "Mix") < 50.0f; break;
                     case 3: on = getParamBool ("band" + juce::String (b) + "Delta"); break;
                     default: break;
                 }
                 auto r = juce::Rectangle<float> (bx, sy (118.0f + j * 30.0f), sx (24.0f), sy (24.0f));
-                g.setColour (on ? pal_.accent : pal_.track.withAlpha (0.92f));
+                g.setColour (on ? pal_.accent.withMultipliedAlpha (btnA)
+                                : pal_.track.withAlpha (0.92f * btnA));
                 g.fillRoundedRectangle (r, sx (6.0f));
-                g.setColour (on ? juce::Colours::white.withAlpha (0.92f) : pal_.dim);
+                g.setColour (on ? juce::Colours::white.withAlpha (0.92f * btnA)
+                                : pal_.dim.withMultipliedAlpha (btnA));
                 g.setFont (MBTheme::font (MBTheme::semiBold(), 11.5f));
                 g.drawText (labels[j], r, juce::Justification::centred);
             }
@@ -501,7 +575,7 @@ void DisplayView::drawMeters (juce::Graphics& g)
     // 柱底 dB 读数 8px Medium（B5：250ms 节流显示，柱体仍 60fps 实时）
     g.setFont (MBTheme::font (MBTheme::medium(), 8.0f));
     g.setColour (pal_.text);
-    const juce::uint32 nowMs2 = juce::Time::getMillisecondCounter();
+    const juce::uint32 nowMs2 = animNowMs();
     if (nowMs2 >= nextMeterLabelMs_)
     {
         labelInDb_  = meterInDb_;
@@ -623,7 +697,7 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     // OUT 读数（保留）
     g.setColour (pal_.dim);
     g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
-    const juce::uint32 nowMs = juce::Time::getMillisecondCounter();
+    const juce::uint32 nowMs = animNowMs();
     if (nowMs >= nextMeterLabelMs_)
     {
         labelInDb_  = meterInDb_;
@@ -693,7 +767,7 @@ void DisplayView::updatePeakHold (float& peakDb, juce::uint32& holdUntilMs,
 
 void DisplayView::timerCallback()
 {
-    const auto nowMs = juce::Time::getMillisecondCounter();
+    const auto nowMs = animNowMs();
     const double dt = (lastMeterMs_ == 0) ? 1.0 / 60.0
                      : juce::jlimit (0.001, 0.1, (double) (nowMs - lastMeterMs_) / 1000.0);
     lastMeterMs_ = nowMs;
@@ -721,15 +795,20 @@ void DisplayView::timerCallback()
     }
 
     // #7：输入框光标闪烁（500ms 半周期）
+    // A2 修复：闪烁由时间驱动，paint() 只读。所有可能处于编辑态的旋钮都要推进。
     if (freqIn_.active)
     {
-        const auto now = juce::Time::getMillisecondCounter();
-        if (now - freqIn_.lastBlinkMs > 500)
+        const auto now = animNowMs();
+        if (now - freqIn_.lastBlinkMs > (juce::uint32) Anim::kBlinkMs)
         {
             freqIn_.lastBlinkMs = now;
             freqIn_.cursorVisible = ! freqIn_.cursorVisible;
         }
     }
+    for (auto& kb : linkedKnobs_)
+        if (kb != nullptr) kb->setEditCursorBlink (nowMs);
+    for (auto& kb : popKnobs_)
+        if (kb != nullptr) kb->setEditCursorBlink (nowMs);
 
     pollStructureParams();
 
@@ -737,6 +816,17 @@ void DisplayView::timerCallback()
     for (int b = 0; b < Param::kNumBands; ++b)
         bandRangeDb_[(size_t) b] =
             proc_.apvts.getRawParameterValue (Param::bandRange (b))->load();
+
+    // Phase A：BYP 状态轮询（Mix 可被宿主自动化改写 → bypT_ 目标要跟着走）
+    for (int b = 0; b < Param::kNumBands; ++b)
+    {
+        const bool bp = isBandBypassed (b);
+        if (bp != bandBypassed_[(size_t) b])
+        {
+            bandBypassed_[(size_t) b] = bp;
+            onBandBypassChanged (b, bp);
+        }
+    }
 
     updateCurve();
 
@@ -785,33 +875,48 @@ void DisplayView::timerCallback()
             refreshCurvePaths();
         }
     }
-    // ---- Phase 5.2：抽屉滑入/收起动画（~250ms）----
+    // ---- Phase 5.2：抽屉滑入/收起动画（~250ms，Anim::kDrawerMs）----
+    // Phase A：改用 Tween（有明确起止 + outCubic 缓动），取代原来的指数平滑。
+    // 指数平滑 `1-exp(-dt/τ)` 数学上永不完全结束，无法判断"动画已结束"，
+    // 也就无法在空闲时停 Timer（UI_PLAN_V2 Phase E 依赖 Tween::done()）。
     {
-        const double tau = 0.085;                                  // 时间常数
-        const float k = (float) (1.0 - std::exp (-dt / tau));
+        const float cur = linkedAnim_;
         const float target = linkedOpen_ ? 1.0f : 0.0f;
-        if (std::abs (linkedAnim_ - target) < 0.004f)
+        if (target != linkedAnimTarget_)
+            drawerTween_.start (nowMs, target, Anim::kDrawerMs, cur);
+        linkedAnimTarget_ = target;
+
+        linkedAnim_ = drawerTween_.value (nowMs);
+        if (std::abs (linkedAnim_ - target) < Anim::kSnapEps)
         {
-            if (linkedAnim_ != target) { linkedAnim_ = target; layoutLinkedKnobs(); }
+            linkedAnim_ = target;
+            drawerTween_.snapTo (target);
         }
-        else
-        {
-            linkedAnim_ += (target - linkedAnim_) * k;
-            layoutLinkedKnobs();
-        }
-        if (! linkedOpen_ && linkedAnim_ <= 0.004f)
+        // A3：只在位置真的变化时才重排（内部还有 1px 死区判断）
+        layoutLinkedKnobs (false);
+
+        if (! linkedOpen_ && linkedAnim_ <= Anim::kSnapEps)
             for (auto& kb : linkedKnobs_)
                 if (kb != nullptr) kb->setVisible (false);
     }
 
-    // ---- Phase 5.3：Popover 展开动画（与抽屉同时间常数）----
+    // ---- Phase 5.3：Popover 展开动画（Anim::kPopoverMs，略快于抽屉）----
     {
-        const double tau = 0.085;
-        const float k = (float) (1.0 - std::exp (-dt / tau));
         const float target = popoverOpen_ ? 1.0f : 0.0f;
-        if (std::abs (popoverAnim_ - target) < 0.004f) popoverAnim_ = target;
-        else                                          popoverAnim_ += (target - popoverAnim_) * k;
+        if (target != popoverAnimTarget_)
+            popoverTween_.start (nowMs, target, Anim::kPopoverMs, popoverAnim_);
+        popoverAnimTarget_ = target;
+
+        popoverAnim_ = popoverTween_.value (nowMs);
+        if (std::abs (popoverAnim_ - target) < Anim::kSnapEps)
+        {
+            popoverAnim_ = target;
+            popoverTween_.snapTo (target);
+        }
     }
+
+    // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
+    advanceTweens (nowMs);
 
     refreshSpectrumPaths();     // 有新帧才重建
 
@@ -1186,44 +1291,69 @@ namespace
     }
 }
 
-void DisplayView::mouseDownForTest (float x, float y) { mouseDown (mkTestMouse (juce::Point<float> (x, y))); }
-void DisplayView::mouseDragForTest (float x, float y) { mouseDrag (mkTestMouse (juce::Point<float> (x, y))); }
-void DisplayView::mouseUpForTest   (float x, float y) { mouseUp   (mkTestMouse (juce::Point<float> (x, y))); }
+// Phase A：所有测试钩子统一进入**虚拟时钟**。
+// ⚠️ 若不在这里也切时钟，mouseDownForTest 会用真实时间启动 Tween，
+//    而 tickForTest 用从 0 开始的虚拟时钟求值 → t 为巨大负值 → 动画永远停在起点。
+void DisplayView::enterTestClock()
+{
+    useTestClock_ = true;
+}
+
+void DisplayView::mouseDownForTest (float x, float y) { enterTestClock(); mouseDown (mkTestMouse (juce::Point<float> (x, y))); }
+void DisplayView::mouseDragForTest (float x, float y) { enterTestClock(); mouseDrag (mkTestMouse (juce::Point<float> (x, y))); }
+void DisplayView::mouseUpForTest   (float x, float y) { enterTestClock(); mouseUp   (mkTestMouse (juce::Point<float> (x, y))); }
+
+// Phase A：推进虚拟时钟再跑一帧。advanceMs 默认 16ms ≈ 60fps。
+void DisplayView::tickForTest (double advanceMs)
+{
+    useTestClock_ = true;
+    testClockMs_ += advanceMs;
+    timerCallback();
+}
+
+double DisplayView::animNowMs() const
+{
+    return useTestClock_ ? testClockMs_ : (double) juce::Time::getMillisecondCounter();
+}
+
 void DisplayView::mouseDoubleClickForTest (float x, float y)
 {
+    enterTestClock();
     mouseDoubleClick (mkTestMouse (juce::Point<float> (x, y)));
 }
 
 void DisplayView::setParamNorm (const juce::String& id, float norm) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-            { p->setValueNotifyingHost (norm); return; }
+    // Phase A：O(1) 查表（原为 79 参数线性扫描 + dynamic_cast）
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        it->second->setValueNotifyingHost (norm);
 }
 
 // 按物理值设置（经 NormalisableRange 反归一化；xover 等偏斜参数必须走此路）
 void DisplayView::setParamPhysical (const juce::String& id, float physical) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-            {
-                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                    p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
-                else
-                    p->setValueNotifyingHost (physical);
-                return;
-            }
+    const auto it = paramMap_.find (id);
+    if (it == paramMap_.end() || it->second == nullptr)
+        return;
+    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+        it->second->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
+    else
+        it->second->setValueNotifyingHost (physical);
 }
 
 bool DisplayView::getParamBool (const juce::String& id) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-                return pw->getValue() >= 0.5f;
-    return false;
+    const auto it = paramMap_.find (id);
+    return (it != paramMap_.end() && it->second != nullptr)
+               ? (it->second->getValue() >= 0.5f) : false;
+}
+
+bool DisplayView::isBandBypassed (int band) const
+{
+    // D9 方案 A：Bypass = Mix<50% 宏。band{i}Mix 是浮点参数（0..100），
+    // getRawParameterValue 返回物理百分比，必须直接比 50.0f。
+    return getParamPhysical ("band" + juce::String (band) + "Mix") < 50.0f;
 }
 
 int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const
@@ -1391,7 +1521,7 @@ void DisplayView::openFreqEditor (int index, int band)
     freqIn_.divider = index;
     freqIn_.text.clear();
     freqIn_.cursorVisible = true;
-    freqIn_.lastBlinkMs = juce::Time::getMillisecondCounter();
+    freqIn_.lastBlinkMs = animNowMs();
 
     if (band >= 0)
     {
@@ -1477,10 +1607,25 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
         for (int i = 0; i < 4; ++i)
             if (p.x >= edges[i] && p.x < edges[i + 1]) newHover = i;
     }
-    if (newHover != hoverBand_) { hoverBand_ = newHover; repaint(); }
+    if (newHover != hoverBand_)
+    {
+        hoverBand_ = newHover;
+        // Phase A：hover 淡入淡出（UI_SPEC §4.2 原话"hover 该段时淡入、移出淡出"）
+        const double nowMs = animNowMs();
+        for (int b = 0; b < Param::kNumBands; ++b)
+            tweenTo (hoverT_[(size_t) b], nowMs, (b == newHover) ? 1.0f : 0.0f, Anim::kFadeMs);
+        repaint();
+    }
 
-    // C2：分割线 hover/拖动主题色
-    if (div != hoverDividers_) { hoverDividers_ = div; repaint(); }
+    // C2：分割线 hover/拖动主题色（Phase A：渐变）
+    if (div != hoverDividers_)
+    {
+        hoverDividers_ = div;
+        const double nowMs = animNowMs();
+        for (int e = 0; e < 3; ++e)
+            tweenTo (divT_[(size_t) e], nowMs, (e == div) ? 1.0f : 0.0f, Anim::kFadeMs);
+        repaint();
+    }
 
     // C4：hover 频点 → 置 hoverDotBand_（驱动 tooltip 浮出）
     if (onDot && hoverDotBand_ != dotBand) { hoverDotBand_ = dotBand; repaint(); }
@@ -1642,6 +1787,8 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         const bool allBypassed = isAllBypassed();
         for (int i = 0; i < 4; ++i)
             toggleBypass (i, ! allBypassed);
+        for (int i = 0; i < 4; ++i)                     // Phase A：驱动渐暗动画
+            onBandBypassChanged (i, ! allBypassed);
         repaint();
         return;
     }
@@ -1650,11 +1797,11 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     int b = -1, j = -1;
     if (hitTestButton (p, b, j) != 0)
     {
-        selectedBand_ = b;
+        if (selectedBand_ != b) { selectedBand_ = b; onSelectedBandChanged (b); }   // Phase A
         const juce::String bp = "band" + juce::String (b);
         if (j == 0) setParamNorm (bp + "Solo",  getParamBool (bp + "Solo")  ? 0.0f : 1.0f);
         if (j == 1) setParamNorm (bp + "Mute",  getParamBool (bp + "Mute")  ? 0.0f : 1.0f);
-        if (j == 2) toggleBypass (b);
+        if (j == 2) { toggleBypass (b); onBandBypassChanged (b, isBandBypassed (b)); }  // Phase A
         if (j == 3) setParamNorm (bp + "Delta", getParamBool (bp + "Delta") ? 0.0f : 1.0f);
         repaint();
         return;
@@ -1666,7 +1813,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     const bool onDot = hitTestFreqDot (p, dotBand) != 0;
     if (onDot)
     {
-        selectedBand_ = dotBand;
+        if (selectedBand_ != dotBand) { selectedBand_ = dotBand; onSelectedBandChanged (dotBand); }  // Phase A
         drag_ = DragMode::Makeup;
         dragBand_ = dotBand;
         dragStartY_ = p.y;
@@ -1735,6 +1882,10 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             {
                 selectedBand_ = i;
                 hoverBand_ = i;
+                onSelectedBandChanged (i);              // Phase A：选中渐变
+                for (int bb = 0; bb < Param::kNumBands; ++bb)   // Phase A：hover 跟随
+                    tweenTo (hoverT_[(size_t) bb], animNowMs(),
+                             (bb == i) ? 1.0f : 0.0f, Anim::kFadeMs);
                 curvePathsValid_ = false;          // #4：切段 → 强制重建
                 if (popoverOpen_) popoverBand_ = i;   // 跟随更新（不关闭）
                 else              togglePopover (true);
@@ -1884,16 +2035,6 @@ void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 //   前 4 个 = Δ 偏移语义（四段同名参数线性偏移）；Mix = 绝对值（0..100%）
 // ============================================================
 
-float DisplayView::getParamPhysical (const juce::String& id) const
-{
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                    return rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
-    return 0.0f;
-}
-
 juce::Rectangle<float> DisplayView::drawerPanelRect() const
 {
     // 面板：宽 5×92，居中；贴在梯形按钮上方（留 4px 间隙）
@@ -1961,9 +2102,14 @@ void DisplayView::ensureLinkedKnobs()
     }
 }
 
-void DisplayView::layoutLinkedKnobs()
+void DisplayView::layoutLinkedKnobs (bool force)
 {
-    const float a = linkedOpen_ ? 1.0f : 0.0f;
+    // A1 修复（UI_PLAN_V2 §6.3 / 01_UI_ANIMATION_PLAN.md A1）：
+    //   此前用 `const float a = linkedOpen_ ? 1.0f : 0.0f;` —— 开关量而非动画量。
+    //   打开时旋钮**瞬间跳到终位**、关闭时**瞬间跳到面板下方**，滑入动画等于没做
+    //   （linkedAnim_ 被正确计算了却只用于 alpha）。
+    //   现在 a 取 linkedAnim_，旋钮真正随动画滑入/滑出。
+    const float a = juce::jlimit (0.0f, 1.0f, linkedAnim_);
     const auto panel = drawerPanelRect();
     const float unitW = sx (92.0f);
     for (int k = 0; k < kLinkedKnobs; ++k)
@@ -1973,8 +2119,14 @@ void DisplayView::layoutLinkedKnobs()
         // 否则标签会突出到面板外、贴到绘图区上
         const float x = panel.getX() + unitW * (float) k + (unitW - sx (84.0f)) * 0.5f;
         const float y = panel.getY() + sy (20.0f) + (1.0f - a) * panel.getHeight();
-        linkedKnobs_[(size_t) k]->setBounds ((int) x, (int) y, (int) sx (84.0f), (int) sy (96.0f));
-        linkedKnobs_[(size_t) k]->setVisible (linkedOpen_ || linkedAnim_ > 0.001f);
+        const int nx = (int) x, ny = (int) y;
+        auto* kb = linkedKnobs_[(size_t) k].get();
+        // A3 修复：动画期间只在位置变化超过 1px 时才 setBounds，
+        // 否则每帧 5 次 setBounds → 5 次 resized()，白烧 CPU 且 int 量化会抖。
+        if (force || kb->getX() != nx || kb->getY() != ny
+                 || kb->getWidth() != (int) sx (84.0f) || kb->getHeight() != (int) sy (96.0f))
+            kb->setBounds (nx, ny, (int) sx (84.0f), (int) sy (96.0f));
+        kb->setVisible (linkedOpen_ || linkedAnim_ > 0.001f);
     }
 }
 
@@ -2124,31 +2276,36 @@ void DisplayView::syncPopoverSliders()
 
 float DisplayView::getParamNorm (const juce::String& id) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-                return pw->getValue();
-    return 0.0f;
+    const auto it = paramMap_.find (id);
+    return (it != paramMap_.end() && it->second != nullptr) ? it->second->getValue() : 0.0f;
 }
 
 float DisplayView::paramRangeMinOf (const juce::String& id) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                    return (float) rp->getNormalisableRange().start;
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+            return (float) rp->getNormalisableRange().start;
     return 0.0f;
 }
 
 float DisplayView::paramRangeMaxOf (const juce::String& id) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                    return (float) rp->getNormalisableRange().end;
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+            return (float) rp->getNormalisableRange().end;
     return 1.0f;
+}
+
+float DisplayView::getParamPhysical (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it == paramMap_.end() || it->second == nullptr)
+        return 0.0f;
+    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+        return (float) rp->getNormalisableRange().convertFrom0to1 (it->second->getValue());
+    return it->second->getValue();
 }
 
 juce::String DisplayView::fmtHzShort (float hz)
@@ -2495,7 +2652,8 @@ void DisplayView::paint (juce::Graphics& g)
     drawCrossovers (g);
     drawBandHeaders (g);
     drawFreqInput (g);       // #7：自绘频率输入框（最上层）
-    drawDrawer (g);
+    // A4 修复（UI_PLAN_V2 §6.3）：此处此前连续调了两次 drawDrawer (g)，
+    // 导致抽屉区域 alpha 双重混合（偏深偏灰）+ 每帧无谓多画一整个面板。
     drawDrawer (g);
     drawLinkedDrawer (g);   // Phase 5.2：LINKED 抽屉面板（旋钮为子组件，画在上面）
     drawPopover (g);        // Phase 5.3：频段 Popover（浮于最上层）

@@ -51,6 +51,7 @@ target_sources(CrunchMB PRIVATE
     src/dsp/SideChainFilter.h
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
+    src/ui/Anim.h
     src/ui/DisplayView.cpp
     src/ui/Knob.cpp)
 
@@ -91,6 +92,7 @@ target_sources(CrunchMBTests PRIVATE
     src/dsp/SideChainFilter.h
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
+    src/ui/Anim.h
     src/ui/DisplayView.cpp
     src/ui/Knob.cpp)
 target_include_directories(CrunchMBTests PRIVATE src)

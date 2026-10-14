@@ -3092,6 +3092,8 @@ static void testRoundFixes()
         check (hit2 && b == 3, "T30.2 band3 按钮列在分区右侧可点",
                hit2 ? ("band" + juce::String (b)).toRawUTF8() : "未命中");
         // 绘制验证：该位置应能画出按钮底色（非分区底色）
+        // Phase A：按钮列淡入是 Tween 动画（160ms），需推进虚拟时钟到动画结束
+        for (int t = 0; t < 30; ++t) dv.tickForTest();   // 30×16ms = 480ms > 160ms
         juce::Image img (juce::Image::ARGB, 920, 620, true);
         { juce::Graphics g (img); dv.paintForTest (g); }
         const juce::Colour c = img.getPixelAt ((int) bx3, 130);

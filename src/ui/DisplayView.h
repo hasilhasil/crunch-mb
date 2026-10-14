@@ -4,8 +4,10 @@
 
 #include <array>
 #include <vector>
+#include <unordered_map>
 
 #include "MBTheme.h"
+#include "Anim.h"
 #include "Knob.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
@@ -20,6 +22,11 @@
 //   · 交叉点手柄 + 频率标签 + 顶栏玻璃条 + 全局菜单条
 // Phase 4.3 追加：双层频谱 / 仿 EQ 动态曲线 / Range 钟型层
 // Phase 4.4 追加：全部手势（选段/拖拽/双击/Makeup 双入口）
+// Phase A （UI_PLAN_V2 §8）：动画基础设施 + 4 个动画 bug 修复 + 参数查找缓存
+//   · A1 linkedAnim_ 驱动抽屉旋钮位置（此前用开关量，滑入动画等于没做）
+//   · A2 光标闪烁改为时间驱动（此前在 paint() 里翻转状态）
+//   · A3 动画期间不每帧调 layoutLinkedKnobs()
+//   · A4 删掉重复的 drawDrawer (g) 调用
 // ============================================================
 class DisplayView : public juce::Component,
                     public juce::Timer
@@ -51,7 +58,10 @@ public:
     // 测试钩子：离屏渲染（无窗口），供像素级视觉回归断言使用
     void paintForTest (juce::Graphics& g) { paint (g); }
     // 测试钩子：手动驱动一帧（timerCallback 为 protected）
-    void tickForTest() { timerCallback(); }
+    // Phase A：推进**虚拟时钟**再跑一帧，使动画测试确定性
+    // （真实时间在紧凑循环里几乎不前进，Tween 会永远停在起点）。
+    void tickForTest (double advanceMs = 16.0);
+    double nowMsForTest() const { return testClockMs_; }
     // 测试钩子：直接派发鼠标事件（mouseXxx 为 protected；内部经 Desktop 取 MouseInputSource）
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);
@@ -343,6 +353,29 @@ private:
 
     void openFreqEditor (int index, int band);
     void closeFreqEditor (bool apply);
+
+    // ---- Phase A：动画状态（UI_PLAN_V2 §6）----
+    // 每段选中淡入、每段 hover 淡入、每段 BYP 渐暗、分割线 hover 变色。
+    // 用 Tween 而非开关量——目标变化时从"当前显示值"起跳，不会回弹。
+    Tween drawerTween_, popoverTween_;
+    float linkedAnimTarget_  = 0.0f;   // 抽屉动画目标（检测目标变化才 start，避免每帧重启）
+    float popoverAnimTarget_ = 0.0f;
+    std::array<Tween, Param::kNumBands> selT_;      // 选中填充 alpha 0.05 ↔ 0.10
+    std::array<Tween, Param::kNumBands> hoverT_;    // 按钮列 hover 淡入 0 ↔ 1
+    std::array<Tween, Param::kNumBands> bypT_;      // BYP 渐暗 1.0 ↔ 0.45
+    std::array<Tween, 3>                divT_;      // 分割线 hover 变色 0 ↔ 1
+    std::array<bool,   Param::kNumBands> bandBypassed_ {};   // BYP 状态缓存（检测变化才驱动动画）
+
+    /** 把所有 Tween 推到当前参数状态（无动画）。用于构造/reset/主题切换。 */
+    void syncAllTweens();
+    /** 推进所有 Tween；有任一在动画中返回 true（用于决定是否继续 repaint）。 */
+    bool advanceTweens (double nowMs);
+    /** 选中段变化时驱动 selT_（选中填充 0.05 ↔ 0.10 渐变，Phase A）。 */
+    void onSelectedBandChanged (int newBand);
+    /** BYP 状态变化时驱动 bypT_（渐暗 1.0 ↔ 0.45，Phase A）。 */
+    void onBandBypassChanged (int band, bool bypassed);
+    /** 某段是否旁通（Bypass = Mix<50%，D9 方案 A 宏）。 */
+    bool isBandBypassed (int band) const;
     // ---- Analyzer 设置（Pro-MB 面板对标） ----
     int   analyzerFftSize_ = 2048;      // 1024/2048/4096/8192
     int   analyzerSpeed_   = 1;         // 0=fast 1=medium 2=slow
@@ -402,7 +435,7 @@ private:
     std::array<std::unique_ptr<Knob>, kLinkedKnobs> linkedKnobs_;
     std::array<double, kLinkedKnobs - 1> linkedOffset_ {};   // 4 个偏移旋钮的当前 Δ
     void ensureLinkedKnobs();
-    void layoutLinkedKnobs();
+    void layoutLinkedKnobs (bool force = false);
     void applyLinkedOffset (int k, double newValue);
     float getParamPhysical (const juce::String& id) const;
     juce::Rectangle<float> drawerPanelRect() const;
@@ -461,6 +494,23 @@ private:
     static constexpr float kPlotH = 548.0f;
     static constexpr float kTopStripH = 30.0f;
     static constexpr float kGlobalBarH = 32.0f;
+
+    // ---- Phase A：参数查找缓存（消除 39 处线性扫描 + dynamic_cast）----
+    // 构造时一次性建表；之后 getParamNorm/setParamNorm 等都是 O(1)。
+    // 2026-10-14 评审发现：原实现每个查找函数都是
+    //   for (auto* p : proc_.getParameters()) dynamic_cast<...>
+    // 共 39 个调用点分布在 mouseDown/mouseDrag/mouseUp/syncPopover* 里，
+    // 按鼠标刷新率触发 ≈ 每秒十多万次 dynamic_cast。
+    std::unordered_map<juce::String, juce::AudioProcessorParameter*> paramMap_;
+    void buildParamCache();
+
+    // ---- Phase A：虚拟时钟（仅供测试钩子 tickForTest 使用）----
+    double testClockMs_ = 0.0;
+    bool   useTestClock_ = false;
+    /** 所有测试钩子入口统一切到虚拟时钟（避免真实/虚拟时钟混用导致 Tween 永不前进）。 */
+    void enterTestClock();
+    /** 动画/平滑用的"当前时间"。测试模式下返回虚拟时钟，否则返回真实时间。 */
+    double animNowMs() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DisplayView)
 };

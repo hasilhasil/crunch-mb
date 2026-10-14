@@ -1,4 +1,5 @@
 #include "Knob.h"
+#include "Anim.h"
 
 // ---------------- 配置 ----------------
 void Knob::setRange (double minValue, double maxValue, double interval)
@@ -107,9 +108,25 @@ void Knob::openEditor()
     editing_ = true;
     editText_.clear();
     editCursorOn_ = true;
+    editCursorLastToggleMs_ = juce::Time::getMillisecondCounter();
     setWantsKeyboardFocus (true);
     grabKeyboardFocus();
     repaint();
+}
+
+// A2 修复：光标闪烁由时间驱动（半周期 Anim::kBlinkMs），与重绘率解耦。
+void Knob::setEditCursorBlink (juce::uint32 nowMs)
+{
+    if (! editing_)
+        return;
+    if (editCursorLastToggleMs_ == 0)
+        editCursorLastToggleMs_ = nowMs;
+    if ((int) (nowMs - editCursorLastToggleMs_) >= (int) Anim::kBlinkMs)
+    {
+        editCursorOn_ = ! editCursorOn_;
+        editCursorLastToggleMs_ = nowMs;
+        repaint();
+    }
 }
 
 void Knob::closeEditor (bool apply)
@@ -232,7 +249,7 @@ void Knob::paint (juce::Graphics& g)
         g.drawRoundedRectangle (box, 5.0f, 1.2f);
         g.setColour (pal_.text);
         g.setFont (MBTheme::font (MBTheme::regular(), 12.0f));
-        editCursorOn_ = ! editCursorOn_;
+        // A2 修复：paint() 只读光标状态，不再翻转（翻转已移到 setEditCursorBlink）
         g.drawText (editText_ + (editCursorOn_ ? "|" : " "), box, juce::Justification::centred);
     }
 }

@@ -112,7 +112,16 @@ private:
     // 内嵌编辑（自绘）
     bool editing_ = false;
     juce::String editText_;
+    // A2 修复（UI_PLAN_V2 §6.3）：光标可见性改为**时间驱动**。
+    // 此前在 Knob::paint() 里写 `editCursorOn_ = ! editCursorOn_;`，
+    // 导致闪烁频率 = 重绘率（DisplayView 60Hz 时光标以 30Hz 狂闪），
+    // 且不可预期。现在由 setEditCursorBlink() 按时间推进，paint() 只读。
     bool editCursorOn_ = true;
+    juce::uint32 editCursorLastToggleMs_ = 0;
+
+public:
+    /** 按当前时间推进光标闪烁（半周期 Anim::kBlinkMs）。由宿主组件定时调用。 */
+    void setEditCursorBlink (juce::uint32 nowMs);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Knob)
 };
