@@ -365,6 +365,7 @@ private:
     bool getParamBool (const juce::String& id) const;
     float getParamNorm (const juce::String& id) const;
     float getParamPhysical (const juce::String& id) const;
+    static juce::String fmtHzShort (float hz);
     float paramRangeMinOf (const juce::String& id) const;
     float paramRangeMaxOf (const juce::String& id) const;
     void setBandParamNorm (const juce::String& id, float norm) const;

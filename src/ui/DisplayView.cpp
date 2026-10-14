@@ -460,6 +460,12 @@ void DisplayView::drawCrossovers (juce::Graphics& g)
 {
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
     const double nowMs = animNowMs();
+    // Phase B-2：手柄移到绘图区**底部**（原在 y=500 中部），并在手柄内显示频率值。
+    // 对齐 Pro-MB：分割线全高 + 底部手柄 + 手柄上标频率。
+    const float plotBottom = plotBottomPx();
+    const float handleH = sy (22.0f);
+    const float handleW = sx (46.0f);
+    const float handleY = plotBottom - handleH;
 
     for (int e = 0; e < 3; ++e)
     {
@@ -470,16 +476,29 @@ void DisplayView::drawCrossovers (juce::Graphics& g)
         const juce::Colour c = pal_.gridZ.interpolatedWith (pal_.accent,
                                                             juce::jlimit (0.0f, 1.0f, hot));
         g.setColour (c);
-        g.fillRect (x - 0.75f, 0.0f, 1.5f, sy (588.0f));
+        g.fillRect (x - 0.75f, 0.0f, 1.5f, plotBottom);
 
-        // 手柄 12×26 @ y=500（圆角）。hover/拖动时高亮。
-        auto handle = juce::Rectangle<float> (x - sx (6.0f), sy (500.0f), sx (12.0f), sy (26.0f));
+        // 底部手柄（圆角胶囊），hover/拖动时向主题色插值
+        auto handle = juce::Rectangle<float> (x - handleW * 0.5f, handleY, handleW, handleH);
         g.setColour (pal_.track.interpolatedWith (pal_.accent,
                                                   juce::jlimit (0.0f, 1.0f, hot * 0.55f)));
-        g.fillRoundedRectangle (handle, sx (4.0f));
+        g.fillRoundedRectangle (handle, handleH * 0.5f);
         g.setColour (dragging ? pal_.accent : pal_.gridZ);
-        g.drawRoundedRectangle (handle, sx (4.0f), 1.0f);
+        g.drawRoundedRectangle (handle, handleH * 0.5f, 1.0f);
+
+        // 手柄内频率读数（Pro-MB：手柄上直接显示频率，不用额外 tooltip）
+        const float f = (e == 0) ? cachedX1_ : (e == 1) ? cachedX2_ : cachedX3_;
+        g.setColour (hot > 0.5f ? pal_.text : pal_.dim);
+        g.setFont (MBTheme::font (hot > 0.5f ? MBTheme::semiBold() : MBTheme::regular(), 10.0f));
+        g.drawText (fmtHzShort (f), handle, juce::Justification::centred);
     }
+}
+
+// 频率短格式（与 BandPopover::fmtHzShort 同规则；此处为 DisplayView 本地副本）
+juce::String DisplayView::fmtHzShort (float hz)
+{
+    if (hz >= 1000.0f) return juce::String (hz / 1000.0f, 1) + "k";
+    return juce::String ((int) std::round (hz));
 }
 
 void DisplayView::drawBandHeaders (juce::Graphics& g)
@@ -1370,10 +1389,19 @@ int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut)
 
 int DisplayView::hitTestDivider (juce::Point<float> p) const
 {
+    // Phase B-2：抓取带与底部手柄位置对齐（手柄 46×22，放在绘图区底缘）。
+    // 竖直分割线仍是全高可抓（Pro-MB：整条线都能拖），底部手柄加宽命中区。
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float plotBottom = plotBottomPx();
     for (int e = 0; e < 3; ++e)
-        if (std::abs (p.x - nx[e]) <= sx (4.0f) && p.y >= 0.0f && p.y <= sy (588.0f))
+    {
+        const bool onLine = std::abs (p.x - nx[e]) <= sx (4.0f)
+                         && p.y >= 0.0f && p.y <= plotBottom;
+        const bool onHandle = std::abs (p.x - nx[e]) <= sx (23.0f)
+                           && p.y >= plotBottom - sy (22.0f) && p.y <= plotBottom;
+        if (onLine || onHandle)
             return e;
+    }
     return -1;
 }
 
