@@ -23,12 +23,12 @@ public:
     void setLabel (juce::String text)          { label_ = std::move (text); repaint(); }
     void setValueSuffix (juce::String s)       { suffix_ = std::move (s); repaint(); }
     void setDecimals (int d)                   { decimals_ = d; repaint(); }
-    void setKnobDiameter (float px)            { knobDiameter_ = px; repaint(); }
+    void setKnobDiameter (float px)            { knobDiameter_ = px; invalidateBackLayer(); repaint(); }
     void setShowLabel (bool s)                 { showLabel_ = s; repaint(); }
     void setBipolar (bool b)                   { bipolar_ = b; repaint(); }   // 中点起弧（LINKED 偏移用）
     void setValuePrefix (juce::String p)       { valuePrefix_ = std::move (p); repaint(); }
     void setLinkedMark (bool b)                { linkedMark_ = b; repaint(); }   // §5.2 ⊞ 联动标识
-    void setPalette (MBTheme::Palette p)       { pal_ = p; repaint(); }
+    void setPalette (MBTheme::Palette p)       { pal_ = p; invalidateBackLayer(); repaint(); }
 
     // ---- 值 ----
     void setValue (double v, bool sendNotification = true);
@@ -119,9 +119,21 @@ private:
     bool editCursorOn_ = true;
     juce::uint32 editCursorLastToggleMs_ = 0;
 
+    // ---- Phase C-1：旋钮 BACK 层缓存（Pro-MB KNOBLARGEBACK* 对标）----
+    // BACK = 外圈刻度环 + 深色圆体底 + 径向渐变，**与当前值无关**，
+    // 所以缓存成 Image，只在直径/主题变化时重建（原来每帧全画）。
+    // OVERLAY = 值弧 + 帽 + 指针，每帧画（随值与四态变）。
+    juce::Image backLayer_;
+    float  backLayerDiameter_ = 0.0f;      // 缓存对应的直径（0 = 未建）
+    int    backLayerTheme_    = -1;        // 缓存对应的主题
+    void   buildBackLayer (float d);
+    void   invalidateBackLayer() { backLayerDiameter_ = 0.0f; }
+
 public:
     /** 按当前时间推进光标闪烁（半周期 Anim::kBlinkMs）。由宿主组件定时调用。 */
     void setEditCursorBlink (juce::uint32 nowMs);
+    /** 主题/尺寸变化时调用，令 BACK 层缓存失效。 */
+    void refreshBackLayer() { invalidateBackLayer(); }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Knob)
 };

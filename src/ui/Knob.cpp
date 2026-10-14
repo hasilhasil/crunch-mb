@@ -160,6 +160,46 @@ bool Knob::keyPressed (const juce::KeyPress& key)
     return false;
 }
 
+// ---------------- Phase C-1：BACK 层缓存 ----------------
+// 外圈刻度环 + 深色圆体底。与当前值无关 → 只在直径/主题变化时重建。
+// 对齐 Pro-MB 的 KNOBLARGEBACK*（预渲染刻度环位图）：刻度环底部留缺口，
+// 与 270° 行程一致；环在值弧**外侧**。
+void Knob::buildBackLayer (float d)
+{
+    // +4px 余量给外圈刻度（刻度画在半径 r+0.075d 处）
+    const int px = juce::roundToInt (d) + 4;
+    backLayer_ = juce::Image (juce::Image::ARGB, px, px, true);
+    juce::Graphics g (backLayer_);
+
+    const float cx = px * 0.5f, cy = px * 0.5f;
+    const float r  = d * 0.5f;
+    const float a0 = valueToAngle (min_);
+    const float a1 = valueToAngle (max_);
+
+    // ---- 外圈刻度环（11 根短刻度，跨 270°，底部留缺口）----
+    const int   nTicks = 11;
+    const float tickInner = r + juce::jmax (1.5f, d * 0.035f);
+    const float tickOuter = r + juce::jmax (3.5f, d * 0.075f);
+    g.setColour (pal_.gridZ);
+    for (int i = 0; i < nTicks; ++i)
+    {
+        const float t = (float) i / (float) (nTicks - 1);
+        const float a = a0 + t * (a1 - a0);
+        const float x1 = cx + std::sin (a) * tickInner;
+        const float y1 = cy - std::cos (a) * tickInner;
+        const float x2 = cx + std::sin (a) * tickOuter;
+        const float y2 = cy - std::cos (a) * tickOuter;
+        g.drawLine (x1, y1, x2, y2, juce::jmax (1.0f, d * 0.018f));
+    }
+
+    // ---- 深色圆体底（径向渐变，上亮下暗）----
+    const float bodyR = r - juce::jmax (1.0f, d * 0.02f);
+    juce::ColourGradient bodyGrad (pal_.track.brighter (0.10f), cx, cy - bodyR,
+                                   pal_.track.darker (0.25f), cx, cy + bodyR, false);
+    g.setGradientFill (bodyGrad);
+    g.fillEllipse (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
+}
+
 // ---------------- 绘制 ----------------
 void Knob::paint (juce::Graphics& g)
 {
@@ -191,7 +231,19 @@ void Knob::paint (juce::Graphics& g)
         }
     }
 
-    // ---- 弧（轨道 + 值）----§5.2：拖动中"联动脉冲"——弧加亮加粗
+    // ---- Phase C-1：BACK 层（刻度环 + 圆体底），缓存 Image ----
+    // 直径变了才重建（主题变化经 setPalette/setKnobDiameter 失效缓存）。
+    // 否则直接贴图，省掉每帧 11 根刻度 + 渐变填充。
+    if (backLayerDiameter_ != d)
+    {
+        buildBackLayer (d);
+        backLayerDiameter_ = d;
+    }
+    g.drawImageAt (backLayer_, (int) (cx - backLayer_.getWidth() * 0.5f),
+                                  (int) (cy - backLayer_.getHeight() * 0.5f));
+
+    // ---- OVERLAY：值弧（轨道 + 值）----
+    // §5.2：拖动中"联动脉冲"——弧加亮加粗
     const float a0 = valueToAngle (min_);
     const float a1 = valueToAngle (max_);
     const float av = valueToAngle (value_);
@@ -199,7 +251,7 @@ void Knob::paint (juce::Graphics& g)
 
     juce::Path track;
     track.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f, a0, a1, true);
-    g.setColour (pal_.track);
+    g.setColour (pal_.track.withAlpha (0.55f));   // BACK 已有圆体，轨道淡一点避免叠重
     g.strokePath (track, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
