@@ -265,26 +265,13 @@ void LinkedDrawer::applyOffset (int k, double newValue)
 
 float LinkedDrawer::getParamPhysical (const juce::String& id) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                    return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
-    return 0.0f;
+    // Phase：走 facade（原为 proc_.getParameters() 线性扫描 + 两次 dynamic_cast）
+    return proc_.getBackend().getParamFast (id);
 }
 
 void LinkedDrawer::setParamPhysical (const juce::String& id, float physical) const
 {
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            if (pw->getParameterID() == id)
-            {
-                if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                    p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
-                else
-                    p->setValueNotifyingHost (physical);
-                return;
-            }
+    proc_.getBackend().setParam (id, physical);
 }
 
 void LinkedDrawer::paint (juce::Graphics& g)

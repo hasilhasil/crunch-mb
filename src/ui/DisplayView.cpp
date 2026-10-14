@@ -23,8 +23,8 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     pollStructureParams();
     haveDrawnGain_ = false;
 
-    // Phase A：参数查找缓存（一次性建表，此后 O(1)）
-    buildParamCache();
+    // Phase：预热 facade 的参数查表（一次性，此后 O(1)）
+    proc_.getBackend().buildParamCache();
     // Phase A：LINKED CONTROL 抽屉拆为独立组件（UI_PLAN_V2 §3.2）
     linkedDrawer_ = std::make_unique<LinkedDrawer> (proc_);
     addAndMakeVisible (*linkedDrawer_);
@@ -108,14 +108,6 @@ void DisplayView::openLinkedDrawerForTest()
 {
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->setOpen (true);
-}
-
-void DisplayView::buildParamCache()
-{
-    paramMap_.clear();
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            paramMap_[pw->getParameterID()] = pw;
 }
 
 void DisplayView::bandEdgesPx (int band, float& leftX, float& rightX) const
@@ -656,7 +648,7 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
             // C4：hover 频点浮出小窗（段名 / Makeup / 中心 Hz）——更小更精致
             if (hov)
             {
-                const float mk = proc_.apvts.getRawParameterValue (Param::bandMakeup (b))->load();
+                const float mk = proc_.getBackend().getParamFast (Param::bandMakeup (b));
                 const juce::String l1 = names[b];
                 const juce::String l2 = "MAKEUP " + juce::String (mk, 1) + " dB";
                 const juce::String l3 = juce::String ((int) fcen) + " Hz";
@@ -1127,7 +1119,7 @@ void DisplayView::timerCallback()
     // range 参数先读（autoExpand 与 Range 层都需要最新值）
     for (int b = 0; b < Param::kNumBands; ++b)
         bandRangeDb_[(size_t) b] =
-            proc_.apvts.getRawParameterValue (Param::bandRange (b))->load();
+            proc_.getBackend().getParamFast (Param::bandRange (b));
 
     // Phase A：BYP 状态轮询（Mix 可被宿主自动化改写 → bypT_ 目标要跟着走）
     for (int b = 0; b < Param::kNumBands; ++b)
@@ -1231,14 +1223,14 @@ void DisplayView::timerCallback()
 void DisplayView::pollStructureParams()
 {
     // 每帧比对结构参数（读 APVTS 原子）；变化才重算权重
-    const float x1 = proc_.apvts.getRawParameterValue (Param::ID::xover1)->load();
-    const float x2 = proc_.apvts.getRawParameterValue (Param::ID::xover2)->load();
-    const float x3 = proc_.apvts.getRawParameterValue (Param::ID::xover3)->load();
+    const float x1 = proc_.getBackend().getParamFast (Param::ID::xover1);
+    const float x2 = proc_.getBackend().getParamFast (Param::ID::xover2);
+    const float x3 = proc_.getBackend().getParamFast (Param::ID::xover3);
     const int slope = (int) juce::roundToInt (
         Param::slopeIndexToDb ((int) juce::roundToInt (
-            proc_.apvts.getRawParameterValue (Param::ID::xoverSlope)->load() * 3.0f)));
+            proc_.getBackend().getParamFast (Param::ID::xoverSlope) * 3.0f)));
     const int mode = (int) juce::roundToInt (
-        proc_.apvts.getRawParameterValue (Param::ID::phaseMode)->load() * 2.0f);
+        proc_.getBackend().getParamFast (Param::ID::phaseMode) * 2.0f);
 
     if (x1 != cachedX1_ || x2 != cachedX2_ || x3 != cachedX3_
         || slope != cachedSlope_ || mode != cachedMode_)
@@ -1300,10 +1292,10 @@ void DisplayView::updateCurve()
     //   rngEdge= Σw×makeup + bell×range  Range 地板线（**不随实时压缩运动**）
     for (int b = 0; b < 4; ++b)
     {
-        const float mk = proc_.apvts.getRawParameterValue (Param::bandMakeup (b))->load();
-        const float rangeDb = proc_.apvts.getRawParameterValue (Param::bandRange (b))->load();
+        const float mk = proc_.getBackend().getParamFast (Param::bandMakeup (b));
+        const float rangeDb = proc_.getBackend().getParamFast (Param::bandRange (b));
         bandRangeDb_[(size_t) b] = rangeDb;
-        const bool bypassed = proc_.apvts.getRawParameterValue (Param::bandMix (b))->load() < 0.5f;
+        const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 0.5f;
 
         bandRawDb_[(size_t) b]  = mk;                                  // 未压缩
         bandLiveDb_[(size_t) b] = mk + proc_.getBandGainDb (b);        // 实际响应
@@ -1421,8 +1413,7 @@ void DisplayView::refreshCurvePaths()
         for (int b = 0; b < 4; ++b)
         {
             const float rangeDb = rangeDisplay_[(size_t) b];
-            const bool bypassed = proc_.apvts.getRawParameterValue (
-                Param::bandMix (b))->load() < 0.5f;
+            const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 0.5f;
 
             auto& fill = rangeFillPath_[(size_t) b];
             auto& edge = rangeEdgePath_[(size_t) b];
@@ -1449,8 +1440,7 @@ void DisplayView::refreshCurvePaths()
         }
         cachedRange_ = rangeDisplay_[(size_t) selectedBand_];
         cachedRangeBand_ = selectedBand_;
-        rangeBypassed_ = proc_.apvts.getRawParameterValue (
-            Param::bandMix (selectedBand_))->load() < 0.5f;
+        rangeBypassed_ = proc_.getBackend().getParamFast (Param::bandMix (selectedBand_)) < 0.5f;
     }
     curvePathsValid_ = true;
 }
@@ -1647,62 +1637,55 @@ void DisplayView::mouseDoubleClickForTest (float x, float y)
 
 void DisplayView::setParamNorm (const juce::String& id, float norm) const
 {
-    // Phase A：O(1) 查表（原为 79 参数线性扫描 + dynamic_cast）
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        it->second->setValueNotifyingHost (norm);
+    // Phase：改走 facade（PLAN Phase 6：UI 不直触 APVTS）。
+    // 原来这里自持一份 paramMap_ 缓存——那正是"D UI 直触 APVTS"耦合点：
+    // 同一份 id→参数映射在 facade 和 UI 各存一份，迟早漂移。
+    // ⚠️ 语义：本函数的入参是 **normalized**（历史调用点 39 处都按此用），
+    //    所以必须走 setParamNormFast 而不是 setParam（后者入参是实际值）。
+    juce::ignoreUnused (id);
+    proc_.getBackend().setParamNormFast (id, norm);
 }
 
 // 按物理值设置（经 NormalisableRange 反归一化；xover 等偏斜参数必须走此路）
 void DisplayView::setParamPhysical (const juce::String& id, float physical) const
 {
-    const auto it = paramMap_.find (id);
-    if (it == paramMap_.end() || it->second == nullptr)
-        return;
-    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-        it->second->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
-    else
-        it->second->setValueNotifyingHost (physical);
+    // Phase：同上，走 facade。setParam 的入参就是实际值，内部做反归一化。
+    proc_.getBackend().setParam (id, physical);
 }
 
 bool DisplayView::getParamBool (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    return (it != paramMap_.end() && it->second != nullptr)
-               ? (it->second->getValue() >= 0.5f) : false;
+    // Phase：走 facade（PLAN Phase 6：UI 不直触 APVTS）
+    return proc_.getBackend().getParamFast (id) >= 0.5f;
 }
 
 float DisplayView::getParamNorm (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    return (it != paramMap_.end() && it->second != nullptr) ? it->second->getValue() : 0.0f;
+    // 注意：getParamFast 返回**实际值**，不是 normalized。
+    // 原有调用方都把它当 normalized 用（如 >= 0.5f 判 Bool），
+    // 对 Bool 参数实际值与 normalized 同为 0/1，语义不变。
+    return proc_.getBackend().getParamFast (id);
 }
 
 float DisplayView::getParamPhysical (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    if (it == paramMap_.end() || it->second == nullptr)
-        return 0.0f;
-    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-        return (float) rp->getNormalisableRange().convertFrom0to1 (it->second->getValue());
-    return it->second->getValue();
+    return proc_.getBackend().getParamFast (id);
 }
 
 float DisplayView::paramRangeMinOf (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-            return (float) rp->getNormalisableRange().start;
+    // 范围元数据不在 facade 热路径上，经 listParams 查一次（调用频率低）
+    for (const auto& pi : proc_.getBackend().listParams())
+        if (pi.id == id)
+            return pi.minValue;
     return 0.0f;
 }
 
 float DisplayView::paramRangeMaxOf (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-            return (float) rp->getNormalisableRange().end;
+    for (const auto& pi : proc_.getBackend().listParams())
+        if (pi.id == id)
+            return pi.maxValue;
     return 1.0f;
 }
 
@@ -1776,9 +1759,9 @@ bool DisplayView::hitTestCurve (juce::Point<float> p, int& bandOut) const
 
 void DisplayView::applyDividerFreq (int index, float freq)
 {
-    float x1 = proc_.apvts.getRawParameterValue (Param::ID::xover1)->load();
-    float x2 = proc_.apvts.getRawParameterValue (Param::ID::xover2)->load();
-    float x3 = proc_.apvts.getRawParameterValue (Param::ID::xover3)->load();
+    float x1 = proc_.getBackend().getParamFast (Param::ID::xover1);
+    float x2 = proc_.getBackend().getParamFast (Param::ID::xover2);
+    float x3 = proc_.getBackend().getParamFast (Param::ID::xover3);
     if (index == 0) x1 = freq;
     if (index == 1) x2 = freq;
     if (index == 2) x3 = freq;
@@ -1840,7 +1823,7 @@ void DisplayView::toggleBypass (int band, bool forceBypass)
 {
     // 方案 A UI 宏：按下记忆当前 Mix→设 0；再按恢复（DESIGN §6.6）
     const juce::String id = "band" + juce::String (band) + "Mix";
-    const float cur = proc_.apvts.getRawParameterValue (id)->load();
+    const float cur = proc_.getBackend().getParamFast (id);
     if (forceBypass)
     {
         if (cur > 0.5f)                            // 未 bypass → 置 0（记忆原值）
@@ -1862,7 +1845,7 @@ void DisplayView::toggleBypass (int band, bool forceBypass)
 bool DisplayView::isAllBypassed() const
 {
     for (int b = 0; b < 4; ++b)
-        if (proc_.apvts.getRawParameterValue ("band" + juce::String (b) + "Mix")->load() > 0.5f)
+        if (proc_.getBackend().getParamFast ("band" + juce::String (b) + "Mix") > 0.5f)
             return false;
     return true;
 }
@@ -2591,8 +2574,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         dragStartX_ = p.x;
         dragAxisLocked_ = false;               // #3：重置主轴锁定
         dragAxisIsX_ = false;
-        dragStartMakeup_ = proc_.apvts.getRawParameterValue (
-            "band" + juce::String (dotBand) + "Makeup")->load();
+        dragStartMakeup_ = proc_.getBackend().getParamFast ("band" + juce::String (dotBand) + "Makeup");
         repaint();
         return;
     }
@@ -2774,8 +2756,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
             // Range 缘拖动接管：**本帧立即应用**（内联一次 Range 计算）
             rangePending_ = false;
             const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
-            const float startRange = proc_.apvts.getRawParameterValue (
-                "band" + juce::String (rangePendingBand_) + "Range")->load();
+            const float startRange = proc_.getBackend().getParamFast ("band" + juce::String (rangePendingBand_) + "Range");
             const float newRange = juce::jlimit (-30.0f, 0.0f,
                 startRange + (curveDownY_ - p.y) * dbPerPx);
             setParamNorm ("band" + juce::String (rangePendingBand_) + "Range",
@@ -2792,8 +2773,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
         dragBand_ = curvePendingBand_ >= 0 ? curvePendingBand_ : selectedBand_;
         dragStartY_ = curveDownY_;
         dragStartX_ = curveDownX_;
-        dragStartMakeup_ = proc_.apvts.getRawParameterValue (
-            "band" + juce::String (dragBand_) + "Makeup")->load();
+        dragStartMakeup_ = proc_.getBackend().getParamFast ("band" + juce::String (dragBand_) + "Makeup");
         togglePopover (false);        // 拖动模式：收起浮层
         // 不 return —— 继续走 Makeup 分支，让本帧位移立即生效
     }

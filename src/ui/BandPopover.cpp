@@ -27,10 +27,10 @@ BandPopover::~BandPopover() = default;
 
 void BandPopover::buildParamCache()
 {
-    paramMap_.clear();
-    for (auto* p : proc_.getParameters())
-        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
-            paramMap_[pw->getParameterID()] = pw;
+    // Phase：改走 facade 的查表（PLAN Phase 6：UI 不直触 APVTS）。
+    // 原来这里也自持一份 paramMap_——与 LinkedDrawer、DisplayView 三份重复，
+    // 正是规范 §6.2 的 D 类耦合。现在统一由 facade 独占。
+    proc_.getBackend().buildParamCache();
 }
 
 void BandPopover::setTheme (MBTheme::Theme t)
@@ -686,57 +686,42 @@ void BandPopover::resized()
     layoutKnobs (true);
 }
 
-// ---------------- 参数读写 ----------------
+// ---------------- 参数读写（Phase：统一走 facade）----------------
 float BandPopover::getParamNorm (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    return (it != paramMap_.end() && it->second != nullptr) ? it->second->getValue() : 0.0f;
+    // getParamFast 返回实际值；Bool/Choice 参数的实际值与 normalized 同为 0/1
+    return proc_.getBackend().getParamFast (id);
 }
 
 float BandPopover::paramRangeMinOf (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-            return (float) rp->getNormalisableRange().start;
+    for (const auto& pi : proc_.getBackend().listParams())
+        if (pi.id == id) return pi.minValue;
     return 0.0f;
 }
 
 float BandPopover::paramRangeMaxOf (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-            return (float) rp->getNormalisableRange().end;
+    for (const auto& pi : proc_.getBackend().listParams())
+        if (pi.id == id) return pi.maxValue;
     return 1.0f;
 }
 
 float BandPopover::getParamPhysical (const juce::String& id) const
 {
-    const auto it = paramMap_.find (id);
-    if (it == paramMap_.end() || it->second == nullptr)
-        return 0.0f;
-    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-        return (float) rp->getNormalisableRange().convertFrom0to1 (it->second->getValue());
-    return it->second->getValue();
+    return proc_.getBackend().getParamFast (id);
 }
 
 void BandPopover::setParamNorm (const juce::String& id, float norm) const
 {
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        it->second->setValueNotifyingHost (norm);
+    // ⚠️ 语义：入参是 **normalized**（与 setParamPhysical 的实际值语义不同），
+    //    走 setParamNormFast 而非 setParam。
+    proc_.getBackend().setParamNormFast (id, norm);
 }
 
 void BandPopover::setParamPhysical (const juce::String& id, float physical) const
 {
-    const auto it = paramMap_.find (id);
-    if (it == paramMap_.end() || it->second == nullptr)
-        return;
-    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-        it->second->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
-    else
-        it->second->setValueNotifyingHost (physical);
+    proc_.getBackend().setParam (id, physical);
 }
 
 juce::String BandPopover::fmtHzShort (float hz)

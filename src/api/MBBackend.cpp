@@ -1,5 +1,9 @@
 #include "MBBackend.h"
 
+// 头文件里只前向声明 CrunchMBAudioProcessor（避免与 PluginProcessor.h 循环包含），
+// 完整类型在这里引入。
+#include "../PluginProcessor.h"
+
 // ============================================================
 // MBBackend 实现
 // ============================================================
@@ -26,6 +30,46 @@ namespace
 }
 
 // ---------------- 参数面 ----------------
+
+void MBBackend::buildParamCache()
+{
+    paramCache_.clear();
+    for (auto* p : proc_.apvts.processor.getParameters())
+        if (auto* wid = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            paramCache_[wid->paramID] = p;
+    paramCacheBuilt_ = true;
+}
+
+void MBBackend::setParamNormFast (const juce::String& id, float norm01)
+{
+    const float n = juce::jlimit (0.0f, 1.0f, norm01);
+    if (paramCacheBuilt_)
+    {
+        const auto it = paramCache_.find (id);
+        if (it != paramCache_.end() && it->second != nullptr)
+        {
+            it->second->setValueNotifyingHost (n);
+            return;
+        }
+    }
+    if (auto* p = proc_.apvts.getParameter (id))
+        p->setValueNotifyingHost (n);
+}
+
+float MBBackend::getParamFast (const juce::String& id) const
+{
+    if (! paramCacheBuilt_)
+        return const_cast<MBBackend*> (this)->getParam (id).value;
+
+    const auto it = paramCache_.find (id);
+    if (it == paramCache_.end() || it->second == nullptr)
+        return const_cast<MBBackend*> (this)->getParam (id).value;
+
+    juce::AudioProcessorParameter* p = it->second;
+    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+        return rp->getNormalisableRange().convertFrom0to1 (p->getValue());
+    return p->getValue();
+}
 
 ParamInfo MBBackend::describeParam (juce::AudioProcessorParameter* p)
 {
@@ -100,7 +144,17 @@ ParamValue MBBackend::getParam (const juce::String& id)
 
     if (auto* p = proc_.apvts.getParameter (id))
     {
-        v.value = p->getValue();      // 调用方按需再转实际值；此处给 normalized
+        // ⚠️ 必须是**实际值**（规范 §2："读取单个参数当前值（实际值）"）。
+        //    两条路都不对：
+        //      · p->getValue()             → normalized（0..1），违反规范
+        //      · getRawParameterValue(id)   → 名字像 raw normalized，实际返回
+        //                                  denormalisedValue（JUCE 命名陷阱）
+        //    正确做法：经 RangedAudioParameter 把 normalized 转成实际值。
+        //    Choice/Bool 参数的"实际值"取当前索引 / 0..1。
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            v.value = rp->getNormalisableRange().convertFrom0to1 (p->getValue());
+        else
+            v.value = p->getValue();
         v.isValid = true;
     }
     return v;

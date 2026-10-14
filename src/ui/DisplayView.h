@@ -668,14 +668,12 @@ private:
     // Pro-MB 的增益刻度与电平表紧邻，读压缩量时视线不用横跳。
     static constexpr float kGainScaleRightX = 882.0f;
 
-    // ---- Phase A：参数查找缓存（消除 39 处线性扫描 + dynamic_cast）----
-    // 构造时一次性建表；之后 getParamNorm/setParamNorm 等都是 O(1)。
-    // 2026-10-14 评审发现：原实现每个查找函数都是
-    //   for (auto* p : proc_.getParameters()) dynamic_cast<...>
-    // 共 39 个调用点分布在 mouseDown/mouseDrag/mouseUp/syncPopover* 里，
-    // 按鼠标刷新率触发 ≈ 每秒十多万次 dynamic_cast。
-    std::unordered_map<juce::String, juce::AudioProcessorParameter*> paramMap_;
-    void buildParamCache();
+    // ---- Phase：参数访问统一走 facade（PLAN Phase 6 / API 规范耦合点 D）----
+    // 原来这里自持一份 id → AudioProcessorParameter* 的 paramMap_ 缓存。
+    // 那正是规范 §6.2 列出的"D UI 直触 APVTS"耦合点：同一份映射在 facade
+    // 和 UI 各存一份，迟早漂移；且 UI 因此能绕过 facade 的钳制/拒绝语义。
+    // 现已全部改为 proc_.getBackend().getParamFast(id) / setParam(id, v)，
+    // 由 facade 独占参数访问（O(1) 查表 + 钳制 + 值型拒绝）。
 
     // ---- Phase A：虚拟时钟（仅供测试钩子 tickForTest 使用）----
     double testClockMs_ = 0.0;

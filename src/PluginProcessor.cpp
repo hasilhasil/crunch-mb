@@ -145,6 +145,16 @@ void CrunchMBAudioProcessor::updateLatency() noexcept
     }
 }
 
+MBBackend& CrunchMBAudioProcessor::getBackend()
+{
+    if (backend_ == nullptr)
+    {
+        backend_ = std::make_unique<MBBackend> (*this);
+        backend_->buildParamCache();
+    }
+    return *backend_;
+}
+
 void CrunchMBAudioProcessor::setEditorActive (bool active) noexcept
 {
     spectrumEngine_.setUIActive (active);

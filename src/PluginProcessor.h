@@ -7,6 +7,7 @@
 #include "Parameters.h"
 #include "dsp/MultibandDSP.h"
 #include "dsp/SpectrumEngine.h"
+#include "api/MBBackend.h"
 
 // ============================================================
 // CrunchMBAudioProcessor — APVTS + 总线（含侧链）+ 状态序列化 + DSP 编排
@@ -66,6 +67,11 @@ public:
     // 显示/API 数据面（Phase 4/6 起由 UI/facade 只读访问）
     MultibandDSP& getDSP() noexcept { return dsp_; }
 
+    /** Phase：统一后端入口（TECH_SPEC §8 / PLAN Phase 6）。
+     *  UI 与外部调用方都经此访问后端，不直触 APVTS/DSP 内部。
+     *  惰性创建：没用到就不构造（facade 只包引用，成本极低）。 */
+    MBBackend& getBackend();
+
     // ---- Phase 4.1 显示数据（音频线程写 / UI 线程读，全无锁） ----
     SpectrumEngine& getSpectrumEngine() noexcept { return spectrumEngine_; }
     float getInputPeak() const noexcept  { return inputPeak_.load (std::memory_order_relaxed); }
@@ -100,6 +106,7 @@ private:
 
     MultibandDSP dsp_;
     SpectrumEngine spectrumEngine_;           // 后台分析线程 + 无锁三缓冲
+    std::unique_ptr<MBBackend> backend_;      // Phase：统一后端 facade（惰性创建）
 
     // 电平表（音频线程写原子，UI 做弹道）
     std::atomic<float> inputPeak_  { 0.0f };

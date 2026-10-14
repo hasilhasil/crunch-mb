@@ -5428,6 +5428,25 @@ static void testBackendFacade()
         const auto vals = api.getParams ({ Param::bandThreshold (2), Param::ID::outputGain });
         check ((int) vals.size() == 2 && vals[0].isValid && vals[1].isValid,
                "T52.8 getParams 批量读取", "");
+
+        // getParam 必须返回**实际值**（规范 §2），不是 normalized。
+        // 这是上轮实现的 bug：原来返回 p->getValue()（normalized），
+        // 导致调用方把 0..1 当成 dB 用。
+        // ⚠️ 不能假设"默认 −20 dB"：本测试块前面的 T52.5/T52.6 已把该参数
+        //    改成 −999（钳到 −60）。所以先设一个已知值，再验证读回的是实际值。
+        api.setParam (Param::bandThreshold (2), -33.0f);
+        auto pv = api.getParam (Param::bandThreshold (2));
+        std::cout << "  getParam(band2Threshold) = " << pv.value << " dB" << std::endl;
+        check (pv.isValid && std::abs (pv.value - (-33.0f)) < 0.05f,
+               "T52.41 getParam 返回实际值（设 −33 读回 −33，非 normalized 0.45）",
+               juce::String (pv.value));
+
+        // 批量读同样返回实际值
+        api.setParam (Param::ID::inputGain, -6.0f);
+        const auto bvals = api.getParams ({ Param::ID::inputGain, Param::ID::outputGain });
+        check (bvals.size() == 2 && std::abs (bvals[0].value - (-6.0f)) < 0.05f,
+               "T52.43 getParams 批量返回实际值（设 −6 读回 −6）",
+               juce::String (bvals[0].value));
     }
 
     // ===== ② 状态面：序列化往返无损 =====
@@ -5632,6 +5651,49 @@ static void testBackendFacade()
         check ((int) mh.inputDb.size() == 32 && mh.pointsWritten == 32,
                "T52.40 readMultibandHistory 点数正确",
                juce::String (mh.pointsWritten));
+    }
+
+    // ===== ⑦ facade 独占参数访问（PLAN Phase 6 / 规范耦合点 D）=====
+    {
+        // getParamFast 与 getParam 必须一致（同一实际值语义）
+        const float a = api.getParamFast (Param::bandThreshold (2));
+        const float b = api.getParam (Param::bandThreshold (2)).value;
+        std::cout << "  getParamFast=" << a << "  getParam=" << b << std::endl;
+        check (std::abs (a - b) < 1.0e-4f,
+               "T52.44 getParamFast 与 getParam 语义一致（均实际值）",
+               juce::String (a) + " vs " + juce::String (b));
+
+        // setParamNormFast 写 normalized：threshold −33dB 的 normalized 不是 0.55
+        api.setParam (Param::bandThreshold (2), -33.0f);
+        const float normBefore = [&] {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::bandThreshold (2))
+                        return pw->getValue();
+            return -1.0f;
+        }();
+        api.setParamNormFast (Param::bandThreshold (2), 0.25f);
+        const float normAfter = [&] {
+            for (auto* pp : proc->getParameters())
+                if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (pp))
+                    if (pw->getParameterID() == Param::bandThreshold (2))
+                        return pw->getValue();
+            return -1.0f;
+        }();
+        std::cout << "  normalized: " << normBefore << " -> " << normAfter << std::endl;
+        check (std::abs (normAfter - 0.25f) < 1.0e-4f,
+               "T52.45 setParamNormFast 写入 normalized（0..1）",
+               juce::String (normAfter));
+
+        // 未建表时也能工作（回落慢路径）
+        MBBackend fresh (*mb);
+        const float fv = fresh.getParamFast (Param::bandThreshold (2));
+        check (std::abs (fv - api.getParamFast (Param::bandThreshold (2))) < 1.0e-3f,
+               "T52.46 getParamFast 未建表时回落仍正确", juce::String (fv));
+
+        // 未知 ID 不崩、返回 0
+        const float unk = api.getParamFast ("noSuchParam");
+        check (unk == 0.0f, "T52.47 getParamFast 未知 ID 返回 0", juce::String (unk));
     }
 
     mb->setEditorActive (false);

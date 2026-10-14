@@ -162,7 +162,8 @@ private:
     std::array<double, 5> sliders_ { 4.0, 1.0, 0.0, 0.0, 0.0 };  // Ratio/Knee/Ext/Detector/(Lookahead)
     bool dynamicsExpand_ = false;      // Phase C-6：false=Compress true=Expand
 
-    std::unordered_map<juce::String, juce::AudioProcessorParameter*> paramMap_;
+    // Phase：参数访问已统一走 proc_.getBackend()（PLAN Phase 6 / API 规范耦合点 D），
+    // 原来这里自持的 paramMap_ 已删除。
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BandPopover)
 };

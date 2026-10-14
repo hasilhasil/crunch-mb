@@ -275,7 +275,7 @@
 [PASS] T18.3 HM æ®µå¢ç atomic åæ åç¼©ï¼1kHz åå®¹ï¼
 [PASS] T18.4 L æ®µå¢ç atomic â0ï¼æ ä½é¢åå®¹ä¸åï¼
 [PASS] T18.5 é¢è°±å¸§ç»æ éä¸ç¼å²åå¸ï¼åæçº¿ç¨ â UIï¼
-  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-108.637dB
+  spectrum: pre@1k=-9.06161dB post@1k=-14.3471dB  pre@100Hz=-108.635dB
 [PASS] T18.6 Pre å±å¨ 1kHz æå³°ï¼æ­£å¼¦å¯æµï¼
 [PASS] T18.7 Post å± 1kHz å³°ä¸é«äº Pre+6dBï¼åç¼©çæï¼
 [PASS] T18.8 100Hz å¤æ å³°ï¼ä¿¡å·çº¯åï¼
@@ -326,7 +326,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=84.2695MB  anim#1=167.754MB (+83.4844)  anim#2=168.137MB (+83.8672 / +0.382812 for the 2nd round)  editorsx200=168.137MB (+83.8672)  theme/resizex50=167.863MB (+83.5938)  resizeStormx400=168.348MB (+84.0781)
+  RSS: start=85.2656MB  anim#1=168.191MB (+82.9258)  anim#2=168.734MB (+83.4688 / +0.542969 for the 2nd round)  editorsx200=168.734MB (+83.4688)  theme/resizex50=169.332MB (+84.0664)  resizeStormx400=169.672MB (+84.4062)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -584,7 +584,7 @@
 [PASS] T40.7 Popover æé®åªæ¹éä¸­æ®µï¼ä¸ä¸²æ®µï¼
   Ratio: 4 -> 20
 [PASS] T40.8 RATIO æ»ææå¨åå¥ APVTS
-  Knee: 6 -> 42 dB
+  Knee: 6 -> 48 dB
 [PASS] T40.9 KNEE è¿ç»­æ»ææå¨åå¥ APVTSï¼0â48 dBï¼
   Ext norm: 0 -> 1
 [PASS] T40.10 EXT ç¹å»ç¿»è½¬ï¼INTâSIDECHAINï¼
@@ -749,6 +749,9 @@
 [PASS] T52.6 setParam è¶çé³å¶ï¼-999 â â¥ -60ï¼
 [PASS] T52.7 setParam æªç¥ ID è¿å applied=false + reason
 [PASS] T52.8 getParams æ¹éè¯»å
+  getParam(band2Threshold) = -33 dB
+[PASS] T52.41 getParam è¿åå®éå¼ï¼è®¾ â33 è¯»å â33ï¼é normalized 0.45ï¼
+[PASS] T52.43 getParams æ¹éè¿åå®éå¼ï¼è®¾ â6 è¯»å â6ï¼
 [PASS] T52.9 getStateSnapshot ææï¼84 åæ°ï¼
   loadState 后: ratio=7.5 mix=137
 [PASS] T52.10 loadState åºååå¾è¿æ æ
@@ -763,7 +766,7 @@
 [PASS] T52.19 åå²ç¹è¿ç»­ï¼æ è·³åæ­è£ï¼
 [PASS] T52.20 getTransferCurve ç¹æ°æ­£ç¡®
 [PASS] T52.21 ä¼ è¾æ²çº¿ x è½´è¦ç [minDb, maxDb]
-  传输曲线增益范围: -6 .. -0.5625 dB
+  传输曲线增益范围: -6 .. 0 dB
 [PASS] T52.22 ä¼ è¾æ²çº¿å¨éå¼ä»¥ä¸åºç°è¡°å
 [PASS] T52.23 getFrequencyResponse ç¹æ°æ­£ç¡®
 [PASS] T52.24 é¢çè½´å¯¹æ°è¦ç 20Hz..20kHz
@@ -787,6 +790,12 @@
 [PASS] T52.38 getLatestSpectrum è¿ååå±é¢è°± + é¢çè½´
 [PASS] T52.39 é¢çè½´å¯¹æ°è·¨åº¦ 20Hz..20kHz
 [PASS] T52.40 readMultibandHistory ç¹æ°æ­£ç¡®
+  getParamFast=-60  getParam=-60
+[PASS] T52.44 getParamFast ä¸ getParam è¯­ä¹ä¸è´ï¼åå®éå¼ï¼
+  normalized: 0.45 -> 0.25
+[PASS] T52.45 setParamNormFast åå¥ normalizedï¼0..1ï¼
+[PASS] T52.46 getParamFast æªå»ºè¡¨æ¶åè½ä»æ­£ç¡®
+[PASS] T52.47 getParamFast æªç¥ ID è¿å 0
 
 ====================================
-PASS 425 / FAIL 0
+PASS 431 / FAIL 0

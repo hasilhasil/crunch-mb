@@ -7,6 +7,9 @@
 // 本类是唯一的后端入口，把 APVTS / DSP / 频谱引擎封装成
 // `crunch-api-interface.md` 规定的接口面。
 //
+// ⚠️ 循环包含：PluginProcessor.h 也 include 本头（为持有 backend_ 成员）。
+//    这里只前向声明 CrunchMBAudioProcessor，不 include ——  .cpp 里再 include。
+//
 // 线程纪律：
 //   · getMeteringSnapshot / readHistory / readMultibandHistory /
 //     getBandGainReduction —— RT_SAFE（只读 atomic）
@@ -14,7 +17,10 @@
 // ============================================================
 
 #include "IMBBackend.h"
-#include "../PluginProcessor.h"
+
+#include <unordered_map>
+
+class CrunchMBAudioProcessor;
 
 class MBBackend : public IMBBackend
 {
@@ -55,8 +61,39 @@ public:
                             std::array<float, 512>& post,
                             std::vector<float>& freqs) override;
 
+    /**
+     * Phase：按 ID 取**实际值**的 O(1) 热路径版本（UI 每帧读参数用）。
+     *
+     * 为什么不用 getParam()：getParam() 走 apvts.getParameter(id)，那是 O(n)
+     * 的线性字符串比较（84 个参数）。UI 在 timerCallback 里每帧读十几个参数，
+     * 60fps 下就是每秒上千次线性扫描——不可接受。
+     *
+     * 这里在首次调用时建 id → 参数的哈希表，之后每次查表 O(1)。
+     * 找不到时回落到 getParam()（仍正确，只是慢）。
+     */
+    float getParamFast (const juce::String& id) const;
+    void buildParamCache();
+
+    /**
+     * Phase：按 **normalized**（0..1）写入参数。
+     *
+     * 与 setParam 的分工：setParam 入参是实际值（规范语义），本函数入参是
+     * normalized。UI 里有 39 处历史调用点原本就按 normalized 语义
+     * （如 lookahead 的 next*0.5f、Solo/Mute 的 0/1），
+     * 直接换成 setParam 会把这些值当成 dB/Hz/% 解释 —— 那是真实的行为回归
+     * （T21.4/T24.1/T27.3/T40.9/T40.13/T40.18 九个断言因此失败）。
+     *
+     * 因此：实际值语义走 setParam，normalized 语义走本函数，两者都经 facade，
+     * 都不直触 APVTS。
+     */
+    void setParamNormFast (const juce::String& id, float norm01);
+
 private:
     CrunchMBAudioProcessor& proc_;
+
+    // Phase：id → 参数的 O(1) 查表（buildParamCache 后有效）
+    std::unordered_map<juce::String, juce::AudioProcessorParameter*> paramCache_;
+    bool paramCacheBuilt_ = false;
 
     /** 从 APVTS 参数推导 ParamInfo（唯一真源，避免手写表与注册表漂移）。 */
     static ParamInfo describeParam (juce::AudioProcessorParameter* p);
