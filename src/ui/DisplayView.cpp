@@ -28,10 +28,12 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     // Phase A：LINKED CONTROL 抽屉拆为独立组件（UI_PLAN_V2 §3.2）
     linkedDrawer_ = std::make_unique<LinkedDrawer> (proc_);
     addAndMakeVisible (*linkedDrawer_);
+    linkedDrawer_->setBounds (getLocalBounds());
     linkedDrawer_->setHostBounds (getLocalBounds());
     // Phase A：频段 Popover 拆为独立组件（UI_PLAN_V2 §3.2）
     bandPopover_ = std::make_unique<BandPopover> (proc_);
     addAndMakeVisible (*bandPopover_);
+    bandPopover_->setBounds (getLocalBounds());
     bandPopover_->setHostBounds (getLocalBounds());
     // Phase A：频率输入框拆为独立组件（UI_PLAN_V2 §3.2）
     freqInput_ = std::make_unique<FreqInputEditor>();
@@ -41,6 +43,16 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
         else           applyDividerFreq (divider, hz);
     };
     addAndMakeVisible (*freqInput_);
+    freqInput_->setBounds (getLocalBounds());
+    // Phase A：双层频谱拆为独立组件（UI_PLAN_V2 §3.2）
+    // 坐标映射由 DisplayView 注入，避免 SpectrumView 再算一套。
+    spectrumView_ = std::make_unique<SpectrumView> (proc_);
+    spectrumView_->setCoordMapper (
+        [this] (float f) { return freqToX (f); },
+        [this] (float db) { return specDbToY (db); },
+        [this] { return specDbToY (-100.0f); });
+    addAndMakeVisible (*spectrumView_);
+    spectrumView_->setBounds (getLocalBounds());
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -195,6 +207,10 @@ void DisplayView::setTheme (MBTheme::Theme t)
         linkedDrawer_->setTheme (t);
     if (bandPopover_ != nullptr)
         bandPopover_->setTheme (t);
+    if (freqInput_ != nullptr)
+        freqInput_->setTheme (t);
+    if (spectrumView_ != nullptr)
+        spectrumView_->setTheme (t);
     curvePathsValid_ = false;
     repaint();
 }
@@ -825,15 +841,9 @@ void DisplayView::timerCallback()
     updatePeakHold (peakInDb_,  peakInHoldUntilMs_,  inDb,  nowMs, dt);
     updatePeakHold (peakOutDb_, peakOutHoldUntilMs_, outDb, nowMs, dt);
 
-    // ---- Phase 4.3：频谱帧拾取 + 曲线刷新 ----
-    bool spectrumChanged = proc_.getSpectrumEngine().getLatest (spectrumPre_, spectrumPost_);
-    if (spectrumChanged)
-    {
-        if (spectrumFreqs_.size() != (size_t) kSpectrumPoints)
-            proc_.getSpectrumEngine().getFrequencies (spectrumFreqs_);
-        spectrumHasFrame_ = true;
-        spectrumPathsValid_ = false;
-    }
+    // ---- Phase 4.3：频谱帧拾取（Phase A：已拆为 SpectrumView）----
+    if (spectrumView_ != nullptr)
+        spectrumView_->updateFromEngine();
 
     // #7：输入框光标闪烁（500ms 半周期）
     // A2 修复：闪烁由时间驱动，paint() 只读。所有可能处于编辑态的控件都要推进。
@@ -918,8 +928,6 @@ void DisplayView::timerCallback()
 
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
     advanceTweens (nowMs);
-
-    refreshSpectrumPaths();     // 有新帧才重建
 
     repaint();
 }
@@ -1129,60 +1137,8 @@ void DisplayView::refreshCurvePaths()
     curvePathsValid_ = true;
 }
 
-void DisplayView::refreshSpectrumPaths()
-{
-    if (! spectrumHasFrame_ || spectrumFreqs_.size() != (size_t) kSpectrumPoints)
-        return;
-
-    const float bottom = specDbToY (-100.0f);
-    const auto build = [&] (const std::array<float, kSpectrumPoints>& levels,
-                            juce::Path& fill, juce::Path& stroke)
-    {
-        fill.clear();
-        stroke.clear();
-        for (int i = 0; i < kSpectrumPoints; ++i)
-        {
-            const float x = freqToX (spectrumFreqs_[(size_t) i]);
-            const float y = specDbToY (levels[(size_t) i]);
-            if (i == 0) { fill.startNewSubPath (x, y); stroke.startNewSubPath (x, y); }
-            else        { fill.lineTo (x, y);          stroke.lineTo (x, y); }
-        }
-        fill.lineTo (freqToX (spectrumFreqs_.back()), bottom);
-        fill.lineTo (freqToX (spectrumFreqs_.front()), bottom);
-        fill.closeSubPath();
-    };
-
-    build (spectrumPre_,  spectrumPreFill_,  spectrumPreStroke_);
-    build (spectrumPost_, spectrumPostFill_, spectrumPostStroke_);
-    spectrumPathsValid_ = true;
-}
-
-// ---------------- Phase 4.3 绘制 ----------------
-void DisplayView::drawSpectrum (juce::Graphics& g)
-{
-    // ⚠️ guard 只用"内容为空"判断，不用 *PathsValid_ 脏标志——
-    // 2026-09-23 修复：脏标志为 true 的那一帧会整层不画，但 Path 里还有上一帧
-    // 几何可用 → 用户看到"曲线/频谱偶发消失一瞬间"。
-    if (spectrumPreFill_.isEmpty() && spectrumPreStroke_.isEmpty())
-        return;
-
-    // B1（用户验收指定）：主题色(accent) = Pre，灰(inFill) = Post
-    // Pro-MB Analyzer 面板：Pre/Post 可独立开关
-    if (analyzerPreOn_)
-    {
-        g.setColour (pal_.accent.withAlpha (0.30f));
-        g.fillPath (spectrumPreFill_);
-        g.setColour (pal_.accent.withAlpha (0.95f));
-        g.strokePath (spectrumPreStroke_, juce::PathStrokeType (2.0f));
-    }
-    if (analyzerPostOn_)
-    {
-        g.setColour (pal_.inFill.withAlpha (0.20f));
-        g.fillPath (spectrumPostFill_);
-        g.setColour (pal_.inFill.withAlpha (0.80f));
-        g.strokePath (spectrumPostStroke_, juce::PathStrokeType (1.5f));
-    }
-}
+// Phase A：refreshSpectrumPaths() / drawSpectrum() 已整体拆到 SpectrumView 组件。
+// DisplayView 只注入坐标映射（构造时）并每帧调 updateFromEngine()。
 
 void DisplayView::drawRangeBell (juce::Graphics& g)
 {
@@ -2061,6 +2017,12 @@ bool DisplayView::hitTestAnalyzerButton (juce::Point<float> p) const
     return juce::Rectangle<float> (x, y0, sx (104.0f), sy (22.0f)).contains (p);
 }
 
+void DisplayView::syncSpectrumLayers()
+{
+    if (spectrumView_ != nullptr)
+        spectrumView_->setLayerVisible (analyzerPreOn_, analyzerPostOn_);
+}
+
 void DisplayView::applyAnalyzerSettings()
 {
     auto& eng = proc_.getSpectrumEngine();
@@ -2075,8 +2037,10 @@ void DisplayView::openAnalyzerMenu()
 {
     juce::PopupMenu m;
 
-    m.addItem ("Pre spectrum",  true, analyzerPreOn_,  [this] { analyzerPreOn_  = ! analyzerPreOn_; });
-    m.addItem ("Post spectrum", true, analyzerPostOn_, [this] { analyzerPostOn_ = ! analyzerPostOn_; });
+    m.addItem ("Pre spectrum",  true, analyzerPreOn_,  [this] { analyzerPreOn_  = ! analyzerPreOn_;
+                                                               syncSpectrumLayers(); });
+    m.addItem ("Post spectrum", true, analyzerPostOn_, [this] { analyzerPostOn_ = ! analyzerPostOn_;
+                                                               syncSpectrumLayers(); });
     m.addSeparator();
 
     juce::PopupMenu res;
@@ -2120,7 +2084,7 @@ void DisplayView::paint (juce::Graphics& g)
     drawBackground (g);
     drawGrid (g);
     drawPartitions (g);
-    drawSpectrum (g);        // Phase 4.3：双层频谱
+    // Phase A：双层频谱已拆为 SpectrumView 子组件自绘。
     drawRangeBell (g);       // Phase 4.3：Range 钟型层
     drawResponseCurve (g);   // Phase 4.3：仿 EQ 动态总曲线
     drawScales (g);          // A3：刻度在上层、100% 不透明
@@ -2135,13 +2099,28 @@ void DisplayView::paint (juce::Graphics& g)
 
 void DisplayView::resized()
 {
-    // D3：尺寸变化 → 曲线与频谱几何全部失效（坐标基于实际像素，必须重建）
+    // D3：尺寸变化 → 曲线几何全部失效（坐标基于实际像素，必须重建）
     curvePathsValid_ = false;
-    spectrumPathsValid_ = false;
 
-    // Phase A：抽屉按钮/面板位置依赖宿主 bounds，尺寸变化时同步并重排旋钮
+    // Phase A：抽屉/Popover 位置依赖宿主 bounds，尺寸变化时同步
+    // 子组件的 bounds 必须铺满父组件——JUCE 按子组件自身 bounds 裁剪绘制，
+    // 0×0 的 bounds 会让面板整体不画（T39.17 抓到过频谱层因此消失）。
     if (linkedDrawer_ != nullptr)
+    {
+        linkedDrawer_->setBounds (getLocalBounds());
         linkedDrawer_->setHostBounds (getLocalBounds());
+    }
     if (bandPopover_ != nullptr)
+    {
+        bandPopover_->setBounds (getLocalBounds());
         bandPopover_->setHostBounds (getLocalBounds());
+    }
+    if (freqInput_ != nullptr)
+        freqInput_->setBounds (getLocalBounds());
+    // Phase A：频谱 Path 也要按新坐标重建
+    if (spectrumView_ != nullptr)
+    {
+        spectrumView_->setBounds (getLocalBounds());
+        spectrumView_->invalidate();
+    }
 }

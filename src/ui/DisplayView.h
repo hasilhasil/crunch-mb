@@ -12,6 +12,7 @@
 #include "LinkedDrawer.h"
 #include "BandPopover.h"
 #include "FreqInputEditor.h"
+#include "SpectrumView.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -59,7 +60,23 @@ public:
     void setActive (bool active) noexcept;
 
     // 测试钩子：离屏渲染（无窗口），供像素级视觉回归断言使用
-    void paintForTest (juce::Graphics& g) { paint (g); }
+    // ⚠️ 子组件不会随父组件 paint() 一起绘制——JUCE 由
+    //    Component::paintEntireComponent 按**子组件自身 bounds** 裁剪后绘制。
+    //    所以离屏只调 paint(g) 会让所有拆出去的子组件（抽屉/Popover/频谱/输入框）
+    //    在像素回归里全部消失。这里手动补上子组件的绘制。
+    void paintForTest (juce::Graphics& g)
+    {
+        paint (g);
+        for (auto* c : getChildren())
+        {
+            if (c == nullptr || ! c->isVisible())
+                continue;
+            juce::Graphics::ScopedSaveState ss (g);
+            g.addTransform (juce::AffineTransform::translation (
+                (float) -c->getX(), (float) -c->getY()));
+            c->paint (g);
+        }
+    }
     // 测试钩子：手动驱动一帧（timerCallback 为 protected）
     // Phase A：推进**虚拟时钟**再跑一帧，使动画测试确定性
     // （真实时间在紧凑循环里几乎不前进，Tween 会永远停在起点）。
@@ -132,8 +149,8 @@ public:
     bool  getAnalyzerFreezeForTest()  const { return analyzerFreeze_; }
     bool  getAnalyzerPreOnForTest()   const { return analyzerPreOn_; }
     bool  getAnalyzerPostOnForTest()  const { return analyzerPostOn_; }
-    void  setAnalyzerPreOnForTest (bool v)  { analyzerPreOn_ = v; }
-    void  setAnalyzerPostOnForTest (bool v) { analyzerPostOn_ = v; }
+    void  setAnalyzerPreOnForTest (bool v)   { analyzerPreOn_ = v;  syncSpectrumLayers(); }
+    void  setAnalyzerPostOnForTest (bool v)  { analyzerPostOn_ = v; syncSpectrumLayers(); }
     void  setAnalyzerFftSizeForTest (int v)   { analyzerFftSize_ = v; }
     void  setAnalyzerSpeedForTest (int v)     { analyzerSpeed_ = v; }
     void  setAnalyzerTiltForTest (float v)    { analyzerTilt_ = v; }
@@ -144,10 +161,13 @@ public:
     juce::Rectangle<float> popSliderRectForTest (int k) const;
     juce::Rectangle<float> popExpertRectForTest() const;
     bool isPopoverExpertOpenForTest() const;
-    bool  hasSpectrumFrameForTest() const     { return spectrumHasFrame_; }
+    bool  hasSpectrumFrameForTest() const
+    {
+        return spectrumView_ != nullptr && spectrumView_->hasFrameForTest();
+    }
     bool  spectrumPathsReadyForTest() const
     {
-        return ! spectrumPreFill_.isEmpty() && ! spectrumPreStroke_.isEmpty();
+        return spectrumView_ != nullptr && spectrumView_->pathsReadyForTest();
     }
     // T21/T36 诊断
     int  dbgSelectedBand() const { return selectedBand_; }
@@ -275,7 +295,7 @@ private:
     void drawGlobalBar (juce::Graphics& g);
     // Phase A：drawDrawer() 已随抽屉拆到 LinkedDrawer::paint()
     // ---- Phase 4.3 动态层 ----
-    void drawSpectrum (juce::Graphics& g);
+    // Phase A：drawSpectrum() / refreshSpectrumPaths() 已整体拆到 SpectrumView 组件。
     void drawRangeBell (juce::Graphics& g);
     void drawResponseCurve (juce::Graphics& g);
 
@@ -285,7 +305,7 @@ private:
     void pollStructureParams();          // 每帧比对结构参数（变化→权重重算）
     void updateWeights();                // w_i(f)：交叉权重（结构变化时）
     void updateCurve();                  // y(f)=Σw·g：每帧
-    void refreshSpectrumPaths();         // 新频谱帧到达时
+    // Phase A：refreshSpectrumPaths() 已拆到 SpectrumView 组件。
     void refreshCurvePaths();            // 曲线/Range 几何变化时
     float bellWeight (int band, float freq) const;   // 段内 sin² 钟型
     float bandCenterFreq (int band) const;           // 段几何中心频率
@@ -389,6 +409,8 @@ private:
     bool  analyzerPostOn_  = true;
     void openAnalyzerMenu();
     void applyAnalyzerSettings();
+    /** Phase A：把 Pre/Post 开关同步给 SpectrumView 子组件。 */
+    void syncSpectrumLayers();
     bool hitTestAnalyzerButton (juce::Point<float> p) const;
 
     // ---- Phase 5.2 / 5.3：抽屉与 Popover 组件（UI_PLAN_V2 §3.2）----
@@ -444,12 +466,9 @@ private:
     int   cachedRangeBand_ = -1;
 
     // ---- Phase 4.3：双层频谱 ----
-    static constexpr int kSpectrumPoints = SpectrumEngine::kDisplayPoints;
-    std::vector<float> spectrumFreqs_;
-    std::array<float, kSpectrumPoints> spectrumPre_ {}, spectrumPost_ {};
-    bool spectrumHasFrame_ = false;
-    juce::Path spectrumPreFill_, spectrumPreStroke_, spectrumPostFill_, spectrumPostStroke_;
-    bool spectrumPathsValid_ = false;
+    // Phase A：已拆为独立组件 SpectrumView（UI_PLAN_V2 §3.2）。
+    // DisplayView 只提供坐标映射（freqToX / specDbToY / specBottomY）并每帧驱动。
+    std::unique_ptr<SpectrumView> spectrumView_;
 
     static constexpr float kDesignW = 920.0f;
     static constexpr float kDesignH = 620.0f;

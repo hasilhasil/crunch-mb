@@ -59,7 +59,9 @@ target_sources(CrunchMB PRIVATE
     src/ui/FreqInputEditor.h
     src/ui/Knob.cpp
     src/ui/LinkedDrawer.cpp
-    src/ui/LinkedDrawer.h)
+    src/ui/LinkedDrawer.h
+    src/ui/SpectrumView.cpp
+    src/ui/SpectrumView.h)
 
 target_compile_definitions(CrunchMB PUBLIC
     JUCE_WEB_BROWSER=0
@@ -106,7 +108,9 @@ target_sources(CrunchMBTests PRIVATE
     src/ui/FreqInputEditor.h
     src/ui/Knob.cpp
     src/ui/LinkedDrawer.cpp
-    src/ui/LinkedDrawer.h)
+    src/ui/LinkedDrawer.h
+    src/ui/SpectrumView.cpp
+    src/ui/SpectrumView.h)
 target_include_directories(CrunchMBTests PRIVATE src)
 target_compile_definitions(CrunchMBTests PRIVATE
     JUCE_WEB_BROWSER=0
