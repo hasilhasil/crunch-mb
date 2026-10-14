@@ -11,6 +11,7 @@
 #include "Knob.h"
 #include "LinkedDrawer.h"
 #include "BandPopover.h"
+#include "FreqInputEditor.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -269,7 +270,7 @@ private:
     void drawCrossovers (juce::Graphics& g);
     void drawBandHeaders (juce::Graphics& g);
     void drawMeters (juce::Graphics& g);
-    void drawFreqInput (juce::Graphics& g);   // #7 自绘频率输入框
+    void drawFreqInput (juce::Graphics& g) { }   // #7 已拆为 FreqInputEditor 子组件自绘
     void drawTopStrip (juce::Graphics& g);
     void drawGlobalBar (juce::Graphics& g);
     // Phase A：drawDrawer() 已随抽屉拆到 LinkedDrawer::paint()
@@ -355,20 +356,9 @@ private:
     void applyCenterFreq (int band, float freq);     // P2：横拖频点改段中心频率（两侧 crossover 同步）
     void toggleBypass (int band, bool forceBypass = false);
     // ---- 自绘频率输入框（#7：不用 juce::TextEditor——它在宿主 VST3 编辑器里会弹独立窗口） ----
-    struct FreqInputState
-    {
-        bool  active = false;
-        int   band = -1;          // >=0 → 编辑段中心频率
-        int   divider = -1;       // >=0 → 编辑分割线频率
-        float x = 0.0f, y = 0.0f; // 屏幕位置
-        juce::String text;
-        juce::uint32 lastBlinkMs = 0;
-        bool  cursorVisible = true;
-    };
-    FreqInputState freqIn_;
-
+    // Phase A：已拆为独立组件 FreqInputEditor。DisplayView 只负责开合与键盘/光标转发。
     void openFreqEditor (int index, int band);
-    void closeFreqEditor (bool apply);
+    std::unique_ptr<FreqInputEditor> freqInput_;
 
     // ---- Phase A：动画状态（UI_PLAN_V2 §6）----
     // Popover 用 Tween；抽屉的 Tween 归 LinkedDrawer 自己管。

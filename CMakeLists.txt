@@ -55,6 +55,8 @@ target_sources(CrunchMB PRIVATE
     src/ui/BandPopover.cpp
     src/ui/BandPopover.h
     src/ui/DisplayView.cpp
+    src/ui/FreqInputEditor.cpp
+    src/ui/FreqInputEditor.h
     src/ui/Knob.cpp
     src/ui/LinkedDrawer.cpp
     src/ui/LinkedDrawer.h)
@@ -100,6 +102,8 @@ target_sources(CrunchMBTests PRIVATE
     src/ui/BandPopover.cpp
     src/ui/BandPopover.h
     src/ui/DisplayView.cpp
+    src/ui/FreqInputEditor.cpp
+    src/ui/FreqInputEditor.h
     src/ui/Knob.cpp
     src/ui/LinkedDrawer.cpp
     src/ui/LinkedDrawer.h)

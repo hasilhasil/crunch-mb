@@ -33,6 +33,14 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     bandPopover_ = std::make_unique<BandPopover> (proc_);
     addAndMakeVisible (*bandPopover_);
     bandPopover_->setHostBounds (getLocalBounds());
+    // Phase A：频率输入框拆为独立组件（UI_PLAN_V2 §3.2）
+    freqInput_ = std::make_unique<FreqInputEditor>();
+    freqInput_->onApply = [this] (int divider, int band, float hz)
+    {
+        if (band >= 0) applyCenterFreq (band, hz);
+        else           applyDividerFreq (divider, hz);
+    };
+    addAndMakeVisible (*freqInput_);
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -593,36 +601,7 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
     }
 }
 
-// #7：自绘频率输入框（画在频点/分割线上方，宿主内嵌，不弹独立窗口）
-void DisplayView::drawFreqInput (juce::Graphics& g)
-{
-    if (! freqIn_.active)
-        return;
-
-    const float bw = sx (72.0f), bh = sy (24.0f);
-    float tx = freqIn_.x - bw * 0.5f, ty = freqIn_.y - bh - sy (10.0f);
-    tx = juce::jlimit (2.0f, (float) getWidth() - bw - 2.0f, tx);
-    if (ty < sy (kTopStripH)) ty = freqIn_.y + sy (10.0f);
-
-    auto box = juce::Rectangle<float> (tx, ty, bw, bh);
-    g.setColour (pal_.surface.withAlpha (0.97f));
-    g.fillRoundedRectangle (box, sx (5.0f));
-    g.setColour (pal_.accent);
-    g.drawRoundedRectangle (box, sx (5.0f), 1.2f);
-
-    // 文本 + 闪烁光标
-    const juce::String label = freqIn_.text + (freqIn_.cursorVisible ? "|" : " ");
-    g.setColour (pal_.text);
-    g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
-    g.drawText (label, box, juce::Justification::centred);
-
-    // 单位提示
-    g.setColour (pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::regular(), 8.0f));
-    g.drawText ("Hz  (Enter 确认 / Esc 取消)",
-                box.withTrimmedBottom (-sy (12.0f)).withY (box.getBottom() + 1.0f).withHeight (sy (11.0f)),
-                juce::Justification::centredTop);
-}
+// #7：drawFreqInput() 已整体拆到 FreqInputEditor 子组件自绘。
 
 void DisplayView::drawMeters (juce::Graphics& g)
 {
@@ -857,16 +836,9 @@ void DisplayView::timerCallback()
     }
 
     // #7：输入框光标闪烁（500ms 半周期）
-    // A2 修复：闪烁由时间驱动，paint() 只读。所有可能处于编辑态的旋钮都要推进。
-    if (freqIn_.active)
-    {
-        const auto now = (juce::uint32) animNowMs();
-        if (now - freqIn_.lastBlinkMs > (juce::uint32) Anim::kBlinkMs)
-        {
-            freqIn_.lastBlinkMs = now;
-            freqIn_.cursorVisible = ! freqIn_.cursorVisible;
-        }
-    }
+    // A2 修复：闪烁由时间驱动，paint() 只读。所有可能处于编辑态的控件都要推进。
+    if (freqInput_ != nullptr)
+        freqInput_->tickCursor ((juce::uint32) nowMs);
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->tickEditCursors ((juce::uint32) nowMs);
     if (bandPopover_ != nullptr)
@@ -1378,6 +1350,40 @@ bool DisplayView::getParamBool (const juce::String& id) const
                ? (it->second->getValue() >= 0.5f) : false;
 }
 
+float DisplayView::getParamNorm (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    return (it != paramMap_.end() && it->second != nullptr) ? it->second->getValue() : 0.0f;
+}
+
+float DisplayView::getParamPhysical (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it == paramMap_.end() || it->second == nullptr)
+        return 0.0f;
+    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+        return (float) rp->getNormalisableRange().convertFrom0to1 (it->second->getValue());
+    return it->second->getValue();
+}
+
+float DisplayView::paramRangeMinOf (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+            return (float) rp->getNormalisableRange().start;
+    return 0.0f;
+}
+
+float DisplayView::paramRangeMaxOf (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+            return (float) rp->getNormalisableRange().end;
+    return 1.0f;
+}
+
 bool DisplayView::isBandBypassed (int band) const
 {
     // D9 方案 A：Bypass = Mix<50% 宏。band{i}Mix 是浮点参数（0..100），
@@ -1541,78 +1547,35 @@ bool DisplayView::hitTestGlobalBypass (juce::Point<float> p) const
     return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 }
 
+// #7：自绘频率输入框 —— Phase A 已拆为 FreqInputEditor 组件。
+// 这里只保留"打开"逻辑（关闭/绘制/键盘都在组件内）。
 void DisplayView::openFreqEditor (int index, int band)
 {
-    // #7：自绘输入框（不再用 juce::TextEditor——宿主 VST3 编辑器里会弹独立顶层窗口）
-    //     index >= 0 → 编辑分割线频率；band >= 0 → 编辑段中心频率
-    freqIn_.active  = true;
-    freqIn_.band    = band;
-    freqIn_.divider = index;
-    freqIn_.text.clear();
-    freqIn_.cursorVisible = true;
-    freqIn_.lastBlinkMs = animNowMs();
-
+    if (freqInput_ == nullptr)
+        return;
+    float x = 0.0f, y = 0.0f;
     if (band >= 0)
     {
         // #7：输入框出现在 hover 简易信息窗的位置（频点上方）
-        freqIn_.x = freqToX (bandCenterFreq (band));
-        freqIn_.y = freqDotScreenY (band) - sy (14.0f);
+        x = freqToX (bandCenterFreq (band));
+        y = freqDotScreenY (band) - sy (14.0f);
     }
     else
     {
-        freqIn_.x = (index == 0) ? freqToX (cachedX1_)
-                   : (index == 1) ? freqToX (cachedX2_) : freqToX (cachedX3_);
-        freqIn_.y = sy (470.0f);
+        x = (index == 0) ? freqToX (cachedX1_)
+          : (index == 1) ? freqToX (cachedX2_) : freqToX (cachedX3_);
+        y = sy (470.0f);
     }
+    freqInput_->open (index, band, x, y);
     setWantsKeyboardFocus (true);
     grabKeyboardFocus();
     repaint();
 }
 
-void DisplayView::closeFreqEditor (bool apply)
-{
-    if (! freqIn_.active)
-        return;
-    if (apply)
-    {
-        // 支持简写：'1k' → 1000，'2x' → +6 dB 不适用；此处仅 Hz 数值
-        const float f = juce::jlimit (20.0f, 20000.0f, freqIn_.text.getFloatValue());
-        if (freqIn_.band >= 0) applyCenterFreq (freqIn_.band, f);
-        else                   applyDividerFreq (freqIn_.divider, f);
-    }
-    freqIn_.active = false;
-    freqIn_.text.clear();
-    repaint();
-}
-
 bool DisplayView::keyPressed (const juce::KeyPress& key)
 {
-    if (! freqIn_.active)
-        return false;
-
-    if (key == juce::KeyPress::escapeKey)
-    {
-        closeFreqEditor (false);
+    if (freqInput_ != nullptr && freqInput_->keyPressed (key))
         return true;
-    }
-    if (key == juce::KeyPress::returnKey)
-    {
-        closeFreqEditor (true);
-        return true;
-    }
-    if (key == juce::KeyPress::backspaceKey)
-    {
-        freqIn_.text = freqIn_.text.substring (0, juce::jmax (0, freqIn_.text.length() - 1));
-        repaint();
-        return true;
-    }
-    const juce::juce_wchar ch = key.getTextCharacter();
-    if ((ch >= '0' && ch <= '9') || ch == '.' || ch == 'k' || ch == 'K')
-    {
-        freqIn_.text += juce::String::charToString (ch);
-        repaint();
-        return true;
-    }
     return false;
 }
 
@@ -1746,9 +1709,9 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 void DisplayView::mouseDown (const juce::MouseEvent& e)
 {
     // #7：输入框激活时，先点别处 = 取消
-    if (freqIn_.active)
+    if (freqInput_ != nullptr && freqInput_->isActive())
     {
-        closeFreqEditor (false);
+        freqInput_->close (false);
         return;
     }
 
@@ -2163,10 +2126,8 @@ void DisplayView::paint (juce::Graphics& g)
     drawScales (g);          // A3：刻度在上层、100% 不透明
     drawCrossovers (g);
     drawBandHeaders (g);
-    drawFreqInput (g);       // #7：自绘频率输入框（最上层）
-    // A4 修复（UI_PLAN_V2 §6.3）：此处此前连续调了两次 drawDrawer (g)，
-    // 导致抽屉区域 alpha 双重混合（偏深偏灰）+ 每帧无谓多画一整个面板。
-    // Phase A：抽屉与 Popover 均已整体拆为子组件自绘。
+    // Phase A：抽屉与 Popover 均已整体拆为子组件自绘；
+    // 频率输入框同样是子组件（FreqInputEditor）。
     drawMeters (g);
     drawTopStrip (g);
     drawGlobalBar (g);
