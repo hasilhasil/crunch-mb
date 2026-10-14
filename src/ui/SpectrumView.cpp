@@ -6,9 +6,9 @@
 // ============================================================
 
 SpectrumView::SpectrumView (CrunchMBAudioProcessor& processor)
-    : juce::Component ("CrunchMBSpectrum"), proc_ (processor)
+    : proc_ (processor)
 {
-    setInterceptsMouseClicks (false, false);
+    // 注意：不 setInterceptsMouseClicks —— 本类不是 Component。
 }
 
 SpectrumView::~SpectrumView() = default;

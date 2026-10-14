@@ -44,15 +44,13 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     };
     addAndMakeVisible (*freqInput_);
     freqInput_->setBounds (getLocalBounds());
-    // Phase A：双层频谱拆为独立组件（UI_PLAN_V2 §3.2）
-    // 坐标映射由 DisplayView 注入，避免 SpectrumView 再算一套。
+    // Phase A：双层频谱抽为独立类（UI_PLAN_V2 §3.2），但**不是**子组件——
+    // 它在下面的 paint() 第 4 位被直接调用，否则会盖住曲线/刻度/分割线等层。
     spectrumView_ = std::make_unique<SpectrumView> (proc_);
     spectrumView_->setCoordMapper (
         [this] (float f) { return freqToX (f); },
         [this] (float db) { return specDbToY (db); },
         [this] { return specDbToY (-100.0f); });
-    addAndMakeVisible (*spectrumView_);
-    spectrumView_->setBounds (getLocalBounds());
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -2112,7 +2110,10 @@ void DisplayView::paint (juce::Graphics& g)
     drawBackground (g);
     drawGrid (g);
     drawPartitions (g);
-    // Phase A：双层频谱已拆为 SpectrumView 子组件自绘。
+    // 频谱在第 4 位（分区之后、Range/曲线/刻度/分割线/段名/电平表之前）——
+    // 与抽取前的 drawSpectrum(g) 位置一致。⚠️ 不能改成子组件，见 SpectrumView.h
+    if (spectrumView_ != nullptr)
+        spectrumView_->paint (g);
     drawRangeBell (g);       // Phase 4.3：Range 钟型层
     drawResponseCurve (g);   // Phase 4.3：仿 EQ 动态总曲线
     drawScales (g);          // A3：刻度在上层、100% 不透明
@@ -2145,10 +2146,7 @@ void DisplayView::resized()
     }
     if (freqInput_ != nullptr)
         freqInput_->setBounds (getLocalBounds());
-    // Phase A：频谱 Path 也要按新坐标重建
+    // Phase A：频谱 Path 按新坐标重建（它不是子组件，不需要 setBounds）
     if (spectrumView_ != nullptr)
-    {
-        spectrumView_->setBounds (getLocalBounds());
         spectrumView_->invalidate();
-    }
 }

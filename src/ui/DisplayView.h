@@ -60,10 +60,10 @@ public:
     void setActive (bool active) noexcept;
 
     // 测试钩子：离屏渲染（无窗口），供像素级视觉回归断言使用
-    // ⚠️ 子组件不会随父组件 paint() 一起绘制——JUCE 由
-    //    Component::paintEntireComponent 按**子组件自身 bounds** 裁剪后绘制。
-    //    所以离屏只调 paint(g) 会让所有拆出去的子组件（抽屉/Popover/频谱/输入框）
-    //    在像素回归里全部消失。这里手动补上子组件的绘制。
+    // ⚠️ 只有**覆盖层**子组件需要在这里补画：抽屉 / Popover / 频率输入框。
+    //    频谱（SpectrumView）不是子组件，已由上面的 paint() 在第 4 位绘制。
+    //    JUCE 的子组件永远画在父组件 paint() 之后，而离屏只调 paint(g)，
+    //    所以这些覆盖层在像素回归里会全部消失——必须手动补上。
     void paintForTest (juce::Graphics& g)
     {
         paint (g);
