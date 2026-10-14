@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第十一轮 · 全部 Phase 完成）
+### 进度总览（更新于 2026-10-14，第十二轮 · 侧链 UI 补齐）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -456,6 +456,7 @@ namespace Anim {
 | **E-2 空闲停 Timer**（`85a366b`） | 编辑器打开时原本无条件 60fps 重绘。现在无动效、无新频谱帧、无拖拽时**自动停表**，任何交互立即唤醒。音频不受影响（在音频线程），纯粹省 UI 的 CPU/电量 | — （工程优化） |
 | **E-3 多层渐变投影**（`41e3bd3`） | 弹层（Popover / Analyzer / Output）的投影从"一层硬边黑影 + 下移 3px"改成**三层由深到浅、由近到远**（alpha .30/.20/.14，偏移 2/6/14px，圆角随扩散增长）。观感从"贴在界面上"变成"浮在界面上" | **Pro-MB**：投影约 `0 14px 44px rgba(0,0,0,.5)` |
 | **E-1 backdrop blur**（`9a9dfa8`） | 顶栏/底栏从"透明塑料"变成"磨砂玻璃"：背后的频谱/网格先被下采样 + 两遍可分离盒模糊糊化，再上半透明色。模糊源只含背景层（背景/网格/分区/频谱），不含玻璃条自身与上层控件，避免自我反馈。15Hz 刷新——模糊是低频信息，人眼对滞后不敏感，CPU 省 4× | **Pro-MB**：位图预渲染投影 / **Future MB**：shader 模糊 |
+| **侧链滤波 UI 暴露**（`6e45685`） | EXPERT 面板从 2 行扩到 5 行：新增 **Filtering（Band↔Free）、SC High-Pass（20/100/500/2000 Hz）、SC Low-Pass（500/2000/5000/20000 Hz）**，点击循环档位。**DSP 侧链滤波能力从第一轮起就存在，但一直没有 UI 触达**——这次把它接上：Free 模式下可以让该段触发于完全不同的频率范围 | **Pro-MB**：Side Chain Filtering + Free 模式的 LP/HP 频率。官方帮助 "let a band trigger on a completely different frequency range" |
 
 ### Phase D 待做
 
@@ -708,7 +709,7 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **362**（+75） |
+| `CrunchMBTests` 断言数 | 287 | **365**（+78） |
 | 参数总数 | 62 | **83**（+21：oversampling、每段侧链滤波×3、StereoLink、Dynamics） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
@@ -731,7 +732,7 @@ T39 频谱 17 项均通过）。
 - 真多选：本插件是单选中模型，交付"扫选"手势的速度价值
 - MIDI 路由：实现可视化学习流程，不做消息路由（插件不接收 MIDI）
 - 全局 Mix 0-200%：UI 已就绪，DSP 需新增参数（语义与每段 Mix 不同，未硬接）
-- 侧链 EQ 频率：Free 模式的 LP/HP 已实现，但 UI 未暴露（参数已在）
+- ~~侧链 EQ 频率~~ ✅ 已暴露（`6e45685`）
 - shader 渲染：Pro-MB 与 Future MB 用 GPU，本插件用 JUCE 软件渲染（60fps 达标）
 
 ### 已知待办（低优先）
@@ -739,4 +740,4 @@ T39 频谱 17 项均通过）。
 - `TextSelect` 自绘下拉（当前用原生 PopupMenu，功能可用）
 - 1px 细线 AA 提亮（细节抛光）
 - 全局 Mix DSP 接入
-- 侧链 LP/HP 频率的 UI 暴露
+- ~~侧链 LP/HP 频率的 UI 暴露~~ ✅ 已完成
