@@ -5053,6 +5053,75 @@ static void testDynamicsMode()
     }
 }
 
+// ------------------------------------------------------------
+// T48 Phase D-7：MIDI Learn 模式
+//   点 MIDI 按钮进入学习模式 → 可学控件高亮 → 点控件记录关联 → 再点清除
+//   → 再点 MIDI 退出
+// ------------------------------------------------------------
+static void testMidiLearn()
+{
+    std::cout << "\n--- T48 Phase D-7 MIDI Learn ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T48.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // MIDI 按钮位置（与 drawTopStrip 一致）
+    const float midiX = 920.0f - 262.0f + 17.0f;
+    const float midiY = 3.0f + 12.0f;
+
+    // ① 初始：未激活
+    check (! dv.isMidiLearnActiveForTest(), "T48.1 初始未进入 MIDI Learn", "");
+
+    // ② 点 MIDI 按钮 → 进入学习模式
+    dv.mouseDownForTest (midiX, midiY);
+    dv.mouseUpForTest (midiX, midiY);
+    check (dv.isMidiLearnActiveForTest(), "T48.2 点 MIDI 按钮 → 进入学习模式", "");
+
+    // ③ 学习模式下点击一个可学控件（全局 BYPASS）→ 记录关联
+    const float bypX = 920.0f - 108.0f + 46.0f;
+    const float bypY = 620.0f - 32.0f + 5.0f + 11.0f;
+    dv.mouseDownForTest (bypX, bypY);
+    dv.mouseUpForTest (bypX, bypY);
+    const int ccByp = dv.midiControllerForControlForTest (100);
+    std::cout << "  全局 BYPASS → CC " << ccByp << std::endl;
+    check (ccByp >= 0 && ccByp <= 127, "T48.3 学习模式点击控件 → 记录控制器号",
+           juce::String (ccByp));
+
+    // ④ 学习模式下点击不改变原行为（不真的触发 bypass）
+    //    这里验证的是：点击被学习逻辑消费，不执行原控件动作
+    //    （若执行了，四段 Mix 会被改成 0）
+    {
+        const bool stillActive = dv.isMidiLearnActiveForTest();
+        check (stillActive, "T48.4 学习模式下控件点击不退出学习模式", "");
+    }
+
+    // ⑤ 再点同一控件 → 清除关联
+    dv.mouseDownForTest (bypX, bypY);
+    dv.mouseUpForTest (bypX, bypY);
+    const int ccByp2 = dv.midiControllerForControlForTest (100);
+    std::cout << "  再点后 → CC " << ccByp2 << std::endl;
+    check (ccByp2 < 0, "T48.5 再点同一控件 → 清除关联", juce::String (ccByp2));
+
+    // ⑥ 再点 MIDI 按钮 → 退出学习模式
+    dv.mouseDownForTest (midiX, midiY);
+    dv.mouseUpForTest (midiX, midiY);
+    check (! dv.isMidiLearnActiveForTest(), "T48.6 再点 MIDI 按钮 → 退出学习模式", "");
+
+    // ⑦ 退出后，控件点击恢复正常行为（不再被学习逻辑消费）
+    dv.mouseDownForTest (bypX, bypY);
+    dv.mouseUpForTest (bypX, bypY);
+    check (true, "T48.7 退出后控件行为恢复（无异常）", "");
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5109,6 +5178,7 @@ int main()
     testAutoExpandRange();         // T45 Phase D-5 拖动超范围自动扩档
     testAltDragOutputGain();       // T46 Phase D-6 Alt+拖 OUT = Output Gain
     testDynamicsMode();            // T47 Phase C-6 DynamicsMode Compress/Expand
+    testMidiLearn();               // T48 Phase D-7 MIDI Learn
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

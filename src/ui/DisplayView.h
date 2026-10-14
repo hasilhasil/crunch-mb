@@ -129,6 +129,14 @@ public:
         return bandPopover_ != nullptr ? bandPopover_->dynamicsSegRectForTest()
                                        : juce::Rectangle<float>();
     }
+
+    /** Phase D-7 测试钩子：MIDI Learn 状态与关联表。 */
+    bool isMidiLearnActiveForTest() const { return midiLearnActive_; }
+    int  midiControllerForControlForTest (int controlId) const
+    {
+        const auto it = midiMap_.find (controlId);
+        return (it != midiMap_.end()) ? it->second : -1;
+    }
     // 测试钩子：各层 Path 是否有内容（T29 闪烁回归）
     std::string getCurvePathLenForTest() const { return curvePath_.isEmpty() ? "" : "x"; }
     std::string getRangeEdgeLenForTest (int b) const
@@ -483,6 +491,19 @@ private:
     std::array<Tween, 3>                divT_;      // 分割线 hover 变色 0 ↔ 1
     std::array<bool,   Param::kNumBands> bandBypassed_ {};   // BYP 状态缓存（检测变化才驱动动画）
 
+    // ---- Phase D-7：MIDI Learn（Pro-MB MIDI learn 流程对标）----
+    // 流程：点 MIDI Learn 按钮进入学习模式 -> 可学控件高亮
+    //   -> 点某个控件 -> 显示关联的 MIDI 控制器号（未关联显示 "-"）-> 再点退出
+    // 注意：本插件不真正接收 MIDI，实现的是可视化的学习流程，
+    //   能记录/显示哪个控件关联到哪个控制器号，但不做 MIDI 消息路由。
+    bool  midiLearnActive_ = false;
+    int   midiLearnTarget_ = -1;
+    std::unordered_map<int, int> midiMap_;
+    int  midiControlId (juce::Point<float> p) const;
+    void toggleMidiLearn();
+    bool handleMidiLearnClick (juce::Point<float> p);
+    void drawMidiLearnOverlay (juce::Graphics& g);
+
     // ---- Phase C-3：频段圆形电平表（Pro-MB Threshold 旋钮外圈环对标）----
     // 实时值由音频线程写、UI 线程读；这里各存一份平滑后的显示值，
     // 让环的转动有弹道感而不是每帧跳。
@@ -531,6 +552,9 @@ private:
     juce::Rectangle<float> displayRangeBtn_;
 
     bool  isAllBypassed() const;
+    juce::Rectangle<float> midiBtnRect_;
+    /** Phase D-7：MIDI Learn 按钮命中（现算，不依赖 paint 副作用）。 */
+    bool hitTestMidiButton (juce::Point<float> p) const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
     /** Phase D-4：底栏 OUT 按钮（可点，悬停打开 Output 面板）。 */
     bool hitTestOutputButton (juce::Point<float> p) const;

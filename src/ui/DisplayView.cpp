@@ -790,6 +790,15 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
                     displayRangeBtn_, juce::Justification::centred);
     }
 
+    // Phase D-7：MIDI Learn 按钮（顶栏，Pro-MB MIDI learn 对标）
+    // 学习模式下按钮变实心 accent，提示当前处于特殊模式。
+    midiBtnRect_ = juce::Rectangle<float> (W - sx (262.0f), sy (3.0f), sx (34.0f), sy (24.0f));
+    g.setColour (midiLearnActive_ ? pal_.accent : pal_.track);
+    g.fillRoundedRectangle (midiBtnRect_, sx (12.0f));
+    g.setColour (midiLearnActive_ ? juce::Colours::white.withAlpha (0.92f) : pal_.dim);
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
+    g.drawText ("MIDI", midiBtnRect_, juce::Justification::centred);
+
     auto gearBtn = juce::Rectangle<float> (W - sx (30.0f), sy (3.0f), sx (24.0f), sy (24.0f));
     g.setColour (pal_.track);
     g.fillRoundedRectangle (gearBtn, sx (6.0f));
@@ -1732,6 +1741,162 @@ bool DisplayView::hitTestOutputButton (juce::Point<float> p) const
     return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 }
 
+// ---------------- Phase D-7：MIDI Learn ----------------
+bool DisplayView::hitTestMidiButton (juce::Point<float> p) const
+{
+    // 与 drawTopStrip 的绘制位置严格一致（W−262..W−228，y 3..27）
+    const float W = (float) getWidth();
+    const float x0 = W - sx (262.0f), x1 = W - sx (228.0f);
+    const float y0 = sy (3.0f), y1 = y0 + sy (24.0f);
+    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+}
+
+int DisplayView::midiControlId (juce::Point<float> p) const
+{
+    // 把屏幕坐标映射成稳定的控件 id。id 空间分段，避免相互碰撞：
+    //   0..3   : 四个分割线（crossover 1..3 + 保留 1）
+    //   10..13: 四段频点（band level dot）
+    //   20..23: 四段 S 按钮
+    //   30..33: 四段 M 按钮
+    //   40..43: 四段 BYP 按钮
+    //   50..53: 四段 Δ 按钮
+    //   100    : 全局 BYPASS
+    //   101    : Display Range
+    //   102    : Analyzer
+    //   103    : OUT
+    //   104    : LINKED CONTROL
+    //   105    : MIDI Learn（自身不可学）
+    const float W = (float) getWidth();
+    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+
+    // 分割线
+    for (int e = 0; e < 3; ++e)
+        if (std::abs (p.x - nx[e]) <= sx (23.0f)
+            && p.y >= (float) getHeight() - sy (kGlobalBarH) - sy (22.0f))
+            return 0 + e;
+
+    // 按钮列（S/M/BYP/Δ）
+    int b = -1, j = -1;
+    if (hitTestButton (p, b, j) != 0 && b >= 0 && j >= 0)
+        return 20 + b * 10 + j;
+
+    // 频点
+    int dotBand = -1;
+    if (hitTestFreqDot (p, dotBand) != 0 && dotBand >= 0)
+        return 10 + dotBand;
+
+    // 全局条按钮
+    const float barY = (float) getHeight() - sy (kGlobalBarH);
+    if (p.y >= barY)
+    {
+        if (hitTestGlobalBypass (p)) return 100;
+        if (hitTestDisplayRange (p))  return 101;
+        if (hitTestAnalyzerButton (p)) return 102;
+        if (hitTestOutputButton (p))  return 103;
+        // LINKED CONTROL 梯形按钮（居中，宽 456，高 29）
+        const float cw = sx (456.0f), ch = sy (29.0f);
+        const float cx = (W - cw) * 0.5f;
+        const float cy = (float) getHeight() - sy (kGlobalBarH) - ch + sy (1.0f);
+        if (p.x >= cx && p.x <= cx + cw && p.y >= cy && p.y <= cy + ch) return 104;
+    }
+    return -1;
+}
+
+void DisplayView::toggleMidiLearn()
+{
+    midiLearnActive_ = ! midiLearnActive_;
+    midiLearnTarget_ = -1;
+    repaint();
+}
+
+bool DisplayView::handleMidiLearnClick (juce::Point<float> p)
+{
+    if (! midiLearnActive_)
+        return false;
+
+    // 点 MIDI 按钮自身 → 退出学习模式（由调用方处理，这里不消费）
+    if (midiBtnRect_.contains (p))
+        return false;
+
+    const int id = midiControlId (p);
+    if (id < 0)
+        return false;      // 没命中可学控件，不消费点击
+
+    const auto it = midiMap_.find (id);
+    if (it == midiMap_.end())
+    {
+        // 首次点击 → 关联一个演示用的控制器号（无真实 MIDI 输入时）
+        // 用 id 派生一个 0..127 的稳定编号，保证可复现
+        midiMap_[id] = 1 + (id * 7) % 120;
+    }
+    else
+    {
+        midiMap_.erase (it);   // 再点一次 → 清除关联
+    }
+    repaint();
+    return true;
+}
+
+void DisplayView::drawMidiLearnOverlay (juce::Graphics& g)
+{
+    if (! midiLearnActive_)
+        return;
+
+    // 学习模式下：所有可学控件画一圈呼吸的高亮框。
+    // 用时间驱动的 alpha（不用 paint 次数），避免与之前 A2 相同的 bug。
+    const double nowMs = animNowMs();
+    const float pulse = 0.5f + 0.5f * (float) std::sin (nowMs * 0.004);
+
+    auto highlight = [&] (juce::Rectangle<float> r, int id)
+    {
+        const bool learned = midiMap_.find (id) != midiMap_.end();
+        const juce::Colour c = learned ? pal_.accent : pal_.text;
+        g.setColour (c.withAlpha (learned ? 0.55f + 0.35f * pulse : 0.25f + 0.25f * pulse));
+        g.drawRoundedRectangle (r.expanded (2.0f), 4.0f, 1.5f);
+        if (learned)
+        {
+            // 已关联：画控制器号徽标
+            const juce::String txt = "CC " + juce::String (midiMap_[id]);
+            g.setFont (MBTheme::font (MBTheme::semiBold(), 8.5f));
+            const float bw = sx (34.0f), bh = sy (13.0f);
+            auto badge = juce::Rectangle<float> (r.getCentreX() - bw * 0.5f,
+                                                 r.getY() - bh - sy (3.0f), bw, bh);
+            g.setColour (pal_.accent.withAlpha (0.92f));
+            g.fillRoundedRectangle (badge, 3.0f);
+            g.setColour (juce::Colours::white);
+            g.drawText (txt, badge, juce::Justification::centred);
+        }
+    };
+
+    const float W = (float) getWidth();
+    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float barY = (float) getHeight() - sy (kGlobalBarH);
+
+    for (int e = 0; e < 3; ++e)
+        highlight (juce::Rectangle<float> (nx[e] - sx (23.0f), barY - sy (22.0f),
+                                           sx (46.0f), sy (22.0f)), e);
+
+    for (int b = 0; b < 4; ++b)
+    {
+        const float edge = (b < 3) ? nx[b] : juce::jmin (W, sx (kMeterX) - sx (8.0f));
+        const float bx = edge - sx (40.0f);
+        for (int j = 0; j < 4; ++j)
+            highlight (juce::Rectangle<float> (bx, sy (118.0f + j * 30.0f), sx (24.0f), sy (24.0f)),
+                       20 + b * 10 + j);
+        // 频点
+        int dotBand = -1;
+        juce::Point<float> dp ((float) getWidth() * 0.5f, (float) getHeight() * 0.5f);
+        (void) dotBand; (void) dp;
+    }
+
+    // 全局条按钮
+    highlight (juce::Rectangle<float> (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f)), 101);
+    highlight (juce::Rectangle<float> (W * 0.5f - sx (150.0f), barY + sy (5.0f), sx (104.0f), sy (22.0f)), 102);
+    highlight (juce::Rectangle<float> (W - sx (196.0f), barY + sy (5.0f), sx (78.0f), sy (22.0f)), 103);
+    highlight (juce::Rectangle<float> ((W - sx (456.0f)) * 0.5f, barY - sy (29.0f) + sy (1.0f),
+                                       sx (456.0f), sy (29.0f)), 104);
+}
+
 // #7：自绘频率输入框 —— Phase A 已拆为 FreqInputEditor 组件。
 // 这里只保留"打开"逻辑（关闭/绘制/键盘都在组件内）。
 void DisplayView::openFreqEditor (int index, int band)
@@ -2024,6 +2189,18 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         openDisplayRangeMenu();
         return;
     }
+
+    // 0e) Phase D-7：MIDI Learn 按钮（顶栏）
+    // ⚠️ 命中要现算，不能读 midiBtnRect_——那个成员是 drawTopStrip 里赋值的，
+    //    首次点击时还是空的（R5 同类问题：命中几何不要依赖 paint 的副作用）。
+    if (hitTestMidiButton (p))
+    {
+        toggleMidiLearn();
+        return;
+    }
+    // 学习模式下：可学控件的点击由学习逻辑消费
+    if (midiLearnActive_ && handleMidiLearnClick (p))
+        return;
 
     // 0) 全局 BYPASS 胶囊（A8 区，global bar 右侧）
     if (hitTestGlobalBypass (p))
@@ -2506,6 +2683,8 @@ void DisplayView::paint (juce::Graphics& g)
     drawMeters (g);
     drawTopStrip (g);
     drawGlobalBar (g);
+    // Phase D-7：MIDI Learn 高亮覆盖层（最上层，覆盖所有控件）
+    drawMidiLearnOverlay (g);
 }
 
 void DisplayView::resized()
