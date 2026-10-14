@@ -115,11 +115,16 @@
 | 优先级 | 项 | 说明 |
 |---|---|---|
 | **P0 已完成** | 双刻度、单实时粗线、Range 静态层、频点绑基准、横拖中心频率、双击输入、BYP dim | 本轮全部落地 |
-| **P1 Phase 5** | 全局选择器下拉菜单（Phase/Slope/Quality/Lookahead/Display Range） | 当前是静态文字 |
-| **P1 Phase 5** | 段参数旋钮组（Threshold/Range/Attack/Release/Output/Ratio/Knee）+ LINKED 抽屉 | 用户已确认这是缺失的核心 |
-| **P2 Phase 5** | Undo/Redo、A/B 对比 | 顶栏图标占位 |
-| **P2** | Freeze（频谱峰值冻结）、Analyzer 设置面板（Speed/Tilt/Resolution） | 读谱体验 |
-| **P2** | 参数平滑（SPI）：切段/切 preset 时曲线不跳变 | Pro-MB "Smart Parameter Interpolation" |
-| **P3** | Auto-Gain（ITU 1770 响度匹配） | 借鉴 Future MB |
-| **P3** | snap 吸附 + Split/Unsnap hover 按钮 | Pro-MB 招牌交互（我们已用 1 八度钳制替代） |
-| **P3** | 预设浏览器（标签过滤/收藏） | 产品化 |
+| ~~**P1 Phase 5**~~ | ~~全局选择器下拉菜单（Phase/Slope/Quality/Lookahead/Display Range）~~ | ✅ 已做（Display Range `c4e03d3`；Phase/Slope/Quality/Lookahead `f1a9bec`）。原来是画着 ▼ 却点不动的静态文字 |
+| ~~**P1 Phase 5**~~ | ~~段参数旋钮组（Threshold/Range/Attack/Release/Output/Ratio/Knee）+ LINKED 抽屉~~ | ✅ 已做（`837cabd` `3f03c6b` `ab2812b` `aa5595c`） |
+| **P2 Phase 5** | Undo/Redo、A/B 对比 | 顶栏图标占位。**DESIGN §9 已声明不做**（与 EQ / Compressor 一致，靠宿主会话） |
+| ~~**P2**~~ | ~~Freeze（频谱峰值冻结）、Analyzer 设置面板（Speed/Tilt/Resolution）~~ | ✅ 已做（`e2e8784`，AnalyzerPanel 含 Pre/Post、Resolution、Speed、Tilt、Freeze） |
+| **P2** | 参数平滑（SPI）：切段/切 preset 时曲线不跳变 | Pro-MB "Smart Parameter Interpolation"。JUCE APVTS 自带参数平滑；曲线层的平滑由 `bandDisplayDb_` 等驱动，切段时仍有瞬时跳变 |
+| **P3** | Auto-Gain（ITU 1770 响度匹配） | 借鉴 Future MB。未做 |
+| **P3** | snap 吸附 + Split/Unsnap hover 按钮 | Pro-MB 招牌交互（我们已用 1 八度钳制替代，见 DESIGN §9） |
+| **P3** | 预设浏览器（标签过滤/收藏） | 产品化。DESIGN §9 已声明无预设系统 |
+
+> **核对记录（2026-10-14 第二十一轮）**：本清单原有 10 项，其中 5 项已交付、
+> 3 项被 DESIGN §9 明确划为"已知边界"（非缺陷）、2 项为 P2/P3 可选增强。
+> 剩余真正未交付的只有 **Auto-Gain（ITU 1770）** 与 **参数平滑（SPI）** 两项，
+> 均为 P2/P3，且前者会改变输出响度语义（需用户确认），后者 JUCE 已部分覆盖。
