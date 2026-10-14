@@ -207,10 +207,14 @@ void BandPopover::clickExpertRow (ExpertRow row)
             // Off → 1ms → 3ms 循环（lookahead 是全局参数，k=4 只显示不在此写；
             // 这里显式循环全局 lookahead 参数）
             {
-                const int cur = (int) juce::roundToInt (
-                    getParamNorm ("lookahead") * 2.0f);
+                // ⚠️ lookahead 是 Choice 参数，getParamFast 返回的实际值**就是选项索引**
+                //    （0/1/2），不是 normalized（0/0.5/1）。迁移前这里是
+                //    `getParamNorm(...) * 2.0f` 把 normalized 转索引；迁移后
+                //    getParamNorm 已改为返回实际值，再 ×2 会得到 0/2/4 ——
+                //    从 3ms 点一下会跳过 1ms 直接回 Off（T40.18 只测了 Off→1ms 没抓到）。
+                const int cur = (int) juce::roundToInt (getParamNorm ("lookahead"));
                 const int next = (cur + 1) % 3;
-                setParamNorm ("lookahead", next * 0.5f);
+                setParamNorm ("lookahead", next * 0.5f);   // 写入侧仍是 normalized
                 sliders_[4] = next;
             }
             break;
@@ -414,7 +418,9 @@ void BandPopover::syncFromParams()
     sliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");
     sliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");
     sliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");
-    sliders_[4] = getParamNorm ("lookahead") * 2.0f;   // 全局 lookahead 的索引 0..2
+    // ⚠️ lookahead 是 Choice：getParamNorm 返回的实际值已是索引 0..2，
+    //    不能再 ×2（同 clickExpertRow 里的 Lookahead 分支）。
+    sliders_[4] = getParamNorm ("lookahead");
     dynamicsExpand_ = sliders_[3] >= 0.0f && getParamNorm ("band" + juce::String (b) + "Dynamics") > 0.5f;
 }
 
@@ -687,9 +693,14 @@ void BandPopover::resized()
 }
 
 // ---------------- 参数读写（Phase：统一走 facade）----------------
+// ⚠️ 语义警示（R7/R9 的根源）：getParamFast() 返回**实际值**。
+//   · Bool 参数：实际值 0/1，与 normalized 相同
+//   · Choice 参数：实际值是**选项索引**（0..N-1），与 normalized 不同
+//     （3 选项的 normalized 是 0/0.5/1，索引是 0/1/2）
+//   · Float 参数：实际值是 dB/Hz/ms/%
+// 所以"按 normalized 用"的调用点必须自己转，不能假设两者等价。
 float BandPopover::getParamNorm (const juce::String& id) const
 {
-    // getParamFast 返回实际值；Bool/Choice 参数的实际值与 normalized 同为 0/1
     return proc_.getBackend().getParamFast (id);
 }
 

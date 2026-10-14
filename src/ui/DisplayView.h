@@ -123,6 +123,9 @@ public:
     int   getDisplayRangeModeForTest() const { return displayRangeMode_; }
     /** Phase D-5 测试钩子：设置 Display Range 模式（0=Auto，1..4=固定档）。 */
     void  setDisplayRangeModeForTest (int m) { displayRangeMode_ = juce::jlimit (0, 4, m); }
+    /** T55 测试钩子：结构参数缓存值（验证 Choice 索引未被放大）。 */
+    int cachedPhaseModeForTest() const      { return cachedMode_; }
+    int cachedXoverSlopeIndexForTest() const { return cachedSlope_; }
     /** Phase 测试钩子：自绘下拉是否打开 / 矩形。 */
     bool isDropDownOpenForTest() const { return dropDownOpen_; }
     juce::Rectangle<float> dropDownRectForTest() const { return dropDownRect(); }

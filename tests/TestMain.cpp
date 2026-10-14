@@ -5949,6 +5949,121 @@ static void testSmartParamInterp()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T55 Phase：Choice 参数索引语义（R9 回归锁定）
+//   facade 迁移时多处把"normalized × (N-1) 转索引"的旧写法留着，
+//   而 getParamFast 返回的实际值已经是索引——再乘就放大。
+//   受影响：lookahead 循环、xoverSlope/phaseMode 结构缓存、
+//   全局栏当前值显示、下拉当前项高亮。
+// ------------------------------------------------------------
+static void testChoiceIndexSemantics()
+{
+    std::cout << "\n--- T55 Phase Choice 参数索引语义 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T55.0 处理器实例可访问", "");
+
+    MBBackend api (*mb);
+
+    // ① Choice 参数的实际值必须落在 [0, N-1]（索引），不是 normalized
+    {
+        auto pv = api.getParam (Param::ID::lookahead);
+        std::cout << "  lookahead 实际值 = " << pv.value << std::endl;
+        check (pv.isValid && pv.value >= 0.0f && pv.value <= 2.0f
+               && std::abs (pv.value - std::round (pv.value)) < 1.0e-4f,
+               "T55.1 Choice 实际值是整数索引（lookahead ∈ {0,1,2}）",
+               juce::String (pv.value));
+
+        auto ps = api.getParam (Param::ID::xoverSlope);
+        check (ps.isValid && ps.value >= 0.0f && ps.value <= 3.0f,
+               "T55.2 xoverSlope 索引 ∈ {0,1,2,3}", juce::String (ps.value));
+
+        auto pm = api.getParam (Param::ID::phaseMode);
+        check (pm.isValid && pm.value >= 0.0f && pm.value <= 2.0f,
+               "T55.3 phaseMode 索引 ∈ {0,1,2}", juce::String (pm.value));
+    }
+
+    // ② lookahead 循环：Off → 1ms → 3ms → Off，不能跳档
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        { juce::Image img (juce::Image::ARGB, 920, 620, true);
+          juce::Graphics g (img); dv.paintForTest (g); }
+
+        // 打开 band2 Popover 并展开 EXPERT（与 T40.16 同一路径）
+        dv.mouseDownForTest (freqToXforTest (2449.0f), 150.0f);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+        const auto er = dv.popExpertRectForTest();
+        dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
+        dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        check (dv.isPopoverExpertOpenForTest(), "T55.4a EXPERT 已展开", "");
+
+        const auto ec = dv.popExpertContentRectForTest();
+        const float laRow = ec.getY() + ec.getHeight() * 0.30f;   // 第 2 行 = Lookahead
+
+        // 从 Off 起，连点 3 次，应依次到 1ms / 3ms / Off
+        api.setParamNormFast (Param::ID::lookahead, 0.0f);
+        const int expect[3] = { 1, 2, 0 };
+        bool allOk = true;
+        for (int step = 0; step < 3; ++step)
+        {
+            dv.mouseDownForTest (ec.getCentreX(), laRow);
+            dv.mouseUpForTest (ec.getCentreX(), laRow);
+            const float got = api.getParam (Param::ID::lookahead).value;
+            std::cout << "  step " << step << ": lookahead = " << got
+                      << " (expect " << expect[step] << ")" << std::endl;
+            if (std::abs (got - (float) expect[step]) > 0.01f) allOk = false;
+        }
+        check (allOk, "T55.4 lookahead 循环 Off→1ms→3ms→Off 不跳档", "");
+    }
+
+    // ③ 结构缓存不失配：phaseMode / xoverSlope 改动后，UI 缓存值应与参数一致
+    {
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        { juce::Image img (juce::Image::ARGB, 920, 620, true);
+          juce::Graphics g (img); dv.paintForTest (g); }
+
+        // 切到 Linear Phase（索引 2）与 48 dB/oct（索引 3）
+        api.setParamNormFast (Param::ID::phaseMode, 1.0f);
+        api.setParamNormFast (Param::ID::xoverSlope, 1.0f);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+        const int cachedMode  = dv.cachedPhaseModeForTest();
+        const int cachedSlopeDb = dv.cachedXoverSlopeIndexForTest();
+        std::cout << "  cached mode=" << cachedMode << " slopeDb=" << cachedSlopeDb << std::endl;
+        check (cachedMode == 2, "T55.5 phaseMode 缓存 = 2（Linear，未被 ×2 放大成 4）",
+               juce::String (cachedMode));
+        // cachedSlope_ 存的是 slopeIndexToDb() 的结果（dB），不是索引。
+        // 索引 3（48 dB/oct）→ 48；若旧 bug 把索引放大成 9，slopeIndexToDb
+        // 内部会 jlimit 到 3，仍是 48 —— 所以这一项实际看不出放大。
+        // 真正的判据是"缓存值与参数一致且不逐帧变化"，见 T55.7。
+        check (cachedSlopeDb == 48, "T55.6 xoverSlope 缓存 = 48 dB（索引 3）",
+               juce::String (cachedSlopeDb));
+
+        // ⑦ 缓存不应逐帧翻变（旧 bug 会让结构缓存永久失配 → 每帧重建权重）
+        {
+            const int s0 = dv.cachedXoverSlopeIndexForTest();
+            const int m0 = dv.cachedPhaseModeForTest();
+            for (int t = 0; t < 30; ++t) dv.tickForTest (16.0);
+            const int s1 = dv.cachedXoverSlopeIndexForTest();
+            const int m1 = dv.cachedPhaseModeForTest();
+            std::cout << "  缓存稳定性: slope " << s0 << "->" << s1
+                      << "  mode " << m0 << "->" << m1 << std::endl;
+            check (s0 == s1 && m0 == m1,
+                   "T55.7 结构缓存稳定（无逐帧失配）",
+                   juce::String (s0) + "/" + juce::String (s1));
+        }
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6010,6 +6125,7 @@ int main()
     testSelfDrawnDropDown();       // T50 Phase 自绘 TextSelect 下拉
     testGlobalSelectors();         // T53 Phase 全局栏 Choice 选择器
     testSmartParamInterp();        // T54 Phase SPI 曲线层平滑
+    testChoiceIndexSemantics();    // T55 Phase Choice 参数索引语义
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

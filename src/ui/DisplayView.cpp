@@ -857,8 +857,9 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
         for (const auto& pi : proc_.getBackend().listParams())
         {
             if (pi.id != paramId || ! pi.isChoice) continue;
-            const float norm = proc_.getBackend().getParamFast (paramId);
-            const int idx = juce::roundToInt (norm * (float) juce::jmax (1, pi.choices.size() - 1));
+            // ⚠️ getParamFast 返回的实际值就是选项索引，不是 normalized，
+            //    不能再乘 (choices.size()-1)。
+            const int idx = juce::roundToInt (proc_.getBackend().getParamFast (paramId));
             if (idx >= 0 && idx < pi.choices.size())
                 value = pi.choices[idx];
             break;
@@ -1248,11 +1249,16 @@ void DisplayView::pollStructureParams()
     const float x1 = proc_.getBackend().getParamFast (Param::ID::xover1);
     const float x2 = proc_.getBackend().getParamFast (Param::ID::xover2);
     const float x3 = proc_.getBackend().getParamFast (Param::ID::xover3);
-    const int slope = (int) juce::roundToInt (
-        Param::slopeIndexToDb ((int) juce::roundToInt (
-            proc_.getBackend().getParamFast (Param::ID::xoverSlope) * 3.0f)));
+    // ⚠️ xoverSlope / phaseMode 都是 Choice 参数，getParamFast 返回的实际值
+    //    **就是选项索引**，不是 normalized。迁移前这里是
+    //    `getRawParameterValue(...) * 3.0f` / `* 2.0f` 把 normalized 转索引；
+    //    迁移后两条 API 都返回实际值，再乘就等于把索引又放大一遍
+    //    （slope 0..3 → 0..9，mode 0..2 → 0..4）——结构与相位模式的缓存比对
+    //    会永久失配，导致每帧都判定"结构变了"。
+    const int slope = Param::slopeIndexToDb (
+        (int) juce::roundToInt (proc_.getBackend().getParamFast (Param::ID::xoverSlope)));
     const int mode = (int) juce::roundToInt (
-        proc_.getBackend().getParamFast (Param::ID::phaseMode) * 2.0f);
+        proc_.getBackend().getParamFast (Param::ID::phaseMode));
 
     if (x1 != cachedX1_ || x2 != cachedX2_ || x3 != cachedX3_
         || slope != cachedSlope_ || mode != cachedMode_)
@@ -2382,9 +2388,11 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     if (globalMode)
     {
         labels = dropDownChoices_;
-        const float norm = proc_.getBackend().getParamFast (dropDownParamId_);
-        curIdx = juce::roundToInt (norm * (float) juce::jmax (1, dropDownCount_ - 1));
-        curIdx = juce::jlimit (0, dropDownCount_ - 1, curIdx);
+        // ⚠️ Choice 参数：getParamFast 返回的实际值**就是选项索引**，
+        //    不是 normalized，不能再乘 (count-1)。乘了会把索引放大
+        //    （1 → 2，显示错项；2 → 4，靠 clamp 碰巧对）。
+        const float idx = proc_.getBackend().getParamFast (dropDownParamId_);
+        curIdx = juce::jlimit (0, dropDownCount_ - 1, juce::roundToInt (idx));
     }
     else
     {
