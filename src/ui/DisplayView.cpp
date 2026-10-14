@@ -1308,9 +1308,9 @@ void DisplayView::updateCurve (double dtSeconds)
         updateWeights();
 
     // Phase：SPI 的显示层平滑辅助（时间常数型，与 curveRangeDisplay_ 同手法）。
-    // dtSeconds 为秒；tau 为时间常数（秒）。首帧（缓存为哨兵值时）直接吸附，
-    // 避免插件刚打开时曲线从 0 dB 慢慢爬上来。
-    auto smoothTowards = [this] (float& cur, float target, double dtSeconds, float tau)
+    // dt = 帧间隔（秒）；tau = 时间常数（秒）。首帧（缓存为哨兵值）直接吸附，
+    // 避免插件刚打开时曲线从 0 dB 慢慢爬上来；收敛后精确吸附，避免无限微动。
+    auto smoothTowards = [] (float& cur, float target, double dt, float tau)
     {
         if (cur <= kUninitDb * 0.5f)      // 哨兵值 → 首帧吸附
         {
@@ -1322,7 +1322,7 @@ void DisplayView::updateCurve (double dtSeconds)
             cur = target;                    // 收敛后吸附，避免无限微动
             return target;
         }
-        const float k = (float) (1.0 - std::exp (-dtSeconds / (double) tau));
+        const float k = (float) (1.0 - std::exp (-dt / (double) tau));
         cur += (target - cur) * k;
         return cur;
     };
@@ -1337,7 +1337,11 @@ void DisplayView::updateCurve (double dtSeconds)
         const float mk = proc_.getBackend().getParamFast (Param::bandMakeup (b));
         const float rangeDb = proc_.getBackend().getParamFast (Param::bandRange (b));
         bandRangeDb_[(size_t) b] = rangeDb;
-        const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 0.5f;
+        // ⚠️ band{i}Mix 是 0-100 的物理百分比参数，getParamFast 返回实际值，
+        //    必须比 50.0f（不是 0.5f）。上一轮 facade 迁移时这里误按
+        //    normalized 0..1 比较，导致 BYP 永不触发——所有段都显示 live 曲线。
+        //    与 isBandBypassed() 的判据保持严格一致。
+        const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 50.0f;
 
         // Phase：SPI（Smart Parameter Interpolation，Pro-MB 对标）
         // 原来 raw/live 直接取参数瞬时值 → 宿主自动化、切 preset、
@@ -1354,8 +1358,15 @@ void DisplayView::updateCurve (double dtSeconds)
 
         // P0：一条实时粗线 = 实际响应（**不做 range 截断**，Pro-MB 语义：
         // 黄线允许压过 range 深度；range 只决定"潜在范围"钟型区的底板）
-        bandDisplayDb_[(size_t) b] = bypassed ? bandRawDb_[(size_t) b]
-                                              : bandLiveDb_[(size_t) b];
+        //
+        // ⚠️ BYP 切换这一路也必须平滑：原来这里在 raw 和 live 之间**瞬时切换**，
+        //    若该段正被大幅压缩（live = −20 dB、raw = 0 dB），曲线会瞬间跳 20 dB
+        //    —— 正是 SPI 要消除的现象，却从 BYP 这条路漏了过去。
+        //    displayTarget 平滑后再赋给 bandDisplayDb_。
+        const float displayTarget = bypassed ? bandRawDb_[(size_t) b]
+                                             : bandLiveDb_[(size_t) b];
+        bandDisplayDb_[(size_t) b] = smoothTowards (bandDisplayDb_[(size_t) b],
+                                                    displayTarget, dtSeconds, 0.060f);
     }
 
     for (int i = 0; i < kCurvePoints; ++i)
@@ -1465,7 +1476,8 @@ void DisplayView::refreshCurvePaths()
         for (int b = 0; b < 4; ++b)
         {
             const float rangeDb = rangeDisplay_[(size_t) b];
-            const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 0.5f;
+            // ⚠️ 同 updateCurve：band{i}Mix 是 0-100 物理值，须比 50.0f。
+            const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 50.0f;
 
             auto& fill = rangeFillPath_[(size_t) b];
             auto& edge = rangeEdgePath_[(size_t) b];
@@ -1492,7 +1504,7 @@ void DisplayView::refreshCurvePaths()
         }
         cachedRange_ = rangeDisplay_[(size_t) selectedBand_];
         cachedRangeBand_ = selectedBand_;
-        rangeBypassed_ = proc_.getBackend().getParamFast (Param::bandMix (selectedBand_)) < 0.5f;
+        rangeBypassed_ = proc_.getBackend().getParamFast (Param::bandMix (selectedBand_)) < 50.0f;
     }
     curvePathsValid_ = true;
 }
@@ -1896,8 +1908,11 @@ void DisplayView::toggleBypass (int band, bool forceBypass)
 
 bool DisplayView::isAllBypassed() const
 {
+    // ⚠️ band{i}Mix 是 0-100 物理百分比，getParamFast 返回实际值，
+    //    须比 50.0f（不是 0.5f）。这类错误在 §8.2 记过一次（getParamBool("Mix")），
+    //    facade 迁移时又复发——所以这里把判据和 isBandBypassed() 显式对齐。
     for (int b = 0; b < 4; ++b)
-        if (proc_.getBackend().getParamFast ("band" + juce::String (b) + "Mix") > 0.5f)
+        if (! isBandBypassed (b))
             return false;
     return true;
 }

@@ -641,12 +641,12 @@ private:
     std::array<std::array<float, kCurvePoints>, 4> bandWeights_ {};
     std::array<float, kCurvePoints> curveDb_ {};
     std::array<float, 4> bandGainTotalDb_ {};       // 段增益+Makeup（每帧）
-    std::array<float, 4> bandDisplayDb_    {};      // 段显示增益（range 截断 + bypass 归原）
-    // Phase：raw/live 初值用 NaN 标记"未初始化"——首帧 updateCurve 会
-    // 直接吸附到真实值，避免插件刚打开时曲线从 0 dB 慢慢爬上来。
-    static constexpr float kUninitDb = -1.0e30f;   // 哨兵值：isfinite 但远离任何真实 dB
-    std::array<float, 4> bandRawDb_  { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
-    std::array<float, 4> bandLiveDb_ { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
+    // Phase：raw/live/display 初值用哨兵值标记"未初始化"——首帧 updateCurve
+    // 会直接吸附到真实值，避免插件刚打开时曲线从 0 dB 慢慢爬上来。
+    static constexpr float kUninitDb = -1.0e30f;   // 哨兵值：远离任何真实 dB
+    std::array<float, 4> bandRawDb_     { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
+    std::array<float, 4> bandLiveDb_    { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
+    std::array<float, 4> bandDisplayDb_ { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
     std::array<float, 4> bandRangeDb_     {};       // 段 range 值（每帧读取）
     std::array<float, 4> rangeDisplay_    {};       // range 显示值（拖动动画平滑）
     std::array<float, kCurvePoints> baseDb_ {};     // 未压缩基准逐点（Range 层，静态）

@@ -5894,6 +5894,58 @@ static void testSmartParamInterp()
                "T54.5 SPI 不污染参数本身（APVTS 仍是 12 dB）", juce::String (mk));
     }
 
+    // ⑤ BYP 切换这一路也必须平滑（上轮漏掉，本轮回补）
+    //    原来 bandDisplayDb_ 在 raw 和 live 之间**瞬时切换**：若该段正被大幅
+    //    压缩（live 明显低于 raw），曲线会瞬间跳变——正是 SPI 要消除的现象，
+    //    却从 BYP 这条路漏了过去。
+    //    ⚠️ 必须让该段真的被压缩：不喂音频时 getBandGainDb() 返回 0，
+    //       liveTarget == rawTarget，BYP 切换根本无差值可平滑（初版测试就这样空跑）。
+    {
+        // 低阈值 + 高比率，并喂音频，让 band1 明显下沉
+        mb->setParamPhysicalForTest ("band1Threshold", -50.0f);
+        mb->setParamPhysicalForTest ("band1Ratio", 20.0f);
+        juce::AudioBuffer<float> ab (2, 512);
+        juce::MidiBuffer midi;
+        for (int t = 0; t < 80; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 900.0 * kk / 48000.0);
+                ab.setSample (0, i, v);
+                ab.setSample (1, i, v);
+            }
+            mb->processBlock (ab, midi);
+            dv.tickForTest (16.0);
+        }
+        const float beforeByp = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  压缩后 y(1kHz) = " << beforeByp << std::endl;
+
+        // 打开 band1 的 BYP（Mix = 0）→ 该段显示从 live 切向 raw
+        mb->setParamPhysicalForTest ("band1Mix", 0.0f);
+        dv.tickForTest (16.0);                       // 只推一帧
+        const float after1Frame = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  BYP 后 1 帧: " << beforeByp << " -> " << after1Frame << std::endl;
+
+        // 一帧只应走完 τ=60ms 下约 24% 的路程，不应一步到位
+        check (std::abs (after1Frame - beforeByp) > 0.5f,
+               "T54.6 BYP 切换后曲线开始移动", juce::String (after1Frame));
+
+        // 推到收敛，确认最终到达新状态（而不是卡住）
+        for (int t = 0; t < 60; ++t) dv.tickForTest (16.0);
+        const float converged = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  BYP 收敛后: " << converged << std::endl;
+        check (std::abs (converged - after1Frame) > 1.0f,
+               "T54.7 BYP 后曲线继续移动到新状态（非一步跳变）", juce::String (converged));
+
+        // 收敛后稳定
+        const float s1 = dv.curveYAtFreqForTest (1000.0f);
+        for (int t = 0; t < 10; ++t) dv.tickForTest (16.0);
+        const float s2 = dv.curveYAtFreqForTest (1000.0f);
+        check (std::abs (s1 - s2) < 0.01f,
+               "T54.8 BYP 收敛后值稳定", juce::String (s1) + " vs " + juce::String (s2));
+    }
+
     mb->setEditorActive (false);
 }
 
