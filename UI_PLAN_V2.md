@@ -360,14 +360,14 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第七轮）
+### 进度总览（更新于 2026-10-14，第八轮）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
 | A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | ✅ **完成** | `25ccd25` `3f03c6b` `837cabd` `04fb573` `799a706` |
 | B | 布局改造 | ✅ **完成** | `4919fa8` `4cd4e08` `1eacead` `07915d6` |
 | C | 控件改造 | ✅ **完成**（除 C-6 SegButton） | `ab2812b` `aa5595c` `d5b1094` `3b52675` `363d576` |
-| D | 交互补齐 | 🟡 **进行中**（D-1/D-2/D-3 完成） | `e2e8784` `8c9bb40` |
+| D | 交互补齐 | 🟡 **进行中**（D-1..D-6 完成） | `e2e8784` `8c9bb40` `b2d86fc` `1d6dff8` `6f3cf53` |
 | E | 打磨（blur / 停 Timer / 投影） | ⬜ 未开始 | — |
 
 ---
@@ -436,7 +436,7 @@ namespace Anim {
 |---|---|---|
 | `SegButton` / `TextSelect` | COMPRESS↔EXPAND 分段按钮、文本选择器弹二级菜单。**注意**：COMPRESS↔EXPAND 需要新增 DSP 扩张能力（`DynamicsMode` 参数），不是纯 UI 工作 | Pro-MB segmented / drop-down |
 
-### Phase D — 交互补齐（进行中，D-1/D-2/D-3 完成）
+### Phase D — 交互补齐（进行中，D-1..D-6 完成）
 
 | 改动 | 声音/操作上的表现变化 | 对齐对象 |
 |---|---|---|
@@ -445,16 +445,19 @@ namespace Anim {
 | **D-2 LINKED 抽屉 sticky 语义**（`8c9bb40`） | 同一套状态机推广到第二个按钮：悬停 LINKED CONTROL 梯形按钮 → 抽屉滑入（非 sticky）；鼠标移开 → 自动收起；**单击** → 抽屉变 sticky 钉住，可以松开鼠标去调旋钮；再点或点外面 → 收起。**实际价值：调 5 个联动握柄时不用一直按着** | **Pro-MB**：所有底栏按钮都是 hover-open / click-sticky 这套语义 |
 | **D-3 显示背景拖拽扫选**（`8c9bb40`） | 在频谱背景上按下并拖动 → **选中段连续跟随光标**，一扫而过就能连续切换/预览四个频段，不用逐次点击。纯速度提升：原来跨段调整要"点一下→等 Popover→调→再点" | **Pro-MB**："click and drag across the display background to quickly select multiple bands" |
 | **D-3 语义说明** | 本插件是**单选中**模型（`selectedBand_` 是单个 int，没有多选集合），所以**没有**做"快照 + toggle"式的真多选——那套逻辑在单选变量上不自洽。交付的是该手势的速度价值 | Pro-MB 支持真多选；这里是能力差异，已在代码注释中标明 |
+| **D-4 OUT 按钮 + Output 面板**（`b2d86fc`） | 底栏 OUT 从**纯文本读数**升级为可点胶囊按钮。悬停打开输出选项面板（非 sticky）、点击变 sticky、再点或点外面收起——与 Analyzer / LINKED 完全同一套状态机。面板三行：Output Gain（写全局参数）、Mix、Global Bypass（与既有四段 Mix=0 宏联动） | **Pro-MB**：底栏 Output 按钮打开输出选项面板，hover-open / click-sticky |
+| **D-5 拖动超范围自动扩档**（`1d6dff8`） | Auto 模式下把 Makeup/Range 拖到曲线**超出当前显示量程**时，量程自动升档（实测 6→12 dB），曲线不会跑出屏幕。**修掉了一个真实手感问题**：原来拖动期间量程被完全冻结，大幅上拖时曲线直接飞出屏幕顶部，用户感觉"拖不动了" | **Pro-MB**：Auto-Adjust Display Range |
+| **D-6 Alt+拖 OUT = Output Gain**（`6f3cf53`） | 按住 Alt 拖底栏 OUT 按钮 → **直接调 Output Gain**，不用打开面板。220px 走完 ±36 dB（与旋钮同一速度比例），Shift 微调；拖动时按钮本身显示实时增益值并变实心 accent，明确提示处于另一模式。**这是 Pro-MB 最高频的快捷键之一** | **Pro-MB**：Alt-drag Output = makeup gain |
 
 ### Phase D 待做
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
 | ~~sticky 语义推广到 LINKED 按钮~~ | ✅ 已做（`8c9bb40`，见上） | Pro-MB 所有底栏按钮同语义 |
-| sticky 语义推广到 Output 按钮 | 悬停打开、点击 sticky 的语义覆盖到底栏剩余的按钮 | **Pro-MB**：所有底栏按钮都是这套语义 |
+| ~~sticky 语义推广到 Output 按钮~~ | ✅ 已做（`b2d86fc`，见上） | Pro-MB 所有底栏按钮同语义 |
 | ~~显示背景拖拽扫选~~ | ✅ 已做（`8c9bb40`，见上；单选中模型下交付"选中段连续跟随光标"） | Pro-MB 同名手势 |
-| 拖到显示范围外自动扩档 | 拖拽超出当前显示量程 → 量程**自动扩展**（Auto 模式下） | **Pro-MB**：自动扩展显示范围 |
-| Alt+拖 OUTPUT = makeup gain | 按住 Alt 拖 OUTPUT 旋钮 → **自动校正当前立体声模式的声像** | **Pro-MB**：Alt-drag Output = makeup gain |
+| ~~拖到显示范围外自动扩档~~ | ✅ 已做（`1d6dff8`，见上） | Pro-MB Auto-Adjust Display Range |
+| ~~Alt+拖 OUTPUT = Output Gain~~ | ✅ 已做（`6f3cf53`，见上） | Pro-MB Alt-drag Output = makeup gain |
 | MIDI Learn | 点 MIDI Learn → 可学控件高亮 → 点控件显示关联控制器号 | **Pro-MB**：MIDI learn 流程 |
 
 ### Phase D/E 待做（对齐目标）
@@ -488,10 +491,12 @@ namespace Anim {
 
 | R3 | **陈旧手势状态**：`mouseDown` 不清零 `drag_`/`bandSweepActive_`，若上一次的 `mouseUp` 从未到达（鼠标移出窗口、模态吞事件、测试只按不松），`drag_` 会卡在 `BandSweep`，**之后在 Popover 滑杆上起手的拖拽被劫走**（T40.8 RATIO 滑杆失效） | 测试里 T40.1 只按不松，正好构造出这个状态；生产环境里鼠标移出窗口也会 | 每次 `mouseDown` 都重置手势状态——新手势开始本来就应该清零。这条也修掉了一整类"卡住"bug |
 | R4 | **在单选模型上实现多选**：第一版 D-3 保留"各段选中快照 + 起手段 toggle"，假设 `selectedBand_` 初值是 0，**实际默认是 2** → 未被扫过的段在模型里"仍被选中"，在更新循环里覆盖结果（T43.4） | 静态读代码看不出默认值问题；只有断言能抓 | 删掉快照那套。既然插件是单选中，多选的可感知表现就是"选中段连续跟随光标"，不需要快照 |
+| R5 | **命中测试读了一个"绘制时才有"的成员矩形**：`hitTestOutputButton()` 第一版读 `outputBtnRect_`，而那个成员是在 `drawGlobalBar()` 里赋值的——首次悬停时矩形还是空的，按钮永远匹配不上，**面板根本打不开**（T44.2） | 悬停发生在任何绘制之前，而测试第一条就测悬停 | 命中测试改为从与绘制**完全相同的常量**现算矩形，并删掉那个没用的成员。教训：命中几何要么现算，要么在构造/resize 时同步，不能依赖 paint 的副作用 |
 
-> **教训（第七轮补充，共 5 条）**：
+> **教训（第八轮补充，共 6 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
+> 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
 
 ---
 
@@ -600,7 +605,7 @@ T39 频谱 17 项均通过）。
 > 从 Phase C 起，凡涉及"数据驱动图层"的改动，必须配一条**喂音频**的测试。
 > `T39.18a/b/c` 是第一条这样的测试（静默→有声→停音三段断言）。
 
-### Phase D — 交互补齐（3-4 天）🟡 进行中（D-1/D-2/D-3 完成）
+### Phase D — 交互补齐（3-4 天）🟡 进行中（D-1..D-6 完成）
 
 1. Analyzer 面板 + hover-open / click-sticky 语义 ✅（`e2e8784`）
 2. sticky 语义推广到 Output / LINKED 按钮 ⬜ 未做
