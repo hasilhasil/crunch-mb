@@ -360,14 +360,14 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第五轮）
+### 进度总览（更新于 2026-10-14，第六轮）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
 | A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | ✅ **完成** | `25ccd25` `3f03c6b` `837cabd` `04fb573` `799a706` |
 | B | 布局改造 | ✅ **完成** | `4919fa8` `4cd4e08` `1eacead` `07915d6` |
-| C | 控件改造 | 🟡 **进行中**（C-1/C-2/C-3/C-4 完成） | `ab2812b` `aa5595c` `d5b1094` `3b52675` |
-| D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ⬜ 未开始 | — |
+| C | 控件改造 | ✅ **完成**（C-1..C-5；C-6 SegButton 见下） | `ab2812b` `aa5595c` `d5b1094` `3b52675` `363d576` |
+| D | 交互补齐 | 🟡 **进行中**（D-1 完成） | `e2e8784` |
 | E | 打磨（blur / 停 Timer / 投影） | ⬜ 未开始 | — |
 
 ---
@@ -430,26 +430,36 @@ namespace Anim {
 | **C-3 附带修了一个真 bug** | `bandLevelDb_` 用 `{}` 初始化成 0dB，被弹道逻辑当成"当前电平 0dBFS"→ **插件刚打开时四个环显示满刻度再慢慢衰减**。改成初始化为静音底 −100dB。这个 bug 静态读代码看不出来，是新增的带音频测试第一条就抓到的 | — |
 | **C-4 Range 滑杆可见抓手**（`3b52675`） | Range 钟型下缘**本来就能拖，但没有任何可见抓手**，用户根本不知道那里可交互。现在选中/hover 段时，下缘段中心处出现一个胶囊手柄（带两道暗示可拖的小刻痕），拖动时高亮。命中区在段中心从 ±6px 加到 ±10px，让抓手真的好抓 | **Pro-MB**：每段一个可直接抓取的范围滑杆 |
 
-### Phase C 待做
+### Phase C 待做（仅剩 C-6）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
-| ~~`BandLevelDot` + 圆形电平表~~ | ✅ 已做（`d5b1094`，见上） | Pro-MB Threshold 外圈环 |
-| ~~`RangeSlider`~~ | ✅ 已做（`3b52675`，见上；未建独立组件，直接在 `drawRangeBell` 内画手柄） | Pro-MB range slider |
-| `SegButton` / `TextSelect` | COMPRESS↔EXPAND 分段按钮、文本选择器弹二级菜单 | Pro-MB segmented / drop-down |
-| Popover 右缘竖排 EXPERT | EXPERT 从底部横排改成右缘竖排标签 | Pro-MB 右缘竖排 EXPERT |
+| `SegButton` / `TextSelect` | COMPRESS↔EXPAND 分段按钮、文本选择器弹二级菜单。**注意**：COMPRESS↔EXPAND 需要新增 DSP 扩张能力（`DynamicsMode` 参数），不是纯 UI 工作 | Pro-MB segmented / drop-down |
+
+### Phase D — 交互补齐（进行中，D-1 完成）
+
+| 改动 | 声音/操作上的表现变化 | 对齐对象 |
+|---|---|---|
+| **D-1 Analyzer 自绘面板 + sticky 语义**（`e2e8784`） | **这是 Pro-MB 最具标志性的交互，此前完全缺失**。原来是"点击弹操作系统原生菜单"——没有悬停语义、没有 sticky、外观也不是插件风格。现在：**悬停** Analyzer 按钮 → 面板打开（非 sticky）；鼠标移开 → 自动收起；**单击** → 面板变 sticky 钉住不动；再点 → 收起并解除；点面板外 → 收起。面板是自绘深色圆角块，每行带实心/空心圆点表示选中 | **Pro-MB**：悬停打开 / 点击 sticky / 再点收起。官方帮助原话 "hover over a button to open the panel; click to make it sticky" |
+| **D-1 附带：面板行变成真控件** | Pre/Post 频谱、Resolution（1024/2048/4096/8192）、Speed（10/20/60ms）、Tilt（0/1.5/3/4.5 dB/oct）、Freeze 全部可点，且设置真源移到面板（`onSettingsChanged` 回写），不再只是弹出菜单里的条目 | **Pro-MB**：Analyzer 面板每一行都可点 |
+
+### Phase D 待做
+
+| 项 | 预期表现 | 对齐对象 |
+|---|---|---|
+| sticky 语义推广到 Output / LINKED 按钮 | 悬停打开、点击 sticky 的语义覆盖到底栏所有按钮，不只 Analyzer | **Pro-MB**：所有底栏按钮都是这套语义 |
+| 显示背景拖拽多选 | 在频谱背景上点击拖拽 → **框选多个频段** | **Pro-MB**："click and drag across the display background to quickly select multiple bands" |
+| 拖到显示范围外自动扩档 | 拖拽超出当前显示量程 → 量程**自动扩展**（Auto 模式下） | **Pro-MB**：自动扩展显示范围 |
+| Alt+拖 OUTPUT = makeup gain | 按住 Alt 拖 OUTPUT 旋钮 → **自动校正当前立体声模式的声像** | **Pro-MB**：Alt-drag Output = makeup gain |
+| MIDI Learn | 点 MIDI Learn → 可学控件高亮 → 点控件显示关联控制器号 | **Pro-MB**：MIDI learn 流程 |
 
 ### Phase D/E 待做（对齐目标）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
-| 旋钮 BACK/OVERLAY 分层 + 刻度环 + 四态 | 旋钮外圈出现**带底部缺口的刻度环**；拖动时帽转暖色、弧加粗（ROTATE 态）；hover 时略亮（ACTIVE 态） | **Pro-MB**：`KNOBLARGEBACK*` 预渲染刻度环 + `Overlay{NORMAL,ACTIVE,DOWN,ROTATE}` 四态 |
-| `BandLevelDot` + 圆形电平表 | 频段电平点外圈显示**该段实时检测电平环**，不用开面板就知道每段在被什么驱动 | **Pro-MB**：Threshold 旋钮外圈圆形电平表 |
-| sticky 面板语义 | 悬停 Analyzer/Output/LINKED 按钮→面板打开；单击→面板**变 sticky** 不自动消失；再点收起 | **Pro-MB**：hover-open / click-sticky |
-| 拖拽多选 + 自动扩档 | 在显示背景上点击拖拽→**框选多个频段**；拖到显示范围外→量程**自动扩展** | **Pro-MB**："click and drag across the display background to quickly select multiple bands" |
-| Alt+拖 OUTPUT = makeup gain | 按住 Alt 拖 OUTPUT 旋钮→**自动校正当前立体声模式的声像** | **Pro-MB**：Alt-drag Output = makeup gain |
-| MIDI Learn | 点 MIDI Learn→所有可学控件高亮→点控件显示关联控制器号 | **Pro-MB**：MIDI learn 流程 |
 | backdrop blur | 玻璃条真正"毛"起来 | Pro-MB 位图预渲染投影 / Future MB shader |
+| 空闲停 Timer | 无动效、无新频谱帧、无拖拽时停掉 60fps 定时器，省 CPU/电量 | — （工程优化） |
+| 投影改多层渐变 | 弹出层的阴影从一层硬边变成多层渐变，真正"浮"起来 | Pro-MB 的 `0 14px 44px rgba(0,0,0,.5)` |
 
 ---
 
@@ -465,6 +475,12 @@ namespace Anim {
 > **教训**：像素回归测试必须在**有音频帧**的条件下也跑一遍，否则所有"数据驱动"的图层
 > （频谱、电平表、曲线）都是空的，任何 z-order / 可见性回归都测不出来。
 > 这条已列入 Phase E 的验收补充。
+>
+> **补充（第六轮）**：`T41` 确立了一条同类教训——**交互语义必须有测试，不能只靠读代码**。
+> D-1 的 sticky 状态机有 4 个状态、6 条转移路径，`T41.1–T41.8` 把每条路径都断言了一遍。
+> 写测试时还发现：我最初选的"鼠标移开"测试点 (400,300) **其实落在面板矩形内**
+> （面板跨 x 267..457 / y 288..584），导致 T41.3 失败——这不是代码 bug，是测试点选错，
+> 但正因为有断言才暴露出来。**选测试坐标前先算清楚目标矩形的实际范围。**
 
 ---
 
@@ -573,7 +589,15 @@ T39 频谱 17 项均通过）。
 > 从 Phase C 起，凡涉及"数据驱动图层"的改动，必须配一条**喂音频**的测试。
 > `T39.18a/b/c` 是第一条这样的测试（静默→有声→停音三段断言）。
 
-### Phase D — 交互补齐（3-4 天）
+### Phase D — 交互补齐（3-4 天）🟡 进行中（D-1 完成）
+
+1. Analyzer 面板 + hover-open / click-sticky 语义 ✅（`e2e8784`）
+2. sticky 语义推广到 Output / LINKED 按钮 ⬜ 未做
+3. 显示背景拖拽多选 + 自动扩档 ⬜ 未做
+4. Alt+拖 OUTPUT = makeup gain ⬜ 未做
+5. MIDI Learn ⬜ 未做
+6. `SegButton`（COMPRESS↔EXPAND） ⬜ 未做（需新增 `DynamicsMode` 参数 + 扩张 DSP）
+7. **验收**：§5 全部手势可执行，无硬跳 ⬜（§5.1/5.3 已可执行；5.2/5.4/5.5 未做）
 
 1. 按钮列 hover 淡入淡出（N5）+ 按住临时 / Ctrl 独占
 2. Popover 位移入场 + 切段横滑（N1/N2）
