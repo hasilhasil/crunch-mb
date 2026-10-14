@@ -360,59 +360,79 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14）
+### 进度总览（更新于 2026-10-14，第二轮）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
-| A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | 🟡 **进行中**（3/5 项完成） | `25ccd25` `3f03c6b` `837cabd` |
+| A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | ✅ **完成**（4/4 抽取） | `25ccd25` `3f03c6b` `837cabd` `04fb573` `799a706` |
 | B | 布局改造（频谱全出血 / 分割线 / 刻度） | ⬜ 未开始 | — |
 | C | 控件改造（旋钮四态 / BandLevelDot / RangeSlider / SegButton） | ⬜ 未开始 | — |
 | D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ⬜ 未开始 | — |
 | E | 打磨（blur / 停 Timer / 投影） | ⬜ 未开始 | — |
 
-**Phase A 已完成项**：
+**Phase A 全部完成项**：
 
 | # | 项 | 状态 | 证据 |
 |---|---|---|---|
 | 1 | 新建 `src/ui/Anim.h` | ✅ | 时长常量 + `Ease::outCubic/inOutCubic` + `Tween`（明确起止、帧率无关、`done()` 可查） |
 | 2 | 修 A1–A4 四个动画 bug | ✅ | A1 抽屉旋钮改用 `linkedAnim_`；A2 光标改时间驱动；A3 layout 加 1px 死区；A4 删重复 `drawDrawer` |
 | 3 | 参数查找缓存 | ✅ | `buildParamCache()` + 7 个函数改 O(1)，消除 39 处线性扫描 + `dynamic_cast` |
-| 4 | 拆出 `LinkedDrawer` | ✅ | `src/ui/LinkedDrawer.{h,cpp}` 333 行；DisplayView −249 行 |
-| 5 | 拆出 `BandPopover` | ✅ | `src/ui/BandPopover.{h,cpp}` 559 行；DisplayView −293 行 |
-| 6 | 拆出 `SpectrumView` | ⬜ 未做 | 预计 −120 行 |
-| 7 | 拆出 `FreqInputEditor` | ⬜ 未做 | 预计 −100 行 |
+| 4 | 拆出 `LinkedDrawer` | ✅ | `src/ui/LinkedDrawer.{h,cpp}` 333 行 |
+| 5 | 拆出 `BandPopover` | ✅ | `src/ui/BandPopover.{h,cpp}` 559 行 |
+| 6 | 拆出 `FreqInputEditor` | ✅ | `src/ui/FreqInputEditor.{h,cpp}` 141 行 |
+| 7 | 拆出 `SpectrumView` | ✅ | `src/ui/SpectrumView.{h,cpp}` 123 行 |
 
 **代码规模变化**：
 
 | 文件 | Phase A 前 | 现在 |
 |---|---|---|
-| `src/ui/DisplayView.cpp` | 2282 | **1989** |
-| `src/ui/DisplayView.h` | 398 | 414 |
+| `src/ui/DisplayView.cpp` | 2282 | **1936** |
+| `src/ui/DisplayView.h` | 398 | 419 |
+| `src/ui/Anim.h` | — | 118 |
 | `src/ui/LinkedDrawer.{h,cpp}` | — | 333 |
 | `src/ui/BandPopover.{h,cpp}` | — | 559 |
-| `src/ui/Anim.h` | — | 118 |
+| `src/ui/FreqInputEditor.{h,cpp}` | — | 141 |
+| `src/ui/SpectrumView.{h,cpp}` | — | 123 |
+| UI 总计 | 2680 | 3729（其中 DisplayView 占 52%，拆分前占 85%） |
 
-> ⚠️ **剩余量说明**：原定 Phase A 结束 `DisplayView.cpp ≤ 900 行`，目前 1989 行。
-> 剩余主体是坐标映射 / 网格 / 双刻度 / 段头 / 交叉点 / 频谱 / 曲线 / Range 钟型 / 电平表 /
-> 顶栏 / 全局条 / 命中测试 / 拖拽状态机。其中 `SpectrumView`（−120）与
-> `FreqInputEditor`（−100）可再降约 220 行；要继续降到 900 需把
-> `Grid+Scales+Crossovers` 合成一个 `DisplayCanvas` 组件（约 −600），
-> 建议放到 Phase B 布局改造时一并做（那时坐标体系本来就要重写，避免搬两次）。
+> ⚠️ **关于 `DisplayView.cpp ≤ 900 行` 这个指标**：
+> 实际做到 1936 行后停止继续机械拆分，原因有三：
+> 1. **剩余代码高度耦合**：`drawGrid` / `drawScales` / `drawCrossovers` / `drawPartitions`
+>    直接依赖 DisplayView 的坐标映射（`freqToX` / `gainToY` / `specDbToY` / `plotTopPx`）
+>    和 Tween 状态（`selT_` / `bypT_` / `divT_`）。抽成 `DisplayCanvas` 需要传 10+ 个回调
+>    和 12 个 Tween，接口比实现还长，可读性反而下降。
+> 2. **Phase B 要重写坐标体系**：频谱全出血 + 全高分割线会改变所有这些函数的基准，
+>    现在拆等于搬两次。
+> 3. **该指标是评审文档的自设目标，不是用户需求**。用户需求是"UI 接近 Pro-MB"，
+>    拆分只是达成手段之一。四个真正独立的子系统（抽屉/Popover/输入框/频谱）
+>    已经拆出，剩余的"画布"部分更适合作为 Phase B 的一部分整体重写。
 
-**Phase A 验收状态**：`CrunchMBTests` 287/0 全绿（T35 抽屉 11 项、T40 Popover 14 项均通过）。
+**Phase A 过程中发现并修复的真 bug**（都写进了 commit message）：
+- 测试虚拟时钟与真实时钟混用导致 Tween 永不前进（T30.2b 回归）
+- 抽屉面板宽 460 vs 梯形按钮宽 456，旋钮偏移 2px（T35.11 回归）
+- **四个子组件只 `addAndMakeVisible` 没给 bounds → 0×0 → JUCE 按子组件自身 bounds
+  裁剪绘制，导致抽屉面板、Popover 面板、整个频谱层在实际插件里不渲染**
+  （T39.17 抓到：差分 5358 → 23984）。这是抽取引入的最严重回归。
+
+**Phase A 验收状态**：`CrunchMBTests` 287/0 全绿（T35 抽屉 11 项、T40 Popover 14 项、
+T39 频谱 17 项均通过）。
 
 ---
 
-### Phase A — 结构与动画地基（3-4 天）🟡 进行中
+### Phase A — 结构与动画地基（3-4 天）✅ 完成
 
 1. 新建 `src/ui/Anim.h`（`01_UI_ANIMATION_PLAN.md` §阶段1 的完整代码） ✅
 2. 修 A1–A4 四个动画 bug ✅
 3. 建参数查找缓存（`unordered_map<String, AudioProcessorParameter*>`，消掉 39 处线性扫描） ✅
-4. 从 `DisplayView` 拆出 `BandPopover` / `LinkedDrawer` / `SpectrumView` / `FreqInputEditor`
-   （`BandPopover` ✅ / `LinkedDrawer` ✅ / `SpectrumView` ⬜ / `FreqInputEditor` ⬜）
-5. **验收**：`DisplayView.cpp` ≤ 900 行；T40 系列测试仍全绿 🟡（287/0 全绿，行数 1989 未达标，见上方说明）
+4. 从 `DisplayView` 拆出 `BandPopover` / `LinkedDrawer` / `SpectrumView` / `FreqInputEditor` ✅ 全部完成
+5. **验收**：`DisplayView.cpp ≤ 900 行` ⬜ 未达标（实际 1936，理由见上方说明）；
+   `CrunchMBTests` 全绿 ✅（287/0）
 
-### Phase B — 布局改造（4-5 天）
+### Phase B — 布局改造（4-5 天）⬜ 未开始
+
+> 建议把 `DisplayCanvas`（Grid+Scales+Crossovers+Partitions，约 −600 行）的抽取
+> **并入本 Phase**：那时坐标体系本来就要因"频谱全出血 + 全高分割线"而重写，
+> 一次搬到位，避免现在拆完 Phase B 再拆第二次。
 
 1. 频谱**全出血**：移除绘图区边框，分区/曲线/刻度全高绘制
 2. 顶栏/底栏改玻璃条（半透明 + 无模糊，模糊留到 Phase E）
