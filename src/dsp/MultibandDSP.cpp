@@ -164,6 +164,22 @@ float MultibandDSP::getBandGateSmoothed (int band) const noexcept
     return gateSm_[b];
 }
 
+float MultibandDSP::getBandStaticGainDb (int band, float levelDb) const
+{
+    const int b = juce::jlimit (0, Param::kNumBands - 1, band);
+    return comps_[b].getStaticGainDb (levelDb);
+}
+
+std::array<float, Param::kNumBands> MultibandDSP::getBandGainReductionDb() const
+{
+    // GR = 该段实际增益的衰减量。bandGainDb_ 已含 Range 钳制与 Makeup，
+    // 取其负值得"衰减了多少 dB"（正数）。压缩时为负增益 → GR 为正。
+    std::array<float, Param::kNumBands> gr {};
+    for (int b = 0; b < Param::kNumBands; ++b)
+        gr[(size_t) b] = -getBandGainDb (b);
+    return gr;
+}
+
 void MultibandDSP::computeGateTargets (const ScalarParams& p) noexcept
 {
     bool anyDelta = false, anySolo = false, anyMute = false;

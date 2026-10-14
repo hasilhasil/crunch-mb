@@ -48,6 +48,19 @@ public:
         return mode_ == Param::PhaseMode::Linear ? linear_.getLatencySamples() : 0;
     }
 
+    /**
+     * Phase：指定段的幅度响应（dB）——供 API facade 的 getFrequencyResponse 用。
+     * 消息线程调用（含 FIR 核评估，勿上音频线程）。
+     *
+     * 三种模式的算法：
+     *   · LR 树（Natural 24/48）：沿该段路径求各级 responseAt 之积
+     *   · 互补对（Minimal 12/36）：LP 路径乘积，HP 段用 (1 − LP) （恒等重建）
+     *   · Linear：用 designBandKernels 取该段核，在请求频率上评估 DFT 幅度
+     *
+     * bandIndex: 0=L 1=LM 2=HM 3=H
+     */
+    float getMagnitudeDb (int bandIndex, float freqHz) const;
+
 private:
     // 分频节点：LR 对（阶 4/8，分段干净）/ 互补对（阶 2/6 与 Minimal，恒等求和）
     // 2026-09-23 拓扑决策（扫频证据）：
@@ -66,6 +79,23 @@ private:
         BiquadFilter lp_[4], hp_[4];
         int  lpN_ = 1, hpN_ = 0;
         bool complement_ = true;
+
+        /** Phase：该 split 的 LP 支路在 freqHz 的复响应（用于 getMagnitudeDb）。 */
+        std::complex<double> lowResponseAt (float freqHz, double sampleRate) const
+        {
+            std::complex<double> h (1.0, 0.0);
+            for (int i = 0; i < lpN_; ++i)
+                h *= lp_[(size_t) i].responseAt (freqHz, (float) sampleRate);
+            return h;
+        }
+        /** Phase：该 split 的 HP 支路在 freqHz 的复响应。 */
+        std::complex<double> highResponseAt (float freqHz, double sampleRate) const
+        {
+            std::complex<double> h (1.0, 0.0);
+            for (int i = 0; i < hpN_; ++i)
+                h *= hp_[(size_t) i].responseAt (freqHz, (float) sampleRate);
+            return h;
+        }
     };
 
     Split splits_[3][2];      // [交叉点][通道]

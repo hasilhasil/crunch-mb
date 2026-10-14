@@ -326,7 +326,7 @@
 
 --- T22 内存泄漏回归（UI 数据面）---
 [PASS] T22.0 å¤çå¨å®ä¾å¯è®¿é®
-  RSS: start=85.5117MB  anim#1=167.18MB (+81.668)  anim#2=166.082MB (+80.5703 / +-1.09766 for the 2nd round)  editorsx200=166.082MB (+80.5703)  theme/resizex50=166.18MB (+80.668)  resizeStormx400=166.301MB (+80.7891)
+  RSS: start=84.2695MB  anim#1=167.754MB (+83.4844)  anim#2=168.137MB (+83.8672 / +0.382812 for the 2nd round)  editorsx200=168.137MB (+83.8672)  theme/resizex50=167.863MB (+83.5938)  resizeStormx400=168.348MB (+84.0781)
 [PASS] T22.1 6000 frames anim converges (2nd round << 1st)
 [PASS] T22.2 freq editor x200 no cumulative leak
 [PASS] T22.3 theme/resize x50 no cumulative leak
@@ -554,7 +554,7 @@
 [PASS] T39.7 Low 1024 â 513 ä»
 [PASS] T39.8 Maximum 8192 â 4097 ä»
 [PASS] T39.9 8192 æ¡£ä»è½åºå¸§
-  Slow+8192: loud=-6.71625 阶跃后=-15.6849
+  Slow+8192: loud=-6.71625 阶跃后=-15.5006
 [PASS] T39.10 Slow + Maximum 8192ï¼åºå¸§æ­£å¸¸ä¸ä¸è½åæ¢
   Freeze+Slow: held=-6.65113 静音后=-6.65113
 [PASS] T39.11 Freeze + Slowï¼Freeze ä¼åï¼ä¸æï¼
@@ -737,5 +737,56 @@
 [PASS] T51.3 ç¸é»ä¸¤åç´ ä¸­å¿ççº¿ä½ç½®ç¸å·® 1px
   （E-4 是视觉抛光，几何与 alpha 不变量已验证）
 
+--- T52 Phase IMBBackend facade ---
+[PASS] T52.0 å¤çå¨å®ä¾å¯è®¿é®
+[PASS] T52.1 listParams è¦çå¨é¨ 84 åæ°
+[PASS] T52.2 ParamInfo åæ°æ®å®æ´ï¼id/èå´ï¼
+  参数类别: Global=12 Band=72
+[PASS] T52.3 Global åæ° = 12
+[PASS] T52.4 Band åæ° = 72ï¼18 Ã 4 æ®µï¼
+  setParam(band2Threshold, -33): -20 -> -33 actual=-33
+[PASS] T52.5 setParam å®éå¼åå¥ APVTS
+[PASS] T52.6 setParam è¶çé³å¶ï¼-999 â â¥ -60ï¼
+[PASS] T52.7 setParam æªç¥ ID è¿å applied=false + reason
+[PASS] T52.8 getParams æ¹éè¯»å
+[PASS] T52.9 getStateSnapshot ææï¼84 åæ°ï¼
+  loadState 后: ratio=7.5 mix=137
+[PASS] T52.10 loadState åºååå¾è¿æ æ
+[PASS] T52.11 loadState å¹ç­
+[PASS] T52.12 loadState æç»æ æ ValueTree
+[PASS] T52.13 getMeteringSnapshot è¾å¥å³°å¼åç
+[PASS] T52.14 MeteringSnapshot å¸¦æ¶é´æ³
+[PASS] T52.15 readHistory è¿åè¯·æ±ç¹æ°
+[PASS] T52.16 readHistory counter æ¨è¿
+[PASS] T52.17 MB ä¸è®°å½ GR åå²ï¼è§è Â§2ï¼
+[PASS] T52.18 readHistory è¶å®¹éæ¶é³å¶
+[PASS] T52.19 åå²ç¹è¿ç»­ï¼æ è·³åæ­è£ï¼
+[PASS] T52.20 getTransferCurve ç¹æ°æ­£ç¡®
+[PASS] T52.21 ä¼ è¾æ²çº¿ x è½´è¦ç [minDb, maxDb]
+  传输曲线增益范围: -6 .. -0.5625 dB
+[PASS] T52.22 ä¼ è¾æ²çº¿å¨éå¼ä»¥ä¸åºç°è¡°å
+[PASS] T52.23 getFrequencyResponse ç¹æ°æ­£ç¡®
+[PASS] T52.24 é¢çè½´å¯¹æ°è¦ç 20Hz..20kHz
+  band0 响应: 20Hz=-0.000868775 dB  20kHz=-120 dB
+[PASS] T52.25 band0 ä½é¢éå¸¦ â 0dB
+[PASS] T52.26 band0 é«é¢é»å¸¦æ·±åº¦è¡°å
+[PASS] T52.27 getPluginName
+[PASS] T52.28 getPluginVersion
+[PASS] T52.29 setBypass(true) â isBypassed()
+[PASS] T52.30 setBypass(false) â æ¢å¤
+  setBandGroupDelta(threshold, -6): -26 -26 -26 -26 
+[PASS] T52.31 setBandGroupDelta applied
+[PASS] T52.32 åæ®µ Threshold æå®åç§» -6 dBï¼çº¿æ§ï¼éæ¯ä¾ï¼
+  越界后: -60
+[PASS] T52.33 setBandGroupDelta è¶çé³å¶ï¼â -60ï¼
+  setCrossover(0, 3000): x1=500 x2=1000
+[PASS] T52.34 setCrossover æå°å¸¦å®½é³å¶ï¼x1 â¤ x2/2ï¼
+[PASS] T52.35 setCrossover åæ³å¼çæ
+[PASS] T52.36 setCrossover è¶çç´¢å¼æç»
+[PASS] T52.37 getBandGainReduction è¿å 4 æ®µ
+[PASS] T52.38 getLatestSpectrum è¿ååå±é¢è°± + é¢çè½´
+[PASS] T52.39 é¢çè½´å¯¹æ°è·¨åº¦ 20Hz..20kHz
+[PASS] T52.40 readMultibandHistory ç¹æ°æ­£ç¡®
+
 ====================================
-PASS 384 / FAIL 0
+PASS 425 / FAIL 0

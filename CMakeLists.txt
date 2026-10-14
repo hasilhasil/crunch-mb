@@ -56,6 +56,10 @@ target_sources(CrunchMB PRIVATE
     src/ui/AnalyzerPanel.h
     src/ui/OutputPanel.cpp
     src/ui/OutputPanel.h
+    src/api/IPluginBackend.h
+    src/api/IMBBackend.h
+    src/api/MBBackend.cpp
+    src/api/MBBackend.h
     src/ui/BandPopover.cpp
     src/ui/BandPopover.h
     src/ui/DisplayView.cpp
@@ -109,6 +113,10 @@ target_sources(CrunchMBTests PRIVATE
     src/ui/AnalyzerPanel.h
     src/ui/OutputPanel.cpp
     src/ui/OutputPanel.h
+    src/api/IPluginBackend.h
+    src/api/IMBBackend.h
+    src/api/MBBackend.cpp
+    src/api/MBBackend.h
     src/ui/BandPopover.cpp
     src/ui/BandPopover.h
     src/ui/DisplayView.cpp

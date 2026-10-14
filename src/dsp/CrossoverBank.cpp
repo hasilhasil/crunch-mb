@@ -177,3 +177,78 @@ void CrossoverBank::process (const float* const* input,
         juce::FloatVectorOperations::clear (bandH[ch],  numSamples);
     }
 }
+
+// ---------------- Phase：幅度响应评估（API facade 用）----------------
+// 与 process() 的分解树严格同构：
+//   L = LP1(x);  t1 = HP1(x);  LM = LP2(t1)
+//   t2 = HP2(t1); HM = LP3(t2); H = HP3(t2)
+// 故各段响应 = 沿路径的各级之积。
+float CrossoverBank::getMagnitudeDb (int bandIndex, float freqHz) const
+{
+    const int band = juce::jlimit (0, 3, bandIndex);
+    const double sr = sampleRate_;
+
+    // ---- Linear Phase：评估该段 FIR 核的 DFT 幅度 ----
+    if (mode_ == Param::PhaseMode::Linear)
+    {
+        if (! linearReady_)
+            return 0.0f;
+        const int fftSize = LinearPhaseCrossover::fftSizeForQuality (quality_);
+        std::vector<float> kL, kLM, kHM, kH;
+        int len = 0, delay = 0;
+        LinearPhaseCrossover::designBandKernels (sr, xover_[0], xover_[1], xover_[2],
+                                                 slopeDb_, fftSize, kL, kLM, kHM, kH,
+                                                 len, delay);
+        const std::vector<float>& k = (band == 0) ? kL : (band == 1) ? kLM
+                                   : (band == 2) ? kHM : kH;
+        if (k.empty())
+            return 0.0f;
+
+        // H(e^{jw}) = Σ k[n] · e^{-jwn}；核是零相位设计 + 整数延迟，
+        // 所以只需幅度（不含延迟相位）。
+        const double w = juce::MathConstants<double>::twoPi * freqHz / sr;
+        double re = 0.0, im = 0.0;
+        for (int n = 0; n < (int) k.size(); ++n)
+        {
+            const double ph = -w * (double) n;
+            re += (double) k[(size_t) n] * std::cos (ph);
+            im += (double) k[(size_t) n] * std::sin (ph);
+        }
+        const double mag = std::sqrt (re * re + im * im);
+        return (float) juce::Decibels::gainToDecibels (mag, -120.0);
+    }
+
+    // ---- IIR 模式：取通道 0 的滤波器链（立体声系数相同）----
+    const Split& s0 = splits_[0][0];
+    const Split& s1 = splits_[1][0];
+    const Split& s2 = splits_[2][0];
+
+    // 各级 LP 支路响应（沿路径）
+    const std::complex<double> lp1 = s0.lowResponseAt (freqHz, sr);
+    const std::complex<double> lp2 = s1.lowResponseAt (freqHz, sr);
+    const std::complex<double> lp3 = s2.lowResponseAt (freqHz, sr);
+
+    // 互补对模式下 HP 支路 = 1 − LP（恒等重建：hi := x − lo）
+    auto hpOf = [] (const std::complex<double>& lp, const Split& s,
+                    float f, double rate) -> std::complex<double>
+    {
+        if (s.complement_)
+            return std::complex<double> (1.0, 0.0) - lp;
+        return s.highResponseAt (f, rate);
+    };
+
+    std::complex<double> h (1.0, 0.0);
+    switch (band)
+    {
+        case 0:  h = lp1;                                              break;
+        case 1:  h = hpOf (lp1, s0, freqHz, sr) * lp2;                 break;
+        case 2:  h = hpOf (lp1, s0, freqHz, sr)
+                    * hpOf (lp2, s1, freqHz, sr) * lp3;                break;
+        default: h = hpOf (lp1, s0, freqHz, sr)
+                    * hpOf (lp2, s1, freqHz, sr)
+                    * hpOf (lp3, s2, freqHz, sr);                      break;
+    }
+
+    const double mag = std::abs (h);
+    return (float) juce::Decibels::gainToDecibels (mag, -120.0);
+}

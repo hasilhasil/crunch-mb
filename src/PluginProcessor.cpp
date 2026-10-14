@@ -161,6 +161,50 @@ void CrunchMBAudioProcessor::setParamPhysicalForTest (const juce::String& id, fl
     }
 }
 
+// ---------------- Phase：电平历史环形缓冲 ----------------
+void CrunchMBAudioProcessor::pushHistoryPoint (float inputDb, float outputDb) noexcept
+{
+    const unsigned idx = historyCounter_.load (std::memory_order_relaxed)
+                       % (unsigned) kHistoryCapacity;
+    historyIn_[(size_t) idx].store (inputDb,  std::memory_order_relaxed);
+    historyOut_[(size_t) idx].store (outputDb, std::memory_order_relaxed);
+    // release：保证上面的数据写入先于 counter 递增，对读侧可见
+    historyCounter_.store (idx + 1 > (unsigned) kHistoryCapacity
+                                   ? idx + 1 - (unsigned) kHistoryCapacity
+                                   : idx + 1,
+                           std::memory_order_release);
+}
+
+void CrunchMBAudioProcessor::readHistoryPoints (int points, std::vector<float>& inputDb,
+                                                std::vector<float>& outputDb,
+                                                unsigned& counter, int& pointsWritten) const
+{
+    inputDb.clear();
+    outputDb.clear();
+    counter = 0;
+    pointsWritten = 0;
+
+    const unsigned cnt = historyCounter_.load (std::memory_order_acquire);
+    if (cnt == 0)
+        return;
+
+    const int want = juce::jlimit (1, kHistoryCapacity, points);
+    const int avail = (int) juce::jmin ((unsigned) kHistoryCapacity, cnt);
+    const int n = juce::jmin (want, avail);
+
+    // 取最近 n 个点（时间正序：旧 → 新）
+    for (int i = 0; i < n; ++i)
+    {
+        // 最旧的点索引 = (cnt - n + i) mod capacity
+        const unsigned raw = cnt - (unsigned) n + (unsigned) i;
+        const unsigned slot = raw % (unsigned) kHistoryCapacity;
+        inputDb.push_back  (historyIn_[(size_t) slot].load (std::memory_order_relaxed));
+        outputDb.push_back (historyOut_[(size_t) slot].load (std::memory_order_relaxed));
+    }
+    counter = cnt;
+    pointsWritten = n;
+}
+
 void CrunchMBAudioProcessor::handleAsyncUpdate()
 {
     applyStructure();      // 消息线程：含 Linear FIR 设计
@@ -224,6 +268,10 @@ void CrunchMBAudioProcessor::pushDisplayTaps (juce::AudioBuffer<float>& buffer,
     // 段平滑增益（仿 EQ 曲线数据源）
     for (int b = 0; b < Param::kNumBands; ++b)
         bandGainDb_[(size_t) b].store (dsp_.getBandGainDb (b), std::memory_order_relaxed);
+
+    // Phase：电平历史一点（每块一个点，SPSC 环形缓冲）
+    pushHistoryPoint (juce::Decibels::gainToDecibels (inPeak,  -120.0f),
+                      juce::Decibels::gainToDecibels (outPeak, -120.0f));
 
     // 频谱：pre 抽头经延迟环对齐 post（Linear 模式输出晚 L 样本）
     spectrumEngine_.pushSamples (monoPre, monoPost, numSamples);

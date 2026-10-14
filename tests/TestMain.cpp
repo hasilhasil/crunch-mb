@@ -23,6 +23,7 @@
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
+#include "api/MBBackend.h"
 #include "ui/DisplayView.h"
 #include "ui/MBTheme.h"
 #include "ui/Knob.h"
@@ -5355,6 +5356,287 @@ static void testHairlinePixelAlignment()
     std::cout << "  （E-4 是视觉抛光，几何与 alpha 不变量已验证）" << std::endl;
 }
 
+// ------------------------------------------------------------
+// T52 Phase：IMBBackend facade（TECH_SPEC §8 / §10.4 验收）
+//   规范来源：crunch-api-interface.md v1.0 §2/§3
+// ------------------------------------------------------------
+static void testBackendFacade()
+{
+    std::cout << "\n--- T52 Phase IMBBackend facade ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T52.0 处理器实例可访问", "");
+
+    MBBackend api (*mb);
+
+    // 频谱引擎是懒启动的（编辑器开关），API 拉频谱前要先激活
+    mb->setEditorActive (true);
+
+    // ===== ① 参数面 =====
+    {
+        const auto params = api.listParams();
+        check ((int) params.size() == 84, "T52.1 listParams 覆盖全部 84 参数",
+               juce::String ((int) params.size()));
+
+        // 抽查元数据完整性：每个参数都要有 id / 范围 / 默认值
+        int bad = 0;
+        for (const auto& pi : params)
+            if (pi.id.isEmpty() || pi.minValue > pi.maxValue) ++bad;
+        check (bad == 0, "T52.2 ParamInfo 元数据完整（id/范围）",
+               juce::String (bad) + " bad");
+
+        // 类别分布：Global 12 + Band 72 + Display 0（Display 保留未用）
+        // Global 12 = enabled, phaseMode, linearQuality, xoverSlope, xover1-3,
+        //             inputGain, outputGain, lookahead, oversampling, globalMix
+        // Band 72 = 18 个每段参数 × 4 段
+        int nGlobal = 0, nBand = 0;
+        for (const auto& pi : params)
+        {
+            if (pi.category == ParamInfo::Category::Global) ++nGlobal;
+            else if (pi.category == ParamInfo::Category::Band) ++nBand;
+        }
+        std::cout << "  参数类别: Global=" << nGlobal << " Band=" << nBand << std::endl;
+        check (nGlobal == 12, "T52.3 Global 参数 = 12", juce::String (nGlobal));
+        check (nBand == 72, "T52.4 Band 参数 = 72（18 × 4 段）", juce::String (nBand));
+
+        // getParam / setParam 往返
+        const float before = mb->apvts.getRawParameterValue (Param::bandThreshold (2))->load();
+        const float target = -33.0f;
+        auto sr = api.setParam (Param::bandThreshold (2), target);
+        const float after = mb->apvts.getRawParameterValue (Param::bandThreshold (2))->load();
+        std::cout << "  setParam(band2Threshold, -33): " << before << " -> " << after
+                  << " actual=" << sr.actualValue << std::endl;
+        check (sr.applied && std::abs (sr.actualValue - target) < 0.05f
+               && std::abs (after - target) < 0.05f,
+               "T52.5 setParam 实际值写入 APVTS", juce::String (after));
+
+        // 越界钳制
+        auto over = api.setParam (Param::bandThreshold (2), -999.0f);
+        check (over.applied && over.actualValue >= -60.0f - 0.001f,
+               "T52.6 setParam 越界钳制（-999 → ≥ -60）",
+               juce::String (over.actualValue));
+
+        // 未知 ID 拒绝（值型拒绝）
+        auto unk = api.setParam ("noSuchParam", 1.0f);
+        check (! unk.applied && unk.reason.isNotEmpty(),
+               "T52.7 setParam 未知 ID 返回 applied=false + reason", unk.reason);
+
+        // 批量读
+        const auto vals = api.getParams ({ Param::bandThreshold (2), Param::ID::outputGain });
+        check ((int) vals.size() == 2 && vals[0].isValid && vals[1].isValid,
+               "T52.8 getParams 批量读取", "");
+    }
+
+    // ===== ② 状态面：序列化往返无损 =====
+    {
+        api.setParam (Param::bandRatio (1), 7.5f);
+        api.setParam (Param::ID::globalMix, 137.0f);
+        const auto snap = api.getStateSnapshot();
+        check (snap.state.isValid() && snap.parameterCount == 84,
+               "T52.9 getStateSnapshot 有效（84 参数）",
+               juce::String (snap.parameterCount));
+
+        // 改掉值，再加载回快照
+        api.setParam (Param::bandRatio (1), 2.0f);
+        api.setParam (Param::ID::globalMix, 50.0f);
+        const bool okLoad = api.loadState (snap.state);
+        const float rBack = mb->apvts.getRawParameterValue (Param::bandRatio (1))->load();
+        const float mBack = mb->apvts.getRawParameterValue (Param::ID::globalMix)->load();
+        std::cout << "  loadState 后: ratio=" << rBack << " mix=" << mBack << std::endl;
+        check (okLoad && std::abs (rBack - 7.5f) < 0.05f && std::abs (mBack - 137.0f) < 0.5f,
+               "T52.10 loadState 序列化往返无损",
+               juce::String (rBack) + " / " + juce::String (mBack));
+
+        // 幂等：重复加载同一状态
+        api.loadState (snap.state);
+        const float rBack2 = mb->apvts.getRawParameterValue (Param::bandRatio (1))->load();
+        check (std::abs (rBack2 - 7.5f) < 0.05f, "T52.11 loadState 幂等", juce::String (rBack2));
+
+        // 无效树拒绝
+        check (! api.loadState (juce::ValueTree()),
+               "T52.12 loadState 拒绝无效 ValueTree", "");
+    }
+
+    // ===== ③ 实时数据面（RT_SAFE）=====
+    {
+        // 喂音频产生历史（80 块 → 80 个历史点，足够覆盖请求的 64）
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        for (int t = 0; t < 80; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const float v = 0.4f * (float) std::sin (6.283185 * 300.0 * (t * 512 + i) / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+
+        const auto ms = api.getMeteringSnapshot();
+        check (ms.inputPeakDb > -60.0f && ms.inputPeakDb <= 0.0f,
+               "T52.13 getMeteringSnapshot 输入峰值合理",
+               juce::String (ms.inputPeakDb));
+        check (ms.timestampMs > 0, "T52.14 MeteringSnapshot 带时间戳",
+               juce::String ((int) ms.timestampMs));
+
+        const auto hist = api.readHistory (64);
+        check ((int) hist.inputDb.size() == 64 && hist.pointsWritten == 64,
+               "T52.15 readHistory 返回请求点数",
+               juce::String (hist.pointsWritten));
+        check (hist.counter > 0, "T52.16 readHistory counter 推进",
+               juce::String ((unsigned) hist.counter));
+        check (hist.gainReductionDb.empty(),
+               "T52.17 MB 不记录 GR 历史（规范 §2）", "");
+
+        // 请求超过容量 → 钳到容量
+        const auto big = api.readHistory (100000);
+        check (big.pointsWritten <= 4096, "T52.18 readHistory 超容量时钳制",
+               juce::String (big.pointsWritten));
+
+        // 时间正序：最后一点应是最新的（峰值最高处附近）
+        bool monotoneOk = true;
+        for (size_t i = 1; i < hist.inputDb.size(); ++i)
+            if (std::abs (hist.inputDb[i] - hist.inputDb[i - 1]) > 60.0f) { monotoneOk = false; break; }
+        check (monotoneOk, "T52.19 历史点连续（无跳变断裂）", "");
+    }
+
+    // ===== ④ 分析面 =====
+    {
+        const auto tc = api.getTransferCurve (2, -60.0f, 0.0f, 33);
+        check ((int) tc.xValues.size() == 33 && (int) tc.yValues.size() == 33,
+               "T52.20 getTransferCurve 点数正确",
+               juce::String ((int) tc.xValues.size()));
+        check (std::abs (tc.xValues.front() - (-60.0f)) < 0.01f
+               && std::abs (tc.xValues.back() - 0.0f) < 0.01f,
+               "T52.21 传输曲线 x 轴覆盖 [minDb, maxDb]", "");
+
+        // 压缩特性：阈值以上应有负增益（当前 band2 threshold = -33，ratio 7.5）
+        float maxGain = -999.0f, minGain = 999.0f;
+        for (float y : tc.yValues) { maxGain = juce::jmax (maxGain, y); minGain = juce::jmin (minGain, y); }
+        std::cout << "  传输曲线增益范围: " << minGain << " .. " << maxGain << " dB" << std::endl;
+        check (minGain < -1.0f, "T52.22 传输曲线在阈值以上出现衰减",
+               juce::String (minGain));
+
+        const auto fr = api.getFrequencyResponse (0, 20.0f, 20000.0f, 65);
+        check ((int) fr.xValues.size() == 65, "T52.23 getFrequencyResponse 点数正确",
+               juce::String ((int) fr.xValues.size()));
+        check (std::abs (fr.xValues.front() - 20.0f) < 1.0f
+               && std::abs (fr.xValues.back() - 20000.0f) < 200.0f,
+               "T52.24 频率轴对数覆盖 20Hz..20kHz",
+               juce::String (fr.xValues.front()) + ".." + juce::String (fr.xValues.back()));
+
+        // band0 = LOW：低频应接近 0dB，高频应深度衰减
+        const float lowMag  = fr.yValues.front();
+        const float highMag = fr.yValues.back();
+        std::cout << "  band0 响应: 20Hz=" << lowMag << " dB  20kHz=" << highMag << " dB" << std::endl;
+        check (lowMag > -1.0f, "T52.25 band0 低频通带 ≈ 0dB", juce::String (lowMag));
+        check (highMag < -12.0f, "T52.26 band0 高频阻带深度衰减", juce::String (highMag));
+    }
+
+    // ===== ⑤ 插件面 =====
+    {
+        check (api.getPluginName() == "Crunch MB", "T52.27 getPluginName",
+               api.getPluginName());
+        check (api.getPluginVersion().isNotEmpty(), "T52.28 getPluginVersion",
+               api.getPluginVersion());
+
+        api.setBypass (true);
+        check (api.isBypassed(), "T52.29 setBypass(true) → isBypassed()", "");
+        api.setBypass (false);
+        check (! api.isBypassed(), "T52.30 setBypass(false) → 恢复", "");
+    }
+
+    // ===== ⑥ IMBBackend 多段扩展 =====
+    {
+        // setBandGroupDelta：线性恒定偏移（非比例缩放）
+        api.setParam (Param::bandThreshold (0), -20.0f);
+        api.setParam (Param::bandThreshold (1), -20.0f);
+        api.setParam (Param::bandThreshold (2), -20.0f);
+        api.setParam (Param::bandThreshold (3), -20.0f);
+        const auto g = api.setBandGroupDelta ("threshold", -6.0f);
+        std::cout << "  setBandGroupDelta(threshold, -6): ";
+        for (int b = 0; b < 4; ++b)
+            std::cout << mb->apvts.getRawParameterValue (Param::bandThreshold (b))->load() << " ";
+        std::cout << std::endl;
+        check (g.applied, "T52.31 setBandGroupDelta applied", "");
+        bool allShifted = true;
+        for (int b = 0; b < 4; ++b)
+        {
+            const float v = mb->apvts.getRawParameterValue (Param::bandThreshold (b))->load();
+            if (std::abs (v - (-26.0f)) > 0.05f) allShifted = false;
+        }
+        check (allShifted, "T52.32 四段 Threshold 恒定偏移 -6 dB（线性，非比例）", "");
+
+        // 越界钳制：从 -26 再减 -40 → 全部钳到 -60
+        const auto g2 = api.setBandGroupDelta ("threshold", -40.0f);
+        bool allClamped = true;
+        for (int b = 0; b < 4; ++b)
+        {
+            const float v = mb->apvts.getRawParameterValue (Param::bandThreshold (b))->load();
+            if (v < -60.0f - 0.001f || v > -60.0f + 0.001f) allClamped = false;
+        }
+        std::cout << "  越界后: " << mb->apvts.getRawParameterValue (Param::bandThreshold (0))->load() << std::endl;
+        check (g2.applied && allClamped, "T52.33 setBandGroupDelta 越界钳制（→ -60）", "");
+
+        // setCrossover：最小带宽 1 八度钳制
+        api.setParam (Param::ID::xover1, 200.0f);
+        api.setParam (Param::ID::xover2, 1000.0f);
+        api.setParam (Param::ID::xover3, 6000.0f);
+        auto cs = api.setCrossover (0, 3000.0f);       // xover1 想越过 xover2(1000)
+        const float x1 = mb->apvts.getRawParameterValue (Param::ID::xover1)->load();
+        const float x2 = mb->apvts.getRawParameterValue (Param::ID::xover2)->load();
+        std::cout << "  setCrossover(0, 3000): x1=" << x1 << " x2=" << x2 << std::endl;
+        check (cs.applied && x1 <= x2 * 0.5f + 0.01f,
+               "T52.34 setCrossover 最小带宽钳制（x1 ≤ x2/2）",
+               juce::String (x1) + " / " + juce::String (x2));
+
+        // 合法设置生效
+        auto cs2 = api.setCrossover (1, 1500.0f);
+        const float x2b = mb->apvts.getRawParameterValue (Param::ID::xover2)->load();
+        check (cs2.applied && std::abs (x2b - 1500.0f) < 1.0f,
+               "T52.35 setCrossover 合法值生效", juce::String (x2b));
+
+        // 越界索引拒绝
+        auto cs3 = api.setCrossover (7, 1000.0f);
+        check (! cs3.applied && cs3.reason.isNotEmpty(),
+               "T52.36 setCrossover 越界索引拒绝", cs3.reason);
+
+        // getBandGainReduction
+        const auto gr = api.getBandGainReduction();
+        check (gr.size() == 4, "T52.37 getBandGainReduction 返回 4 段",
+               juce::String ((int) gr.size()));
+
+        // getLatestSpectrum（后台分析线程需时间发布首帧，稍等）
+        std::array<float, 512> pre {}, post {};
+        std::vector<float> freqs;
+        bool got = false;
+        for (int attempt = 0; attempt < 60 && ! got; ++attempt)
+        {
+            got = api.getLatestSpectrum (pre, post, freqs);
+            if (! got)
+                juce::Thread::sleep (20);
+        }
+        check (got && (int) freqs.size() == 512,
+               "T52.38 getLatestSpectrum 返回双层频谱 + 频率轴",
+               juce::String ((int) freqs.size()));
+        check (freqs.front() < 100.0f && freqs.back() > 10000.0f,
+               "T52.39 频率轴对数跨度 20Hz..20kHz",
+               juce::String (freqs.front()) + ".." + juce::String (freqs.back()));
+
+        // readMultibandHistory
+        const auto mh = api.readMultibandHistory (32);
+        check ((int) mh.inputDb.size() == 32 && mh.pointsWritten == 32,
+               "T52.40 readMultibandHistory 点数正确",
+               juce::String (mh.pointsWritten));
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5415,6 +5697,7 @@ int main()
     testGlobalMix();               // T49 Phase 全局 Mix
     testSelfDrawnDropDown();       // T50 Phase 自绘 TextSelect 下拉
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
+    testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

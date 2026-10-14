@@ -86,10 +86,22 @@ public:
     int   getOversamplingLatencySamples() const noexcept;         // 仅过采样（2026-10-14）
     int   getOversamplingFactor() const noexcept { return osFactor_; }
     float getBandGainDb (int band) const noexcept;
+    /** Phase：交叉分频器只读访问（API getFrequencyResponse 用）。 */
+    const CrossoverBank& getCrossover() const noexcept { return crossover_; }
     /** Phase C-3：该段检测器看到的电平（dB）。供 UI 画圆形电平表。 */
     float getBandDetectorDb (int band) const noexcept;
     float getBandGateSmoothed (int band) const noexcept;          // 门平滑值（UI/测试）
     bool  gatesActive() const noexcept { return gatesActive_; }
+
+    /** Phase：该段在当前参数下的静态传输增益（dB）——API getTransferCurve 用。
+     *  levelDb = 输入电平（dBFS），返回该段要施加的增益（dB，负=衰减）。
+     *  消息线程调用。 */
+    float getBandStaticGainDb (int band, float levelDb) const;
+
+    /** Phase：4 段当前增益衰减量（dB，正数表示衰减多少）。
+     *  由 bandGainDb_（已含 Makeup 与 Range 的平滑结果）取负得到。
+     *  RT_SAFE（只读 atomic）。 */
+    std::array<float, Param::kNumBands> getBandGainReductionDb() const;
 
 private:
     StructureParams struct_;

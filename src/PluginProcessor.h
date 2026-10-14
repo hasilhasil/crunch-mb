@@ -77,6 +77,19 @@ public:
             .load (std::memory_order_relaxed);
     }
 
+    // ---- Phase：电平历史环形缓冲（API readHistory / readMultibandHistory 用）----
+    // 音频线程每块写一点（input/output dB），消息线程按需读取。
+    // SPSC 无锁：写侧只推 counter（release），读侧先取 counter（acquire）再读数据。
+    // 单个 float 的读在本平台原子，故读侧即使与写侧并发也只会读到"稍旧"的点，
+    // 不会撕裂——metering 数据可接受。
+    static constexpr int kHistoryCapacity = 4096;
+    /** 音频线程：推入一点（inputDb / outputDb）。零分配零锁。 */
+    void pushHistoryPoint (float inputDb, float outputDb) noexcept;
+    /** 读侧：取最近 points 个点（按时间正序）。 */
+    void readHistoryPoints (int points, std::vector<float>& inputDb,
+                            std::vector<float>& outputDb,
+                            unsigned& counter, int& pointsWritten) const;
+
 private:
     void applyStructure();                    // 消息线程：分频/FIR 设计
     void updateLatency() noexcept;            // 消息线程：setLatencySamples
@@ -92,6 +105,11 @@ private:
     std::atomic<float> inputPeak_  { 0.0f };
     std::atomic<float> outputPeak_ { 0.0f };
     std::array<std::atomic<float>, Param::kNumBands> bandGainDb_ {};
+
+    // Phase：电平历史环形缓冲（SPSC）
+    std::array<std::atomic<float>, kHistoryCapacity> historyIn_  {};
+    std::array<std::atomic<float>, kHistoryCapacity> historyOut_ {};
+    std::atomic<unsigned> historyCounter_ { 0 };
 
     // 频谱 pre 抽头延迟环（Linear 模式输出晚 L 样本 → pre 延迟 L 使两层对齐）
     std::vector<float> preTapRing_;

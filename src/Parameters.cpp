@@ -52,7 +52,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         layout.add (std::make_unique<juce::AudioParameterBool> (id, name, def));
     };
 
-    // ================= 全局参数（10 个，TECH_SPEC §5.1） =================
+    // ================= 全局参数（12 个，TECH_SPEC §5.1 + 后续扩充） =================
     addBool   (pid (ID::enabled), "Enabled", true);
 
     addChoice (pid (ID::phaseMode), "Phase Mode",
