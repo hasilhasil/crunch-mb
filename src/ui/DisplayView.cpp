@@ -304,18 +304,11 @@ void DisplayView::drawGrid (juce::Graphics& g)
 // ---------------- 绘制 ----------------
 void DisplayView::drawBackground (juce::Graphics& g)
 {
+    // Phase B-3：频谱全出血——背景只铺底色，**不再画**绘图区上下硬边框。
+    // 原来的 1px gridZ 线（y=30 与 y=588）会把频谱区框成一个盒子，
+    // 与 Pro-MB"频谱铺满、顶/底栏半透明压在上面"的观感相反。
+    // 分区之间的分隔由全高分割线负责，顶/底栏各自有一条淡边。
     g.fillAll (pal_.bg);
-
-    // 问题 2：绘图区与顶栏状态栏之间画明确边界（1px gridZ），绘图区内边距 4px，
-    // 使频谱/曲线/刻度都从状态栏下缘**之下**开始，不再有重叠观感。
-    const float top = sy (kTopStripH);
-    g.setColour (pal_.gridZ);
-    g.fillRect (0.0f, top, (float) getWidth(), 1.0f);
-
-    // 底缘同样画一条（与 global bar 分隔）
-    const float bottom = (float) getHeight() - sy (kGlobalBarH);
-    g.setColour (pal_.gridZ);
-    g.fillRect (0.0f, bottom, (float) getWidth(), 1.0f);
 }
 
 float DisplayView::curveDbAtFreq (float freq) const
@@ -701,9 +694,14 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     const float W = (float) getWidth();
     const float h = sy (kTopStripH);
 
-    // #4：状态栏 100% 不透明（不再玻璃），与主界面明确分层
-    g.setColour (pal_.surface);
+    // Phase B-3：顶栏改**半透明玻璃**（原 100% 不透明 surface）。
+    // 对齐 Pro-MB：顶栏是压在频谱之上的半透明条，频谱从它下面透出来。
+    // 模糊留到 Phase E（UI_SPEC §12.2 档 b：4× 下采样 + 15Hz 更新）。
+    g.setColour (pal_.surfaceA);
     g.fillRect (0.0f, 0.0f, W, h);
+    // 底缘 1px 分隔（比之前的 gridZ 更淡，玻璃条不需要硬边）
+    g.setColour (pal_.gridZ.withAlpha (0.6f));
+    g.fillRect (0.0f, h - 1.0f, W, 1.0f);
 
     // A9：模式信息文字已删除（用户不需要这行解释）
     // 段名（选中段）
@@ -751,10 +749,10 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     const float y0 = (float) getHeight() - sy (kGlobalBarH);
     const float h = sy (kGlobalBarH);
 
-    // A8：global 条 100% 不透明（surface，不再玻璃）
-    g.setColour (pal_.surface);
+    // Phase B-3：global 条同样改半透明玻璃（对齐 Pro-MB 底栏压在频谱之上）
+    g.setColour (pal_.surfaceA);
     g.fillRect (0.0f, y0, W, h);
-    g.setColour (pal_.gridZ);
+    g.setColour (pal_.gridZ.withAlpha (0.6f));
     g.fillRect (0.0f, y0, W, 1.0f);
 
     // 全局选择器（Phase 4.4 接下拉）
