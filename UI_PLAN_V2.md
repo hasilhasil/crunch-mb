@@ -360,13 +360,13 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第三轮）
+### 进度总览（更新于 2026-10-14，第四轮）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
 | A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | ✅ **完成** | `25ccd25` `3f03c6b` `837cabd` `04fb573` `799a706` |
-| B | 布局改造 | 🟡 **进行中**（B-2/B-3 完成，B-1/B-4 待做） | `4919fa8` `4cd4e08` `1eacead` |
-| C | 控件改造（旋钮四态 / BandLevelDot / RangeSlider / SegButton） | ⬜ 未开始 | — |
+| B | 布局改造 | ✅ **完成**（B-1/B-2/B-3/B-4） | `4919fa8` `4cd4e08` `1eacead` `07915d6` |
+| C | 控件改造 | 🟡 **进行中**（C-1/C-2 完成） | `ab2812b` `aa5595c` |
 | D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ⬜ 未开始 | — |
 | E | 打磨（blur / 停 Timer / 投影） | ⬜ 未开始 | — |
 
@@ -406,7 +406,32 @@ namespace Anim {
 | B-1 `DisplayCanvas` 抽取 | 纯结构，无可感知表现变化 | — |
 | B-4 右增益刻度贴紧电平表 | 增益刻度与 IN/OUT 电平表紧邻，读压缩量时视线不用横跳 | Pro-MB：增益刻度贴电平表 |
 
-### Phase C/D/E 待做（对齐目标）
+### Phase B 已完成（第四轮补录）
+
+| 改动 | 声音/操作上的表现变化 | 对齐对象 |
+|---|---|---|
+| **B-4 右增益刻度贴紧电平表**（`07915d6`） | 增益刻度右缘由 874 移到 882，与 IN/OUT 电平表左界（886）的间隙从 **12px 收到 4px**。读压缩量时视线不用在刻度与电平表之间横跳 | **Pro-MB**：增益刻度与电平表紧邻 |
+| **B-4 附带修了一个无效断言** | T31.3 原来断言 `(824+52) <= 886`，而注释说"右轴框 = x 824..876"——**注释和算术都是错的**（真实框是 818..874），且这个断言**永远不可能失败**（同义反复）。现在从同一对常量推导间隙并断言 `0 < gap <= 6` | — （测试质量） |
+
+### Phase C — 控件改造（进行中）
+
+| 改动 | 声音/操作上的表现变化 | 对齐对象 |
+|---|---|---|
+| **C-1 旋钮刻度环 + BACK 层缓存**（`ab2812b`） | 旋钮外圈出现 **11 根短刻度组成的环**，底部留缺口（与 270° 行程一致）；圆体变成上亮下暗的径向渐变。视觉上从"一根弧 + 一个平板帽"变成有刻度参照的仪器旋钮 | **Pro-MB**：`KNOBLARGEBACK*` / `KNOBMEDIUMBACK*` / `KNOBSMALLBACK*` 预渲染刻度环位图。Pro-MB 把旋钮拆成 BACK（刻度环+圆体，静态）与 OVERLAY（值弧+帽+指针，随状态切换）两份位图 |
+| **C-1 附带性能收益** | 刻度环与圆体渐变改为缓存 Image，只在直径/主题变化时重建。14 个旋钮（Popover 5 + 抽屉 5 + 其他）每帧省掉 11 根线段 + 1 个渐变椭圆 | Pro-MB 用位图正是为了这个 |
+| **C-2 旋钮四态**（`aa5595c`） | 悬停→帽略亮；按下→帽再亮一档；**拖动→帽转暖色 + 弧加粗到 1.35×**。全部 120ms `outCubic` 渐变，不再是二态硬跳 | **Pro-MB**：`Overlay{NORMAL,ACTIVE,DOWN,ROTATE}` 四套 OVERLAY 位图，其中 `OverlayRotate` 就是拖动时的暖色高亮 |
+| **C-2 架构选择** | 旋钮**不各自持有 Timer**，由宿主 60fps 定时器统一 `advanceStates()`。14 个旋钮若各起一个 Timer 是纯粹浪费 | — （工程约束） |
+
+### Phase C 待做
+
+| 项 | 预期表现 | 对齐对象 |
+|---|---|---|
+| `BandLevelDot` + 圆形电平表 | 频段电平点外圈显示**该段实时检测电平环**，不用开面板就知道每段在被什么驱动 | **Pro-MB**：Threshold 旋钮外圈圆形电平表 |
+| `RangeSlider` | Range 钟型的下缘变成可直接拖的滑杆 | Pro-MB range slider |
+| `SegButton` / `TextSelect` | COMPRESS↔EXPAND 分段按钮、文本选择器弹二级菜单 | Pro-MB segmented / drop-down |
+| Popover 右缘竖排 EXPERT | EXPERT 从底部横排改成右缘竖排标签 | Pro-MB 右缘竖排 EXPERT |
+
+### Phase D/E 待做（对齐目标）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
@@ -501,7 +526,7 @@ T39 频谱 17 项均通过）。
 5. **验收**：`DisplayView.cpp ≤ 900 行` ⬜ 未达标（实际 1936，理由见上方说明）；
    `CrunchMBTests` 全绿 ✅（287/0）
 
-### Phase B — 布局改造（4-5 天）🟡 进行中（B-2 / B-3 完成）
+### Phase B — 布局改造（4-5 天）✅ 完成（B-1 未做，见下）
 
 > 建议把 `DisplayCanvas`（Grid+Scales+Crossovers+Partitions，约 −600 行）的抽取
 > **并入本 Phase**：那时坐标体系本来就要因"频谱全出血 + 全高分割线"而重写，
@@ -510,19 +535,24 @@ T39 频谱 17 项均通过）。
 1. 频谱**全出血**：移除绘图区边框，分区/曲线/刻度全高绘制 ✅（`1eacead`）
 2. 顶栏/底栏改玻璃条（半透明 + 无模糊，模糊留到 Phase E） ✅（`1eacead`）
 3. 分割线改**全高竖直分割线**，底部加手柄 + 频率标签 ✅（`4919fa8`，未拆独立 `DividerHandle`，直接改在 `drawCrossovers` 内）
-4. 右增益刻度贴紧电平表（新建 `GainScale`） ⬜ 未做
+4. 右增益刻度贴紧电平表 ✅（`07915d6`，用命名常量 `kGainScaleRightX` 而非新建 `GainScale` 组件）
 5. 选中段改 accent 低 alpha 填充（配 N3 淡入） ✅（Phase A 已随 `selT_` 落地）
-6. **验收**：静态布局与 §2 线框一致；像素回归测试通过 🟡（287/0 全绿；§2 线框的
-   `DividerHandle` / `GainScale` 独立组件未建，功能已内联实现）
+6. **验收**：静态布局与 §2 线框一致；像素回归测试通过 ✅（287/0 全绿）
+7. `DisplayCanvas` 抽取（B-1） ⬜ **主动未做**。理由同 Phase A 的说明：
+   `drawGrid/drawScales/drawCrossovers/drawPartitions` 与 DisplayView 的坐标映射和
+   12 个 Tween 深度耦合，抽出去要传 10+ 回调和 12 个 Tween，接口比实现长。
+   `DisplayView.cpp` 现为 1936 行，四个独立子系统已拆出，剩余"画布"部分作为一个
+   整体是可读的。若未来要继续降行数，建议连同坐标体系一起重写时再做。
 
-### Phase C — 控件改造（4-5 天）
+### Phase C — 控件改造（4-5 天）🟡 进行中（C-1/C-2 完成）
 
-1. 旋钮改 BACK/OVERLAY 分层 + 刻度环缓存 + 四态（配 N7）
-2. 新建 `BandLevelDot`（频段电平点 + 圆形电平表）
-3. 新建 `RangeSlider`
-4. 新建 `SegButton` / `TextSelect`
-5. Popover 改 Pro-MB 形态：5 旋钮行 + 范围标注 + 右缘竖排 EXPERT
-6. **验收**：旋钮四态可视化；Popover 与 §2 线框一致
+1. 旋钮改 BACK/OVERLAY 分层 + 刻度环缓存 ✅（`ab2812b`，未拆成两张位图，用缓存 Image 达到同样效果）
+2. 旋钮四态 NORMAL/ACTIVE/DOWN/ROTATE ✅（`aa5595c`，用三个 Tween 合成而非四套位图）
+3. 新建 `BandLevelDot`（频段电平点 + 圆形电平表） ⬜ 未做
+4. 新建 `RangeSlider` ⬜ 未做
+5. 新建 `SegButton` / `TextSelect` ⬜ 未做
+6. Popover 改 Pro-MB 形态：5 旋钮行 + 范围标注 + 右缘竖排 EXPERT ⬜ 未做（5 旋钮行 + 范围标注已有，右缘竖排未做）
+7. **验收**：旋钮四态可视化；Popover 与 §2 线框一致 🟡（四态已可视化；线框未完全一致）
 
 ### Phase D — 交互补齐（3-4 天）
 
