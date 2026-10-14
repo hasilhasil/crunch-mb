@@ -51,6 +51,11 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
         [this] (float f) { return freqToX (f); },
         [this] (float db) { return specDbToY (db); },
         [this] { return specDbToY (-100.0f); });
+    // Phase D：Analyzer 自绘面板（替换原生 PopupMenu，获得 hover-open / click-sticky）
+    analyzerPanel_ = std::make_unique<AnalyzerPanel>();
+    analyzerPanel_->setHostBounds (getLocalBounds());
+    analyzerPanel_->onSettingsChanged = [this] { applyAnalyzerSettings(); };
+    addAndMakeVisible (*analyzerPanel_);
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -215,6 +220,8 @@ void DisplayView::setTheme (MBTheme::Theme t)
         freqInput_->setTheme (t);
     if (spectrumView_ != nullptr)
         spectrumView_->setTheme (t);
+    if (analyzerPanel_ != nullptr)
+        analyzerPanel_->setTheme (t);
     curvePathsValid_ = false;
     repaint();
 }
@@ -1024,6 +1031,9 @@ void DisplayView::timerCallback()
         linkedDrawer_->advance (nowMs);
     if (bandPopover_ != nullptr)
         bandPopover_->advance (nowMs);
+    // Phase D：Analyzer 面板开合动画
+    if (analyzerPanel_ != nullptr)
+        analyzerPanel_->advance (nowMs);
 
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
     advanceTweens (nowMs);
@@ -1402,6 +1412,7 @@ void DisplayView::enterTestClock()
 void DisplayView::mouseDownForTest (float x, float y) { enterTestClock(); mouseDown (mkTestMouse (juce::Point<float> (x, y))); }
 void DisplayView::mouseDragForTest (float x, float y) { enterTestClock(); mouseDrag (mkTestMouse (juce::Point<float> (x, y))); }
 void DisplayView::mouseUpForTest   (float x, float y) { enterTestClock(); mouseUp   (mkTestMouse (juce::Point<float> (x, y))); }
+void DisplayView::mouseMoveForTest (float x, float y) { enterTestClock(); mouseMove (mkTestMouse (juce::Point<float> (x, y))); }
 
 // Phase A：推进虚拟时钟再跑一帧。advanceMs 默认 16ms ≈ 60fps。
 void DisplayView::tickForTest (double advanceMs)
@@ -1693,6 +1704,13 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
     lastMousePos_ = p;
     if (bandPopover_ != nullptr)
         bandPopover_->setLastMousePos (p);
+
+    // Phase D：Analyzer 按钮悬停 → 面板打开（非 sticky 时）
+    // 这是 Pro-MB 的签名式交互：悬停即开，点击才钉住。
+    if (analyzerPanel_ != nullptr)
+        analyzerPanel_->hoverButton (hitTestAnalyzerButton (p)
+                                     || analyzerPanel_->panelRect().contains (p));
+
     int b = -1, j = -1;
     const bool onBtn = hitTestButton (p, b, j) != 0;
     int dotBand = -1;
@@ -1833,10 +1851,28 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     // 0a) Analyzer 按钮（Pro-MB 底栏 Analyzer 对标，当前占原 IN 读数位）
+    // Phase D：**Pro-MB 签名式交互** —— 悬停打开（非 sticky）、点击变 sticky、再点收起。
+    // 原来只有"点击弹原生菜单"，没有悬停语义，也没有 sticky。
     if (hitTestAnalyzerButton (p))
     {
-        openAnalyzerMenu();
+        if (analyzerPanel_ != nullptr)
+            analyzerPanel_->clickButton();
+        repaint();
         return;
+    }
+    // Analyzer 面板行点击（面板自己画，命中在这里分发）
+    if (analyzerPanel_ != nullptr && analyzerPanel_->isOpen())
+    {
+        int row = -1;
+        if (analyzerPanel_->hitTestRow (p, row))
+        {
+            analyzerPanel_->clickRowPublic (row);
+            repaint();
+            return;
+        }
+        // 点在面板外（且不在按钮上）→ 收起
+        if (! analyzerPanel_->panelRect().contains (p))
+            analyzerPanel_->clickOutside();
     }
 
     // 0b) Popover 内部控制：滑杆行 + EXPERT（旋钮由 Knob 子组件自行处理命中）
@@ -2185,57 +2221,39 @@ void DisplayView::syncSpectrumLayers()
         spectrumView_->setLayerVisible (analyzerPreOn_, analyzerPostOn_);
 }
 
+
+void DisplayView::openAnalyzerMenu()
+{
+    // Phase D：已改为自绘 AnalyzerPanel（悬停打开 / 点击 sticky）。
+    // 这个函数保留给测试钩子与键盘路径用：等价于"点击按钮"。
+    if (analyzerPanel_ != nullptr)
+    {
+        analyzerPanel_->clickButton();
+        repaint();
+    }
+}
+
 void DisplayView::applyAnalyzerSettings()
 {
     auto& eng = proc_.getSpectrumEngine();
+
+    // Phase D：设置的真源在 AnalyzerPanel；两边的副本在 onSettingsChanged 时同步。
+    if (analyzerPanel_ != nullptr)
+    {
+        analyzerPreOn_  = analyzerPanel_->preOn();
+        analyzerPostOn_ = analyzerPanel_->postOn();
+        analyzerFftSize_ = analyzerPanel_->fftSize();
+        analyzerSpeed_   = analyzerPanel_->speed();
+        analyzerTilt_    = analyzerPanel_->tilt();
+        analyzerFreeze_  = analyzerPanel_->frozen();
+    }
+
     eng.setResolution (analyzerFftSize_);
     static const double kSpeedTauMs[3] = { 10.0, 20.0, 60.0 };   // fast / medium / slow
     eng.setReleaseMs (kSpeedTauMs[juce::jlimit (0, 2, analyzerSpeed_)]);
     eng.setTilt (analyzerTilt_);
     eng.setFrozen (analyzerFreeze_);
-}
-
-void DisplayView::openAnalyzerMenu()
-{
-    juce::PopupMenu m;
-
-    m.addItem ("Pre spectrum",  true, analyzerPreOn_,  [this] { analyzerPreOn_  = ! analyzerPreOn_;
-                                                               syncSpectrumLayers(); });
-    m.addItem ("Post spectrum", true, analyzerPostOn_, [this] { analyzerPostOn_ = ! analyzerPostOn_;
-                                                               syncSpectrumLayers(); });
-    m.addSeparator();
-
-    juce::PopupMenu res;
-    res.addItem ("Low (1024)",     true, analyzerFftSize_ == 1024, [this] { analyzerFftSize_ = 1024; });
-    res.addItem ("Medium (2048)",  true, analyzerFftSize_ == 2048, [this] { analyzerFftSize_ = 2048; });
-    res.addItem ("High (4096)",    true, analyzerFftSize_ == 4096, [this] { analyzerFftSize_ = 4096; });
-    res.addItem ("Maximum (8192)", true, analyzerFftSize_ == 8192, [this] { analyzerFftSize_ = 8192; });
-    m.addSubMenu ("Resolution", res);
-
-    juce::PopupMenu spd;
-    spd.addItem ("Fast",   true, analyzerSpeed_ == 0, [this] { analyzerSpeed_ = 0; });
-    spd.addItem ("Medium", true, analyzerSpeed_ == 1, [this] { analyzerSpeed_ = 1; });
-    spd.addItem ("Slow",   true, analyzerSpeed_ == 2, [this] { analyzerSpeed_ = 2; });
-    m.addSubMenu ("Speed", spd);
-
-    juce::PopupMenu tilt;
-    tilt.addItem ("Off (0 dB/oct)", true, std::abs (analyzerTilt_) < 0.01f,
-                  [this] { analyzerTilt_ = 0.0f; });
-    tilt.addItem ("1.5 dB/oct", true, std::abs (analyzerTilt_ - 1.5f) < 0.01f,
-                  [this] { analyzerTilt_ = 1.5f; });
-    tilt.addItem ("3.0 dB/oct", true, std::abs (analyzerTilt_ - 3.0f) < 0.01f,
-                  [this] { analyzerTilt_ = 3.0f; });
-    tilt.addItem ("4.5 dB/oct (default)", true, std::abs (analyzerTilt_ - 4.5f) < 0.01f,
-                  [this] { analyzerTilt_ = 4.5f; });
-    tilt.addItem ("6.0 dB/oct", true, std::abs (analyzerTilt_ - 6.0f) < 0.01f,
-                  [this] { analyzerTilt_ = 6.0f; });
-    m.addSubMenu ("Tilt", tilt);
-
-    m.addItem ("Freeze (max over time)", true, analyzerFreeze_,
-               [this] { analyzerFreeze_ = ! analyzerFreeze_; });
-
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-        [this] (int) { applyAnalyzerSettings(); repaint(); });
+    syncSpectrumLayers();
 }
 
 // ---------------- 入口 ----------------
@@ -2282,6 +2300,11 @@ void DisplayView::resized()
     }
     if (freqInput_ != nullptr)
         freqInput_->setBounds (getLocalBounds());
+    if (analyzerPanel_ != nullptr)
+    {
+        analyzerPanel_->setBounds (getLocalBounds());
+        analyzerPanel_->setHostBounds (getLocalBounds());
+    }
     // Phase A：频谱 Path 按新坐标重建（它不是子组件，不需要 setBounds）
     if (spectrumView_ != nullptr)
         spectrumView_->invalidate();

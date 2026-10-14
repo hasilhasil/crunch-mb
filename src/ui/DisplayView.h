@@ -13,6 +13,7 @@
 #include "BandPopover.h"
 #include "FreqInputEditor.h"
 #include "SpectrumView.h"
+#include "AnalyzerPanel.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -86,6 +87,8 @@ public:
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);
     void mouseUpForTest (float x, float y);
+    /** Phase D：派发鼠标移动（悬停语义测试用，如 Analyzer 面板 hover-open）。 */
+    void mouseMoveForTest (float x, float y);
     void mouseDoubleClickForTest (float x, float y);
     // 测试钩子：取某段频点的实际屏幕位置（#5：绑 Range 顶边中点 = base，只随 Makeup 变）
     void getFreqDotPos (int band, float& x, float& y) const
@@ -149,12 +152,38 @@ public:
     bool  getAnalyzerFreezeForTest()  const { return analyzerFreeze_; }
     bool  getAnalyzerPreOnForTest()   const { return analyzerPreOn_; }
     bool  getAnalyzerPostOnForTest()  const { return analyzerPostOn_; }
-    void  setAnalyzerPreOnForTest (bool v)   { analyzerPreOn_ = v;  syncSpectrumLayers(); }
-    void  setAnalyzerPostOnForTest (bool v)  { analyzerPostOn_ = v; syncSpectrumLayers(); }
-    void  setAnalyzerFftSizeForTest (int v)   { analyzerFftSize_ = v; }
-    void  setAnalyzerSpeedForTest (int v)     { analyzerSpeed_ = v; }
-    void  setAnalyzerTiltForTest (float v)    { analyzerTilt_ = v; }
-    void  setAnalyzerFreezeForTest (bool v)   { analyzerFreeze_ = v; }
+    // Phase D：Analyzer 设置的真源在 AnalyzerPanel，这些测试钩子转发过去，
+    // 再同步回本地副本并 apply（否则写本地副本不产生任何效果）。
+    void  setAnalyzerPreOnForTest (bool v)
+    {
+        if (analyzerPanel_) analyzerPanel_->setPreOnForTest (v);
+        analyzerPreOn_ = v; syncSpectrumLayers();
+    }
+    void  setAnalyzerPostOnForTest (bool v)
+    {
+        if (analyzerPanel_) analyzerPanel_->setPostOnForTest (v);
+        analyzerPostOn_ = v; syncSpectrumLayers();
+    }
+    void  setAnalyzerFftSizeForTest (int v)
+    {
+        if (analyzerPanel_) analyzerPanel_->setFftSizeForTest (v);
+        analyzerFftSize_ = v; applyAnalyzerSettings();
+    }
+    void  setAnalyzerSpeedForTest (int v)
+    {
+        if (analyzerPanel_) analyzerPanel_->setSpeedForTest (v);
+        analyzerSpeed_ = v; applyAnalyzerSettings();
+    }
+    void  setAnalyzerTiltForTest (float v)
+    {
+        if (analyzerPanel_) analyzerPanel_->setTiltForTest (v);
+        analyzerTilt_ = v; applyAnalyzerSettings();
+    }
+    void  setAnalyzerFreezeForTest (bool v)
+    {
+        if (analyzerPanel_) analyzerPanel_->setFrozenForTest (v);
+        analyzerFreeze_ = v; applyAnalyzerSettings();
+    }
     void  applyAnalyzerSettingsForTest()      { applyAnalyzerSettings(); }
     // T40 Popover 控件测试钩子 —— Phase A：经 BandPopover 转发
     void applyPopoverKnobForTest (int k, double v);
@@ -162,7 +191,16 @@ public:
     juce::Rectangle<float> popExpertRectForTest() const;
     /** Phase C-5：EXPERT 展开内容矩形（T40 用）。 */
     juce::Rectangle<float> popExpertContentRectForTest() const;
-    bool isPopoverExpertOpenForTest() const;
+    /** Phase D 测试钩子：Analyzer 面板是否打开 / 是否 sticky。 */
+    bool isAnalyzerOpenForTest() const
+    {
+        return analyzerPanel_ != nullptr && analyzerPanel_->isOpen();
+    }
+    bool isAnalyzerStickyForTest() const
+    {
+        return analyzerPanel_ != nullptr && analyzerPanel_->isSticky();
+    }
+    bool  isPopoverExpertOpenForTest() const;
     bool  hasSpectrumFrameForTest() const
     {
         return spectrumView_ != nullptr && spectrumView_->hasFrameForTest();
@@ -430,6 +468,8 @@ private:
     /** Phase A：把 Pre/Post 开关同步给 SpectrumView 子组件。 */
     void syncSpectrumLayers();
     bool hitTestAnalyzerButton (juce::Point<float> p) const;
+    /** Phase D：Analyzer 自绘面板（Pro-MB hover-open / click-sticky 语义）。 */
+    std::unique_ptr<AnalyzerPanel> analyzerPanel_;
 
     // ---- Phase 5.2 / 5.3：抽屉与 Popover 组件（UI_PLAN_V2 §3.2）----
     // Phase A：两者均已拆为独立组件。DisplayView 只持 unique_ptr，

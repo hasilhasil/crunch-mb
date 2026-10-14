@@ -4475,6 +4475,73 @@ static void testPopoverControls()
     }
 }
 
+// ------------------------------------------------------------
+// T41 Phase D：Analyzer 面板 sticky 语义（Pro-MB 签名式交互）
+//   悬停打开（非 sticky）→ 点击变 sticky → 再点收起并解除 sticky
+//   → 鼠标移开时 sticky 不收起 → 点面板外收起
+// ------------------------------------------------------------
+static void testAnalyzerPanelSticky()
+{
+    std::cout << "\n--- T41 Phase D Analyzer 面板 sticky 语义 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T41.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+
+    // Analyzer 按钮位置（与 DisplayView::hitTestAnalyzerButton 一致）
+    const float btnX = 920.0f * 0.5f - 150.0f + 52.0f;
+    const float btnY = 620.0f - 32.0f + 5.0f + 11.0f;
+
+    // ① 初始：关闭且非 sticky
+    check (! dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
+           "T41.1 Analyzer 面板初始关闭且非 sticky", "");
+
+    // ② 悬停按钮 → 打开，但**不** sticky
+    dv.mouseMoveForTest (btnX, btnY);
+    check (dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
+           "T41.2 悬停按钮 → 面板打开且不 sticky", "");
+
+    // ③ 鼠标移开 → 非 sticky 面板自动收起
+    dv.mouseMoveForTest (80.0f, 90.0f);
+    check (! dv.isAnalyzerOpenForTest(),
+           "T41.3 鼠标移开 → 非 sticky 面板自动收起", "");
+
+    // ④ 点击按钮 → 变 sticky 且保持打开
+    dv.mouseMoveForTest (btnX, btnY);
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isAnalyzerOpenForTest() && dv.isAnalyzerStickyForTest(),
+           "T41.4 点击按钮 → 面板变 sticky 并保持打开", "");
+
+    // ⑤ 鼠标移开 → sticky 面板**不**收起（这正是 sticky 的意义）
+    dv.mouseMoveForTest (80.0f, 90.0f);
+    check (dv.isAnalyzerOpenForTest() && dv.isAnalyzerStickyForTest(),
+           "T41.5 鼠标移开 → sticky 面板不收起", "");
+
+    // ⑥ 再点按钮 → 收起并解除 sticky
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (! dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
+           "T41.6 再点按钮 → 收起并解除 sticky", "");
+
+    // ⑦ sticky 打开时点面板外 → 收起（连 sticky 一起解除）
+    dv.mouseMoveForTest (btnX, btnY);
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isAnalyzerStickyForTest(), "T41.7 前置：sticky 已打开", "");
+    dv.mouseDownForTest (300.0f, 200.0f);       // 面板外
+    dv.mouseUpForTest (300.0f, 200.0f);
+    check (! dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
+           "T41.8 点面板外 → 收起并解除 sticky", "");
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4524,6 +4591,7 @@ int main()
     testAnalyzerSettings();         // T38 Analyzer 设置（Pro-MB 对标）
     testAnalyzerOptions();          // T39 Analyzer 单选项 + 组合（内部测试）
     testPopoverControls();          // T40 Phase 5.3.2 Popover 控件接线
+    testAnalyzerPanelSticky();      // T41 Phase D Analyzer 面板 sticky 语义
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
