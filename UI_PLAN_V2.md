@@ -360,7 +360,80 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第二轮）
+### 进度总览（更新于 2026-10-14，第三轮）
+
+| Phase | 内容 | 状态 | 提交 |
+|---|---|---|---|
+| A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | ✅ **完成** | `25ccd25` `3f03c6b` `837cabd` `04fb573` `799a706` |
+| B | 布局改造 | 🟡 **进行中**（B-2/B-3 完成，B-1/B-4 待做） | `4919fa8` `4cd4e08` `1eacead` |
+| C | 控件改造（旋钮四态 / BandLevelDot / RangeSlider / SegButton） | ⬜ 未开始 | — |
+| D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ⬜ 未开始 | — |
+| E | 打磨（blur / 停 Timer / 投影） | ⬜ 未开始 | — |
+
+---
+
+## 8.1 每一步的"表现对齐"记录（Pro-MB / Future MB 对照）
+
+> 这一节按目标要求记录：**每一步改的是声音/操作上的什么表现，对齐的是哪个参考插件的什么行为**。
+> 非代码细节，只看用户能感知的结果。
+
+### Phase A — 动画与结构地基
+
+| 改动 | 声音/操作上的表现变化 | 对齐对象 |
+|---|---|---|
+| **A1 抽屉旋钮改用 `linkedAnim_`** | LINKED CONTROL 抽屉的 5 个旋钮从"瞬间跳到位置"变成**随面板一起滑入/滑出**；关抽屉时旋钮先随面板下沉再消失 | Pro-MB 的所有浮层（band panel / settings / help）都是滑入而非瞬现 |
+| **A2 光标改时间驱动** | 频率输入框和旋钮内嵌编辑框的光标按**固定 500ms 半周期**闪烁，不再随重绘率狂闪（原来 60fps 下以 30Hz 闪） | 两者都没有可见光标闪烁问题；这是修自家 bug，对齐"输入框光标行为可预期"这一基本预期 |
+| **A3 layout 加 1px 死区** | 抽屉滑入动画期间不再每帧重排 5 个旋钮，**消除 1px 量化抖动**；CPU 占用下降 | Pro-MB 旋钮在浮层滑入时位置平滑无抖动 |
+| **A4 删重复 `drawDrawer`** | 抽屉区域不再 alpha 双重混合（原来偏深偏灰） | — （修自家 bug） |
+| **参数查找缓存** | 纯性能：鼠标操作时的参数查找从"79 个线性扫描 + dynamic_cast"变成 O(1)。**可感知效果是拖动旋钮/滑杆时掉帧减少** | Pro-MB 的参数读写是直接索引 |
+| **Tween 替换指数平滑** | 所有动效有了**明确的结束时刻**，手感从"发糯、永远在追"变成"快出慢停"；这也是后续能停 Timer 的前提 | Pro-MB 的 `transition:.25s ease`（cubic-bezier） |
+| **选中填充 / 按钮列 hover / BYP 渐暗 / 分割线变色** | 四类状态从**硬跳**变成渐变：选段时分区填充 0.05→0.10 淡入；S/M/BYP/Δ 按钮列 hover 淡入、移出淡出；旁通段渐暗到 45%；分割线 hover 时灰→主题色渐变 | Pro-MB："small solo and mute buttons will appear"（hover 淡入）；"the band controls are dimmed"（旁通渐暗） |
+
+### Phase B — 布局改造（进行中）
+
+| 改动 | 声音/操作上的表现变化 | 对齐对象 |
+|---|---|---|
+| **B-2 交叉点手柄移到底部 + 手柄内显示频率** | 分割线抓取手柄从绘图区中部（y=500）移到**绘图区底缘**，且**频率值直接写在手柄里**——不用 hover 出 tooltip 也知道当前分频点；手柄加宽到 46px 更好抓；整条分割线仍可拖 | **Pro-MB**：crossover handle 在频谱底部，手柄上直接标频率 |
+| **B-2 hit-test 加宽** | 底部手柄命中区从 ±4px 加到 ±23px，**抓取容错大幅提升**；竖线本身仍全高可抓 | Pro-MB：分割线任意位置可拖 |
+| **B-3 顶栏/全局条改半透明玻璃** | 顶栏与底栏从"不透明色带"变成**压在频谱之上的半透明条**，频谱从它们下面透出来——界面从"三个拼块"变成"一整块频谱" | **Pro-MB**：顶栏（logo/频段按钮/Analyzer）与底栏（Phase Mode/OS/Lookahead/Spectral/IN/OUT/MIX）都是半透明压层 |
+| **B-3 移除绘图区上下硬边框** | 原来把频谱区框成盒子的两条 1px 硬线删除，**频谱全出血**铺满窗口 | **Pro-MB**：频谱铺满，无绘图区边框 |
+| **（附带）修复频谱 z-order 回归** | 见下方"回归记录"——不修则**播音频时频谱会盖住 EQ 曲线、双刻度、分割线、段名、电平表** | Pro-MB 的图层顺序：频谱在最底，曲线/刻度/控件在其上 |
+
+### Phase B 待做
+
+| 项 | 预期表现 | 对齐对象 |
+|---|---|---|
+| B-1 `DisplayCanvas` 抽取 | 纯结构，无可感知表现变化 | — |
+| B-4 右增益刻度贴紧电平表 | 增益刻度与 IN/OUT 电平表紧邻，读压缩量时视线不用横跳 | Pro-MB：增益刻度贴电平表 |
+
+### Phase C/D/E 待做（对齐目标）
+
+| 项 | 预期表现 | 对齐对象 |
+|---|---|---|
+| 旋钮 BACK/OVERLAY 分层 + 刻度环 + 四态 | 旋钮外圈出现**带底部缺口的刻度环**；拖动时帽转暖色、弧加粗（ROTATE 态）；hover 时略亮（ACTIVE 态） | **Pro-MB**：`KNOBLARGEBACK*` 预渲染刻度环 + `Overlay{NORMAL,ACTIVE,DOWN,ROTATE}` 四态 |
+| `BandLevelDot` + 圆形电平表 | 频段电平点外圈显示**该段实时检测电平环**，不用开面板就知道每段在被什么驱动 | **Pro-MB**：Threshold 旋钮外圈圆形电平表 |
+| sticky 面板语义 | 悬停 Analyzer/Output/LINKED 按钮→面板打开；单击→面板**变 sticky** 不自动消失；再点收起 | **Pro-MB**：hover-open / click-sticky |
+| 拖拽多选 + 自动扩档 | 在显示背景上点击拖拽→**框选多个频段**；拖到显示范围外→量程**自动扩展** | **Pro-MB**："click and drag across the display background to quickly select multiple bands" |
+| Alt+拖 OUTPUT = makeup gain | 按住 Alt 拖 OUTPUT 旋钮→**自动校正当前立体声模式的声像** | **Pro-MB**：Alt-drag Output = makeup gain |
+| MIDI Learn | 点 MIDI Learn→所有可学控件高亮→点控件显示关联控制器号 | **Pro-MB**：MIDI learn 流程 |
+| backdrop blur | 玻璃条真正"毛"起来 | Pro-MB 位图预渲染投影 / Future MB shader |
+
+---
+
+## 8.2 回归记录（抽取过程中引入、已修复）
+
+> 这些是重构引入的真 bug，记录在此以免未来重犯。**两条都是测试没抓到的**。
+
+| # | 回归 | 为什么测试没抓到 | 怎么修的 |
+|---|---|---|---|
+| R1 | 四个子组件只 `addAndMakeVisible` 没给 bounds → 0×0 → JUCE 按子组件自身 bounds 裁剪 → **抽屉面板、Popover 面板、整个频谱层在实际插件里不渲染** | 当时只验证几何和 APVTS 值，不渲染像素 | 所有子组件 `setBounds(getLocalBounds())`；`paintForTest` 补画子组件。T39.17 抓到（差分 5358→23984） |
+| R2 | 频谱做成子组件后画在父组件 `paint()` **之后** → **盖住 Range 钟型、EQ 曲线、双刻度、分割线、段名、电平表** | **离线测试不喂音频**，`SpectrumEngine` 无帧，Path 为空，`paint()` 直接 early-return，所有像素断言照过 | `SpectrumView` 不再继承 `Component`，改由 `DisplayView::paint()` 在第 4 位直接调用（与抽取前 `drawSpectrum(g)` 同位置）。z-order 约束写进 `SpectrumView.h` 头部注释 |
+
+> **教训**：像素回归测试必须在**有音频帧**的条件下也跑一遍，否则所有"数据驱动"的图层
+> （频谱、电平表、曲线）都是空的，任何 z-order / 可见性回归都测不出来。
+> 这条已列入 Phase E 的验收补充。
+
+---
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -428,18 +501,19 @@ T39 频谱 17 项均通过）。
 5. **验收**：`DisplayView.cpp ≤ 900 行` ⬜ 未达标（实际 1936，理由见上方说明）；
    `CrunchMBTests` 全绿 ✅（287/0）
 
-### Phase B — 布局改造（4-5 天）⬜ 未开始
+### Phase B — 布局改造（4-5 天）🟡 进行中（B-2 / B-3 完成）
 
 > 建议把 `DisplayCanvas`（Grid+Scales+Crossovers+Partitions，约 −600 行）的抽取
 > **并入本 Phase**：那时坐标体系本来就要因"频谱全出血 + 全高分割线"而重写，
 > 一次搬到位，避免现在拆完 Phase B 再拆第二次。
 
-1. 频谱**全出血**：移除绘图区边框，分区/曲线/刻度全高绘制
-2. 顶栏/底栏改玻璃条（半透明 + 无模糊，模糊留到 Phase E）
-3. 分割线改**全高竖直分割线**，底部加手柄 + 频率标签（新建 `DividerHandle`）
-4. 右增益刻度贴紧电平表（新建 `GainScale`）
-5. 选中段改 accent 低 alpha 填充（配 N3 淡入）
-6. **验收**：静态布局与 §2 线框一致；像素回归测试通过
+1. 频谱**全出血**：移除绘图区边框，分区/曲线/刻度全高绘制 ✅（`1eacead`）
+2. 顶栏/底栏改玻璃条（半透明 + 无模糊，模糊留到 Phase E） ✅（`1eacead`）
+3. 分割线改**全高竖直分割线**，底部加手柄 + 频率标签 ✅（`4919fa8`，未拆独立 `DividerHandle`，直接改在 `drawCrossovers` 内）
+4. 右增益刻度贴紧电平表（新建 `GainScale`） ⬜ 未做
+5. 选中段改 accent 低 alpha 填充（配 N3 淡入） ✅（Phase A 已随 `selT_` 落地）
+6. **验收**：静态布局与 §2 线框一致；像素回归测试通过 🟡（287/0 全绿；§2 线框的
+   `DividerHandle` / `GainScale` 独立组件未建，功能已内联实现）
 
 ### Phase C — 控件改造（4-5 天）
 
