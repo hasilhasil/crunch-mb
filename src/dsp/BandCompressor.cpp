@@ -128,8 +128,19 @@ void BandCompressor::processGain (float left, float right, float& gainL, float& 
     float levelL = peakL, levelR = peakR;
     if (useRms_)
     {
-        rmsEnvelope_  = rmsEnvelope_  * rmsCoeff_ + peakL * peakL * (1.0f - rmsCoeff_);
-        rmsEnvelopeR_ = rmsEnvelopeR_ * rmsCoeff_ + peakR * peakR * (1.0f - rmsCoeff_);
+        // Phase：link=1 时两个 RMS 包络也必须同步，否则后面的 detL/detR
+        // 会因包络历史不同而分叉，立体声镜像依旧不严格。
+        if (stereoLink_ >= 0.999f)
+        {
+            const float p = juce::jmax (peakL, peakR);   // 较响者驱动
+            rmsEnvelope_  = rmsEnvelope_  * rmsCoeff_ + p * p * (1.0f - rmsCoeff_);
+            rmsEnvelopeR_ = rmsEnvelope_;
+        }
+        else
+        {
+            rmsEnvelope_  = rmsEnvelope_  * rmsCoeff_ + peakL * peakL * (1.0f - rmsCoeff_);
+            rmsEnvelopeR_ = rmsEnvelopeR_ * rmsCoeff_ + peakR * peakR * (1.0f - rmsCoeff_);
+        }
         levelL = std::sqrt (rmsEnvelope_);
         levelR = std::sqrt (rmsEnvelopeR_);
     }
@@ -144,11 +155,31 @@ void BandCompressor::processGain (float left, float right, float& gainL, float& 
     const float targetL = computeTargetGainDb (lastDetectorDb_);
     const float targetR = computeTargetGainDb (lastDetectorDbR_);
 
-    // dB 域单极点平滑：目标更压缩时 attack，否则 release（63%@tau）
-    const float coeffL = (targetL < smoothedGainDb_)  ? attackCoeff_ : releaseCoeff_;
-    const float coeffR = (targetR < smoothedGainDbR_) ? attackCoeff_ : releaseCoeff_;
-    smoothedGainDb_  += (targetL - smoothedGainDb_)  * (1.0f - coeffL);
-    smoothedGainDbR_ += (targetR - smoothedGainDbR_) * (1.0f - coeffR);
+    // Phase（立体声镜像修复）：link=1 时两声被较响者驱动，targetL == targetR。
+    // 但原来的系数选择比较的是**各自独立的平滑状态**：
+    //     coeffL = (targetL < smoothedGainDb_)
+    //     coeffR = (targetR < smoothedGainDbR_)
+    // 一旦左右历史不同（例如 link 刚从 0 调到 1，或参数刚变更），
+    // 就会出现"左走 attack、右走 release"——同一时刻两条包络用不同时间常数，
+    // 立体声镜像不再严格匹配（可闻的轻微宽度抖动）。
+    // 修法：link ≥ 0.999 时共用同一组系数与同一状态，保证镜像一致；
+    //       link 更低时保留原有独立行为（用户明确要左右分离）。
+    const bool fullyLinked = stereoLink_ >= 0.999f;
+
+    if (fullyLinked)
+    {
+        const float coeff = (targetL < smoothedGainDb_) ? attackCoeff_ : releaseCoeff_;
+        smoothedGainDb_  += (targetL - smoothedGainDb_)  * (1.0f - coeff);
+        smoothedGainDbR_  = smoothedGainDb_;      // 强制镜像一致
+    }
+    else
+    {
+        // dB 域单极点平滑：目标更压缩时 attack，否则 release（63%@tau）
+        const float coeffL = (targetL < smoothedGainDb_)  ? attackCoeff_ : releaseCoeff_;
+        const float coeffR = (targetR < smoothedGainDbR_) ? attackCoeff_ : releaseCoeff_;
+        smoothedGainDb_  += (targetL - smoothedGainDb_)  * (1.0f - coeffL);
+        smoothedGainDbR_ += (targetR - smoothedGainDbR_) * (1.0f - coeffR);
+    }
 
     gainL = juce::Decibels::decibelsToGain (smoothedGainDb_);
     gainR = juce::Decibels::decibelsToGain (smoothedGainDbR_);

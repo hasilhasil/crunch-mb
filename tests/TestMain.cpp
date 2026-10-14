@@ -6277,6 +6277,135 @@ static void testSpectrumDecayNoAliasing()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T58 Phase：立体声链接 = 1 时左右增益严格镜像
+//   原来 link=1 时 detL == detR（被较响者驱动），但 attack/release 系数的
+//   选择比较的是各自独立的平滑状态 smoothedGainDb_ / smoothedGainDbR_。
+//   一旦左右历史不同（link 刚从 0 调到 1、或参数刚变更），会出现
+//   "左走 attack、右走 release"——同一时刻两条包络用不同时间常数，
+//   立体声镜像不再严格匹配（可闻的宽度抖动）。
+// ------------------------------------------------------------
+static void testStereoLinkMirror()
+{
+    std::cout << "\n--- T58 Phase 立体声链接镜像 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T58.0 处理器实例可访问", "");
+
+    // 让 band0 明显压缩（低阈值 + 高比率 + 快 attack）
+    mb->setParamPhysicalForTest ("band0Threshold", -40.0f);
+    mb->setParamPhysicalForTest ("band0Ratio", 12.0f);
+    mb->setParamPhysicalForTest ("band0Attack", 1.0f);
+    mb->setParamPhysicalForTest ("band0Release", 50.0f);
+    // 只保留 band0 工作（其余 bypass），隔离变量
+    for (int i = 1; i < 4; ++i)
+        mb->setParamPhysicalForTest ("band" + juce::String (i) + "Mix", 0.0f);
+
+    const int nn = 512;
+    juce::AudioBuffer<float> buf (2, nn);
+    juce::MidiBuffer midi;
+
+    // ① link = 100%（默认）：喂**不对称**信号让左右历史分叉，然后喂相同输入
+    //    并给它足够块数收敛，左右增益必须最终逐样本相同。
+    //    ⚠️ 初版只喂 1 块就断言——不对称历史造成的包络差还没收敛，必然失败。
+    {
+        mb->setParamPhysicalForTest ("band0StereoLink", 100.0f);
+        for (int t = 0; t < 120; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                buf.setSample (0, i, 0.8f * (float) std::sin (6.283185 * 220.0 * kk / 48000.0));
+                buf.setSample (1, i, 0.3f * (float) std::sin (6.283185 * 330.0 * kk / 48000.0));
+            }
+            mb->processBlock (buf, midi);
+        }
+        // 改喂相同输入，跑足够块数让两条包络收敛到同一状态
+        for (int t = 0; t < 40; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (1000 + t * nn + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 200.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+        float dIdentical = 0.0f;
+        for (int i = 0; i < nn; ++i)
+            dIdentical = juce::jmax (dIdentical,
+                std::abs (buf.getSample (0, i) - buf.getSample (1, i)));
+        std::cout << "  link=100% 同输入左右最大差 = " << dIdentical << std::endl;
+        check (dIdentical < 1.0e-6f, "T58.1 link=100% 时相同输入 → 左右输出相同",
+               juce::String (dIdentical));
+    }
+
+    // ② link 从 0 突变到 100% 后，左右仍应镜像（这是原 bug 的触发路径）
+    {
+        mb->setParamPhysicalForTest ("band0StereoLink", 0.0f);
+        // 先用不对称信号把左右历史拉开
+        for (int t = 0; t < 60; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                buf.setSample (0, i, 0.9f * (float) std::sin (6.283185 * 150.0 * kk / 48000.0));
+                buf.setSample (1, i, 0.2f * (float) std::sin (6.283185 * 900.0 * kk / 48000.0));
+            }
+            mb->processBlock (buf, midi);
+        }
+        // 突然切到全链接，再喂相同输入
+        mb->setParamPhysicalForTest ("band0StereoLink", 100.0f);
+        for (int t = 0; t < 20; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (5000 + t * nn + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 200.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+        float dAfterSwitch = 0.0f;
+        for (int i = 0; i < nn; ++i)
+            dAfterSwitch = juce::jmax (dAfterSwitch,
+                std::abs (buf.getSample (0, i) - buf.getSample (1, i)));
+        std::cout << "  link 0→100% 后左右最大差 = " << dAfterSwitch << std::endl;
+        check (dAfterSwitch < 1.0e-6f,
+               "T58.2 link 0→100% 突变后左右仍严格镜像（原 bug 触发路径）",
+               juce::String (dAfterSwitch));
+    }
+
+    // ③ link = 0 时左右应独立（不对称输入 → 不对称输出）
+    {
+        mb->setParamPhysicalForTest ("band0StereoLink", 0.0f);
+        for (int t = 0; t < 60; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                buf.setSample (0, i, 0.9f * (float) std::sin (6.283185 * 150.0 * kk / 48000.0));
+                buf.setSample (1, i, 0.15f * (float) std::sin (6.283185 * 900.0 * kk / 48000.0));
+            }
+            mb->processBlock (buf, midi);
+        }
+        float dAsym = 0.0f;
+        for (int i = 0; i < nn; ++i)
+            dAsym = juce::jmax (dAsym,
+                std::abs (buf.getSample (0, i) - buf.getSample (1, i)));
+        std::cout << "  link=0% 不对称输入左右最大差 = " << dAsym << std::endl;
+        check (dAsym > 1.0e-3f, "T58.3 link=0% 时左右独立（不对称输入有差）",
+               juce::String (dAsym));
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6341,6 +6470,7 @@ int main()
     testChoiceIndexSemantics();    // T55 Phase Choice 参数索引语义
     testLinearFifoZeroAlloc();     // T56 Phase Linear FIFO 零分配
     testSpectrumDecayNoAliasing(); // T57 Phase 频谱衰减帧线程安全
+    testStereoLinkMirror();        // T58 Phase 立体声链接镜像
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
