@@ -10,6 +10,7 @@
 #include "Anim.h"
 #include "Knob.h"
 #include "LinkedDrawer.h"
+#include "BandPopover.h"
 #include "../PluginProcessor.h"
 #include "../dsp/SpectrumEngine.h"
 
@@ -107,13 +108,20 @@ public:
                                         : juce::Rectangle<int>();
     }
     // 测试钩子（T36）
-    bool isPopoverOpenForTest() const { return popoverOpen_; }
-    int  getPopoverBandForTest() const { return popoverBand_; }
+    bool isPopoverOpenForTest() const { return bandPopover_ != nullptr && bandPopover_->isOpen(); }
+    int  getPopoverBandForTest() const { return bandPopover_ != nullptr ? bandPopover_->band() : -1; }
     int  getSelectedBandForTest() const { return selectedBand_; }
-    double getPopoverValueForTest (int k) const { return popoverValues_[(size_t) k]; }
-    void syncPopoverFromParamsForTest() { syncPopoverFromParams(); }
+    double getPopoverValueForTest (int k) const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->popoverValueForTest (k) : 0.0;
+    }
+    void syncPopoverFromParamsForTest() { if (bandPopover_) bandPopover_->syncFromParams(); }
     void openLinkedDrawerForTest();
-    juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
+    juce::Rectangle<float> popoverRectForTest() const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->popoverRectForTest()
+                                       : juce::Rectangle<float>();
+    }
     // T38 Analyzer 测试钩子
     bool hitTestAnalyzerButtonForTest (float x, float y) const
     { return hitTestAnalyzerButton (juce::Point<float> (x, y)); }
@@ -130,11 +138,11 @@ public:
     void  setAnalyzerTiltForTest (float v)    { analyzerTilt_ = v; }
     void  setAnalyzerFreezeForTest (bool v)   { analyzerFreeze_ = v; }
     void  applyAnalyzerSettingsForTest()      { applyAnalyzerSettings(); }
-    // T40 Popover 控件测试钩子
-    void applyPopoverKnobForTest (int k, double v) { applyPopoverKnob (k, v); }
-    juce::Rectangle<float> popSliderRectForTest (int k) const { return popSliderRect (k); }
-    juce::Rectangle<float> popExpertRectForTest() const { return popExpertRect(); }
-    bool isPopoverExpertOpenForTest() const { return popoverExpertOpen_; }
+    // T40 Popover 控件测试钩子 —— Phase A：经 BandPopover 转发
+    void applyPopoverKnobForTest (int k, double v);
+    juce::Rectangle<float> popSliderRectForTest (int k) const;
+    juce::Rectangle<float> popExpertRectForTest() const;
+    bool isPopoverExpertOpenForTest() const;
     bool  hasSpectrumFrameForTest() const     { return spectrumHasFrame_; }
     bool  spectrumPathsReadyForTest() const
     {
@@ -334,6 +342,10 @@ private:
     void setParamNorm (const juce::String& id, float norm) const;
     void setParamPhysical (const juce::String& id, float physical) const;   // 物理值（偏斜参数用）
     bool getParamBool (const juce::String& id) const;
+    float getParamNorm (const juce::String& id) const;
+    float getParamPhysical (const juce::String& id) const;
+    float paramRangeMinOf (const juce::String& id) const;
+    float paramRangeMaxOf (const juce::String& id) const;
     void setBandParamNorm (const juce::String& id, float norm) const;
     int  hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const;
     int  hitTestDivider (juce::Point<float> p) const;
@@ -389,52 +401,24 @@ private:
     void applyAnalyzerSettings();
     bool hitTestAnalyzerButton (juce::Point<float> p) const;
 
-    // ---- Phase 5.3.2：Popover 控件（5 真旋钮 + 3 滑杆行 + EXPERT） ----
-    static constexpr int kPopKnobs = 5;
-    std::array<std::unique_ptr<Knob>, kPopKnobs> popKnobs_;
-    bool  popKnobsReady_ = false;
-    bool  popoverExpertOpen_ = false;
-    int   popSliderDrag_ = -1;
-    float popSliderDragX0_ = 0.0f, popSliderDragV0_ = 0.0f;
+    // ---- Phase 5.2 / 5.3：抽屉与 Popover 组件（UI_PLAN_V2 §3.2）----
+    // Phase A：两者均已拆为独立组件。DisplayView 只持 unique_ptr，
+    // 负责开合仲裁（O6 互斥）、命中分发、鼠标坐标转发、每帧 advance()。
+    std::unique_ptr<LinkedDrawer> linkedDrawer_;
+    std::unique_ptr<BandPopover>  bandPopover_;
     juce::Point<float> lastMousePos_ { -1.0f, -1.0f };
-    void  applyPopSlider (int k, double v);    void  ensurePopoverKnobs();
-    void  layoutPopoverKnobs();
-    void  applyPopoverKnob (int k, double v);
-    juce::Rectangle<float> popKnobRect (int k) const;
-    juce::Rectangle<float> popSliderRect (int k) const;
-    bool  hitTestPopSlider (juce::Point<float> p, int& kOut) const;
-    juce::String popParamId (int k) const;          // 该旋钮对应的 APVTS 参数 ID
-    juce::Rectangle<float> popExpertRect() const;
+    juce::Rectangle<float> displayRangeBtn_;
+
     bool  isAllBypassed() const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;
     void openDisplayRangeMenu();
-    // ---- Phase 5.2 LINKED CONTROL 抽屉（§5.2 / O2-A / O6-方案1） ----
-    // Phase A：抽屉已拆为独立组件 LinkedDrawer（UI_PLAN_V2 §3.2），
-    // DisplayView 只持有一个 unique_ptr 并转发开/关与命中分发。
-    std::unique_ptr<LinkedDrawer> linkedDrawer_;
-    bool  popoverOpen_ = false;                    // O6 互斥（5.3 用）
-    int   popoverBand_ = -1;
-    std::array<double, 5> popoverValues_ {};       // Threshold/Range/Attack/Release/Mix
-    std::array<float,  5> popoverNormalisedValue_ {};   // 归一化 0..1（旋钮弧用）
-    // Ratio / Knee(1=soft) / Ext / Detector / (Lookahead 占位)
-    std::array<double, 5> popoverSliders_ { 4.0, 1.0, 0.0, 0.0, 0.0 };
-    // ---- Phase 5.3 Popover 几何/交互 ----
-    float popoverAnim_ = 0.0f;                     // 0=收起 1=展开
-    juce::Rectangle<float> popoverRect() const;
-    bool hitTestPopoverClose (juce::Point<float> p) const;
+    /** O6 方案1：抽屉与 Popover 互斥。 */
     void togglePopover (bool open);
-    void drawPopover (juce::Graphics& g);
-    void drawPopoverTopBar (juce::Graphics& g);
-    void drawPopoverKnobs (juce::Graphics& g);
-    void syncPopoverFromParams();
-    void syncPopoverSliders();
-    float getParamNorm (const juce::String& id) const;
-    float paramRangeMinOf (const juce::String& id) const;
-    float paramRangeMaxOf (const juce::String& id) const;
-    static juce::String fmtHzShort (float hz);
-    float getParamPhysical (const juce::String& id) const;
-    juce::Rectangle<float> displayRangeBtn_;
+    /** 打开 Popover 并把目标段与几何边界传给它。 */
+    void openPopoverForBand (int band);
+    /** 段的像素左右边界（供 Popover 水平居中）。 */
+    void bandEdgesPx (int band, float& leftX, float& rightX) const;
 
     // ---- Phase 4.3：仿 EQ 动态曲线 ----
     static constexpr int kCurvePoints = 241;

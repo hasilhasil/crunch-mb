@@ -1,0 +1,510 @@
+#include "BandPopover.h"
+#include "../PluginProcessor.h"
+
+// ============================================================
+// BandPopover 实现（UI_SPEC §6，Pro-MB 样式）
+// 从 DisplayView 拆出：约 −400 行。DisplayView 只负责开合仲裁与命中分发。
+// ============================================================
+
+namespace
+{
+    // 设计稿基准（与 mockup v9 一致）
+    constexpr float kDesignW = 920.0f;
+    constexpr float kDesignH = 620.0f;
+    constexpr float kTopStripH = 30.0f;
+    constexpr float kGlobalBarH = 32.0f;
+    constexpr float kDrawerBtnH = 29.0f;
+}
+
+BandPopover::BandPopover (CrunchMBAudioProcessor& processor)
+    : juce::Component ("CrunchMBBandPopover"), proc_ (processor)
+{
+    setInterceptsMouseClicks (false, false);   // 命中由 DisplayView 统一分发
+    buildParamCache();
+}
+
+BandPopover::~BandPopover() = default;
+
+void BandPopover::buildParamCache()
+{
+    paramMap_.clear();
+    for (auto* p : proc_.getParameters())
+        if (auto* pw = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            paramMap_[pw->getParameterID()] = pw;
+}
+
+void BandPopover::setTheme (MBTheme::Theme t)
+{
+    pal_ = MBTheme::palette (t);
+    for (auto& kb : knobs_)
+        if (kb != nullptr) kb->setPalette (pal_);
+    repaint();
+}
+
+void BandPopover::setHostBounds (juce::Rectangle<int> hostBounds)
+{
+    if (hostBounds_ == hostBounds)
+        return;
+    hostBounds_ = hostBounds;
+    layoutKnobs (true);
+    repaint();
+}
+
+void BandPopover::setBand (int band)
+{
+    if (band == band_)
+        return;
+    band_ = juce::jlimit (0, 3, band);
+    syncFromParams();
+    layoutKnobs (true);
+    repaint();
+}
+
+void BandPopover::setBandEdges (float leftX, float rightX)
+{
+    bandLeftX_ = leftX;
+    bandRightX_ = rightX;
+    layoutKnobs (true);
+    repaint();
+}
+
+// ---------------- 几何 ----------------
+juce::Rectangle<float> BandPopover::popoverRect() const
+{
+    const float W = (float) hostBounds_.getWidth();
+    const float H = (float) hostBounds_.getHeight();
+    const float pw = W * (472.0f / kDesignW);
+    const float ph = H * (200.0f / kDesignH);
+
+    // 随分段居中：取该段左右边界的像素中点
+    const float midX = (bandLeftX_ + bandRightX_) * 0.5f;
+    float px = midX - pw * 0.5f;
+    px = juce::jlimit (W * (8.0f / kDesignW), W - pw - W * (8.0f / kDesignW), px);
+
+    const float plotTop    = H * (kTopStripH / kDesignH);
+    const float plotBottom = H - H * (kGlobalBarH / kDesignH) - H * (kDrawerBtnH / kDesignH);
+    // 垂直位置：绘图区 58% 处
+    const float py = plotTop + (plotBottom - plotTop) * 0.58f - ph * 0.5f;
+    return juce::Rectangle<float> (px, py, pw, ph);
+}
+
+juce::Rectangle<float> BandPopover::popKnobRect (int k) const
+{
+    const auto r = popoverRect();
+    const float unitW = (r.getWidth() - r.getWidth() * (16.0f / 472.0f)) / (float) kPopKnobs;
+    const float x = r.getX() + r.getWidth() * (8.0f / 472.0f) + unitW * (float) k + 2.0f;
+    return juce::Rectangle<float> (x, r.getY() + r.getHeight() * (34.0f / 200.0f),
+                                   unitW - 4.0f, r.getHeight() * (74.0f / 200.0f));
+}
+
+juce::Rectangle<float> BandPopover::popSliderRect (int k) const
+{
+    const auto r = popoverRect();
+    const float rowW = (r.getWidth() - r.getWidth() * (20.0f / 472.0f)) / 3.0f;
+    const float x0 = r.getX() + r.getWidth() * (10.0f / 472.0f) + rowW * (float) k;
+    return juce::Rectangle<float> (x0, r.getY() + r.getHeight() * (142.0f / 200.0f),
+                                   rowW - r.getWidth() * (10.0f / 472.0f),
+                                   r.getHeight() * (22.0f / 200.0f));
+}
+
+juce::Rectangle<float> BandPopover::expertRect() const
+{
+    const auto r = popoverRect();
+    return juce::Rectangle<float> (r.getX() + r.getWidth() * (10.0f / 472.0f),
+                                   r.getBottom() - r.getHeight() * (18.0f / 200.0f),
+                                   r.getWidth() * (140.0f / 472.0f), 12.0f);
+}
+
+// ---------------- 开合 / 动画 ----------------
+void BandPopover::setOpen (bool open)
+{
+    if (open == open_)
+        return;
+    open_ = open;
+    if (open)
+    {
+        if (band_ < 0) band_ = 0;
+        ensureKnobs();
+        syncFromParams();
+    }
+    tween_.start (juce::Time::getMillisecondCounter(), open ? 1.0f : 0.0f,
+                  Anim::kPopoverMs, anim_);
+    animTarget_ = open ? 1.0f : 0.0f;
+    layoutKnobs (false);
+    repaint();
+}
+
+bool BandPopover::advance (double nowMs)
+{
+    anim_ = tween_.value (nowMs);
+    if (std::abs (anim_ - animTarget_) < Anim::kSnapEps)
+    {
+        anim_ = animTarget_;
+        tween_.snapTo (animTarget_);
+    }
+    layoutKnobs (false);
+    if (! open_ && anim_ <= Anim::kSnapEps)
+        for (auto& kb : knobs_)
+            if (kb != nullptr) kb->setVisible (false);
+    return ! tween_.done (nowMs);
+}
+
+void BandPopover::snapToCurrent()
+{
+    anim_ = animTarget_ = open_ ? 1.0f : 0.0f;
+    tween_.snapTo (anim_);
+    if (open_) { ensureKnobs(); syncFromParams(); }
+    layoutKnobs (true);
+}
+
+// ---------------- 旋钮 ----------------
+void BandPopover::ensureKnobs()
+{
+    if (knobsReady_)
+        return;
+
+    // 参数范围与显示格式（§6.2：旋钮下显示范围标注）
+    struct Cfg { double mn, mx, iv, def; int dec; const char* suf; const char* label; };
+    const Cfg cfgs[kPopKnobs] = {
+        { -60.0,    0.0, 0.1, -20.0, 1, "dB", "THRESHOLD" },
+        { -30.0,   30.0, 0.1,  -6.0, 1, "dB", "RANGE"     },
+        {   0.1,  200.0, 0.1,  10.0, 1, "ms", "ATTACK"    },
+        {  10.0, 1000.0, 0.1, 100.0, 1, "ms", "RELEASE"   },
+        {   0.0,  100.0, 1.0, 100.0, 0, "%",  "MIX"       },
+    };
+
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        auto* kb = new Knob();
+        kb->setRange (cfgs[k].mn, cfgs[k].mx, cfgs[k].iv);
+        kb->setDefaultValue (cfgs[k].def);
+        kb->setValue (cfgs[k].def, false);
+        kb->setLabel (cfgs[k].label);
+        kb->setValueSuffix (cfgs[k].suf);
+        kb->setDecimals (cfgs[k].dec);
+        kb->setKnobDiameter (38.0f);
+        kb->setShowLabel (true);
+        kb->setPalette (pal_);
+        const int kk = k;
+        kb->onValueChange = [this, kk] (double v) { applyPopoverKnob (kk, v); };
+        addAndMakeVisible (kb);
+        kb->setVisible (false);
+        knobs_[(size_t) k].reset (kb);
+    }
+    knobsReady_ = true;
+}
+
+void BandPopover::layoutKnobs (bool force)
+{
+    if (! knobsReady_)
+        return;
+    const float a = juce::jlimit (0.0f, 1.0f, anim_);
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        if (knobs_[(size_t) k] == nullptr)
+            continue;
+        const auto rc = popKnobRect (k);
+        const float y = rc.getY() + (1.0f - a) * rc.getHeight();
+        const int nx = (int) rc.getX(), ny = (int) y;
+        auto* kb = knobs_[(size_t) k].get();
+        if (force || kb->getX() != nx || kb->getY() != ny
+                 || kb->getWidth() != (int) rc.getWidth() || kb->getHeight() != (int) rc.getHeight())
+            kb->setBounds (nx, ny, (int) rc.getWidth(), (int) rc.getHeight());
+        kb->setVisible (open_ || anim_ > 0.001f);
+    }
+    if (! open_ && anim_ <= 0.001f)
+        for (auto& kb : knobs_)
+            if (kb != nullptr) kb->setVisible (false);
+}
+
+void BandPopover::applyPopoverKnob (int k, double v)
+{
+    const int b = (band_ >= 0) ? band_ : 0;
+    static const juce::String ids[kPopKnobs] = {
+        "Threshold", "Range", "Attack", "Release", "Mix"
+    };
+    setParamPhysical ("band" + juce::String (b) + ids[juce::jlimit (0, kPopKnobs - 1, k)], (float) v);
+    syncFromParams();
+}
+
+// ---------------- 滑杆 ----------------
+void BandPopover::beginSliderDrag (int k, float mouseX)
+{
+    sliderDrag_ = k;
+    sliderDragX0_ = mouseX;
+    sliderDragV0_ = sliders_[(size_t) juce::jlimit (0, 4, k)];
+}
+
+void BandPopover::dragSlider (int k, float mouseX)
+{
+    if (sliderDrag_ != k)
+        return;
+    const float w = popSliderRect (k).getWidth();
+    float frac = (float) sliderDragV0_ + (mouseX - sliderDragX0_) / juce::jmax (1.0f, w);
+    frac = juce::jlimit (0.0f, 1.0f, frac);
+
+    if (k == 0)
+        applySlider (0, 1.0 + (double) frac * 19.0);      // ratio 1..20
+    else
+        applySlider (k, (double) frac);                    // knee 0..48 dB（归一化）
+}
+
+void BandPopover::endSliderDrag()
+{
+    sliderDrag_ = -1;
+}
+
+void BandPopover::applySlider (int k, double v)
+{
+    sliders_[(size_t) juce::jlimit (0, 4, k)] = v;
+    const int b = (band_ >= 0) ? band_ : 0;
+    switch (k)
+    {
+        case 0:  setParamPhysical (Param::bandRatio (b), (float) v);  break;
+        // 2026-10-14：Knee 连续 0–48 dB，直接写归一化值
+        case 1:  setParamNorm ("band" + juce::String (b) + "Knee", (float) v);  break;
+        case 2:  setParamNorm ("band" + juce::String (b) + "Ext",  v > 0.5 ? 1.0 : 0.0);     break;
+        case 3:  setParamNorm ("band" + juce::String (b) + "Detector", v > 0.5 ? 1.0 : 0.0); break;
+        default: break;   // Lookahead 是全局参数（k=4 不在此写）
+    }
+    syncFromParams();
+}
+
+// ---------------- 参数同步 ----------------
+void BandPopover::syncFromParams()
+{
+    const int b = (band_ >= 0) ? band_ : 0;
+    static const juce::String ids[kPopKnobs] = {
+        "Threshold", "Range", "Attack", "Release", "Mix"
+    };
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        const juce::String id = "band" + juce::String (b) + ids[k];
+        values_[(size_t) k] = getParamPhysical (id);
+        normValues_[(size_t) k] = juce::jlimit (0.0f, 1.0f,
+            (float) ((values_[(size_t) k] - paramRangeMinOf (id))
+                   / (double) juce::jmax (1.0e-6f, paramRangeMaxOf (id) - paramRangeMinOf (id))));
+    }
+    for (int k = 0; k < kPopKnobs; ++k)
+        if (knobs_[(size_t) k] != nullptr)
+            knobs_[(size_t) k]->setValue (values_[(size_t) k], false);
+
+    sliders_[0] = getParamPhysical (Param::bandRatio (b));
+    sliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");
+    sliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");
+    sliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");
+}
+
+void BandPopover::tickEditCursors (juce::uint32 nowMs)
+{
+    for (auto& kb : knobs_)
+        if (kb != nullptr)
+            kb->setEditCursorBlink (nowMs);
+}
+
+// ---------------- 命中测试 ----------------
+bool BandPopover::hitTestClose (juce::Point<float> p) const
+{
+    const auto r = popoverRect();
+    const float s = r.getWidth() * (22.0f / 472.0f);
+    return juce::Rectangle<float> (r.getRight() - s - r.getWidth() * (10.0f / 472.0f),
+                                   r.getY() + r.getHeight() * (8.0f / 200.0f), s, s)
+             .contains (p);
+}
+
+bool BandPopover::hitTestPanel (juce::Point<float> p) const
+{
+    return open_ && popoverRect().contains (p);
+}
+
+bool BandPopover::hitTestSlider (juce::Point<float> p, int& kOut) const
+{
+    if (! open_)
+        return false;
+    for (int k = 0; k < 3; ++k)
+        if (popSliderRect (k).contains (p)) { kOut = k; return true; }
+    return false;
+}
+
+// ---------------- 绘制 ----------------
+void BandPopover::paint (juce::Graphics& g)
+{
+    if (! open_ || anim_ < 0.004f)
+        return;
+    const float a = juce::jlimit (0.0f, 1.0f, anim_);
+    const auto r = popoverRect();
+
+    // 半透明玻璃面板 + 阴影边
+    g.setColour (juce::Colours::black.withAlpha (0.35f * a));
+    g.fillRoundedRectangle (r.translated (0.0f, r.getHeight() * (3.0f / 200.0f)),
+                            r.getWidth() * (12.0f / 472.0f));
+    g.setColour (pal_.popA.withMultipliedAlpha (a));
+    g.fillRoundedRectangle (r, r.getWidth() * (12.0f / 472.0f));
+    g.setColour (pal_.accent.withAlpha (0.5f * a));
+    g.drawRoundedRectangle (r, r.getWidth() * (12.0f / 472.0f), 1.0f);
+
+    // ---- 顶栏：⚡BYP 宏 + 段名 + 频率范围 + ✕ ----
+    {
+        const float boltS = r.getWidth() * (20.0f / 472.0f);
+        auto bolt = juce::Rectangle<float> (r.getX() + r.getWidth() * (10.0f / 472.0f),
+                                            r.getY() + r.getHeight() * (7.0f / 200.0f),
+                                            boltS, boltS);
+        g.setColour (pal_.track);
+        g.fillRoundedRectangle (bolt, r.getWidth() * (5.0f / 472.0f));
+        g.setColour (pal_.accent);
+        g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
+        g.drawText (juce::String::fromUTF8 ("\xE2\x9A\xA1"), bolt, juce::Justification::centred);
+
+        static const char* kNames[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
+        g.setColour (pal_.text);
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 12.0f));
+        g.drawText (juce::String (kNames[juce::jlimit (0, 3, band_)]) + "  "
+                    + fmtHzShort (bandLeftX_) + " - " + fmtHzShort (bandRightX_),
+                    juce::Rectangle<float> (bolt.getRight() + r.getWidth() * (8.0f / 472.0f),
+                                            r.getY() + r.getHeight() * (7.0f / 200.0f),
+                                            r.getWidth() * (300.0f / 472.0f),
+                                            r.getHeight() * (20.0f / 200.0f)),
+                    juce::Justification::centredLeft);
+
+        const float cs = r.getWidth() * (22.0f / 472.0f);
+        auto closeBtn = juce::Rectangle<float> (r.getRight() - cs - r.getWidth() * (10.0f / 472.0f),
+                                                r.getY() + r.getHeight() * (8.0f / 200.0f), cs, cs);
+        g.setColour (pal_.track);
+        g.fillRoundedRectangle (closeBtn, r.getWidth() * (6.0f / 472.0f));
+        g.setColour (pal_.text);
+        g.drawText ("\xE2\x9C\x95", closeBtn, juce::Justification::centred);
+
+        // 分隔线
+        g.setColour (pal_.grid);
+        g.fillRect (r.getX() + r.getWidth() * (10.0f / 472.0f),
+                    r.getY() + r.getHeight() * (30.0f / 200.0f),
+                    r.getWidth() - r.getWidth() * (20.0f / 472.0f), 1.0f);
+    }
+
+    // ---- 旋钮行底板 + 范围标注（弧/帽/指针由 Knob 子组件绘制）----
+    static const char* kRange[5] = { "-60..0 dB", "-30..30 dB", "0..200 ms", "10..1000 ms", "0..100 %" };
+    const float unitW = (r.getWidth() - r.getWidth() * (16.0f / 472.0f)) / (float) kPopKnobs;
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        const auto kr = popKnobRect (k);
+        const float cx = kr.getCentreX();
+        const bool hot = kr.contains (lastMousePos_);
+        g.setColour (pal_.track.withAlpha ((hot ? 0.50f : 0.28f) * a));
+        g.fillRoundedRectangle (kr.expanded (r.getWidth() * (2.0f / 472.0f)),
+                                r.getWidth() * (6.0f / 472.0f));
+        g.setColour (pal_.dim.withMultipliedAlpha (a));
+        g.setFont (MBTheme::font (MBTheme::regular(), 8.5f));
+        g.drawText (kRange[k],
+                    juce::Rectangle<float> (cx - unitW * 0.5f, kr.getBottom() - r.getHeight() * (12.0f / 200.0f),
+                                            unitW, 11.0f),
+                    juce::Justification::centredTop);
+    }
+
+    // ---- 滑杆行：RATIO / KNEE(0-48dB) / EXT ----
+    for (int k = 0; k < 3; ++k)
+    {
+        const auto sr = popSliderRect (k);
+        const bool hot = (sliderDrag_ == k) || sr.contains (lastMousePos_);
+        g.setColour (pal_.track.withAlpha ((hot ? 0.75f : 0.50f) * a));
+        g.fillRoundedRectangle (sr, r.getWidth() * (11.0f / 472.0f));
+
+        float frac = 0.0f;
+        if (k == 0)      frac = (float) ((sliders_[0] - 1.0) / 19.0);
+        else if (k == 1) frac = (float) sliders_[1];
+        else             frac = (float) sliders_[2];
+        frac = juce::jlimit (0.0f, 1.0f, frac);
+        g.setColour (pal_.accent.withAlpha (0.30f * a));
+        g.fillRoundedRectangle (sr.withWidth (juce::jmax (2.0f, sr.getWidth() * frac)),
+                                r.getWidth() * (11.0f / 472.0f));
+
+        g.setColour (hot ? pal_.text.withMultipliedAlpha (a) : pal_.dim.withMultipliedAlpha (a));
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+        const juce::String kneeTxt = "KNEE  " + juce::String (sliders_[1] * 48.0, 1) + " dB";
+        const juce::String txt = (k == 0) ? ("RATIO  " + juce::String (sliders_[0], 1) + " : 1")
+                              : (k == 1) ? kneeTxt
+                                         : (sliders_[2] > 0.5 ? "EXT  SIDECHAIN" : "EXT  INTERNAL");
+        g.drawText (txt, sr, juce::Justification::centred);
+    }
+
+    // ---- EXPERT 折叠区 ----
+    const auto er = expertRect();
+    g.setColour (pal_.dim.withMultipliedAlpha (a));
+    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.0f));
+    g.drawText (juce::String ("EXPERT  ") + (expertOpen_ ? "\xE2\x96\xBC" : "\xE2\x96\xB6"),
+                er, juce::Justification::centredLeft);
+
+    if (expertOpen_)
+    {
+        g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
+        g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
+        g.drawText ("DETECTOR " + juce::String (sliders_[3] > 0.5 ? "RMS" : "PEAK")
+                    + "    LOOKAHEAD " + juce::String (sliders_[4] == 0 ? "OFF"
+                                                                    : sliders_[4] == 1 ? "1 ms" : "3 ms"),
+                    er.withY (er.getBottom() + r.getHeight() * (2.0f / 200.0f)),
+                    juce::Justification::centredLeft);
+    }
+}
+
+void BandPopover::resized()
+{
+    layoutKnobs (true);
+}
+
+// ---------------- 参数读写 ----------------
+float BandPopover::getParamNorm (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    return (it != paramMap_.end() && it->second != nullptr) ? it->second->getValue() : 0.0f;
+}
+
+float BandPopover::paramRangeMinOf (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+            return (float) rp->getNormalisableRange().start;
+    return 0.0f;
+}
+
+float BandPopover::paramRangeMaxOf (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+            return (float) rp->getNormalisableRange().end;
+    return 1.0f;
+}
+
+float BandPopover::getParamPhysical (const juce::String& id) const
+{
+    const auto it = paramMap_.find (id);
+    if (it == paramMap_.end() || it->second == nullptr)
+        return 0.0f;
+    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+        return (float) rp->getNormalisableRange().convertFrom0to1 (it->second->getValue());
+    return it->second->getValue();
+}
+
+void BandPopover::setParamNorm (const juce::String& id, float norm) const
+{
+    const auto it = paramMap_.find (id);
+    if (it != paramMap_.end() && it->second != nullptr)
+        it->second->setValueNotifyingHost (norm);
+}
+
+void BandPopover::setParamPhysical (const juce::String& id, float physical) const
+{
+    const auto it = paramMap_.find (id);
+    if (it == paramMap_.end() || it->second == nullptr)
+        return;
+    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
+        it->second->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (physical));
+    else
+        it->second->setValueNotifyingHost (physical);
+}
+
+juce::String BandPopover::fmtHzShort (float hz)
+{
+    if (hz >= 1000.0f) return juce::String (hz / 1000.0f, 1) + "k";
+    return juce::String ((int) std::round (hz));
+}

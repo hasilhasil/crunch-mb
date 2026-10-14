@@ -52,6 +52,8 @@ target_sources(CrunchMB PRIVATE
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
     src/ui/Anim.h
+    src/ui/BandPopover.cpp
+    src/ui/BandPopover.h
     src/ui/DisplayView.cpp
     src/ui/Knob.cpp
     src/ui/LinkedDrawer.cpp
@@ -95,6 +97,8 @@ target_sources(CrunchMBTests PRIVATE
     src/dsp/SpectrumAnalyzer.cpp
     src/dsp/SpectrumEngine.cpp
     src/ui/Anim.h
+    src/ui/BandPopover.cpp
+    src/ui/BandPopover.h
     src/ui/DisplayView.cpp
     src/ui/Knob.cpp
     src/ui/LinkedDrawer.cpp

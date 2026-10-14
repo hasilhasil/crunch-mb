@@ -29,6 +29,10 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     linkedDrawer_ = std::make_unique<LinkedDrawer> (proc_);
     addAndMakeVisible (*linkedDrawer_);
     linkedDrawer_->setHostBounds (getLocalBounds());
+    // Phase A：频段 Popover 拆为独立组件（UI_PLAN_V2 §3.2）
+    bandPopover_ = std::make_unique<BandPopover> (proc_);
+    addAndMakeVisible (*bandPopover_);
+    bandPopover_->setHostBounds (getLocalBounds());
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -36,10 +40,34 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
 void DisplayView::applyLinkedOffsetForTest (int k, double v)
 {
     // Phase A：抽屉已拆出，经测试钩子触达（LinkedDrawer::applyOffset 为 private）
-    // 直接调用 openLinkedDrawerForTest 确保旋钮已建，再转发。
     if (linkedDrawer_ == nullptr)
         return;
     linkedDrawer_->applyOffsetForTest (k, v);
+}
+
+void DisplayView::applyPopoverKnobForTest (int k, double v)
+{
+    if (bandPopover_ == nullptr)
+        return;
+    // T40 只验证"旋钮写入 APVTS"与曲线联动，经 BandPopover 的旋钮路径施加
+    bandPopover_->applyKnobForTest (k, v);
+}
+
+juce::Rectangle<float> DisplayView::popSliderRectForTest (int k) const
+{
+    return bandPopover_ != nullptr ? bandPopover_->popSliderRectForTest (k)
+                                   : juce::Rectangle<float>();
+}
+
+juce::Rectangle<float> DisplayView::popExpertRectForTest() const
+{
+    return bandPopover_ != nullptr ? bandPopover_->popExpertRectForTest()
+                                   : juce::Rectangle<float>();
+}
+
+bool DisplayView::isPopoverExpertOpenForTest() const
+{
+    return bandPopover_ != nullptr && bandPopover_->isPopoverExpertOpenForTest();
 }
 
 void DisplayView::openLinkedDrawerForTest()
@@ -56,6 +84,45 @@ void DisplayView::buildParamCache()
             paramMap_[pw->getParameterID()] = pw;
 }
 
+void DisplayView::bandEdgesPx (int band, float& leftX, float& rightX) const
+{
+    const float W = (float) getWidth();
+    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+    leftX  = edges[(size_t) juce::jlimit (0, 4, band)];
+    rightX = edges[(size_t) juce::jlimit (0, 4, band + 1)];
+}
+
+void DisplayView::togglePopover (bool open)
+{
+    if (bandPopover_ == nullptr)
+        return;
+    if (open == bandPopover_->isOpen())
+        return;
+    if (open)
+    {
+        // O6 方案1：与抽屉互斥
+        if (linkedDrawer_ != nullptr)
+            linkedDrawer_->setOpen (false);
+        openPopoverForBand (selectedBand_);
+    }
+    else
+        bandPopover_->setOpen (false);
+    repaint();
+}
+
+void DisplayView::openPopoverForBand (int band)
+{
+    if (bandPopover_ == nullptr)
+        return;
+    float lx = 0.0f, rx = 0.0f;
+    bandEdgesPx (band, lx, rx);
+    bandPopover_->setBand (band);
+    bandPopover_->setBandEdges (lx, rx);
+    bandPopover_->setOpen (true);
+    bandPopover_->syncFromParams();
+}
+
 void DisplayView::syncAllTweens()
 {
     const double nowMs = animNowMs();
@@ -68,12 +135,11 @@ void DisplayView::syncAllTweens()
     }
     for (int e = 0; e < 3; ++e)
         divT_[(size_t) e].snapTo ((e == hoverDividers_) ? 1.0f : 0.0f);
-    popoverTween_.snapTo (popoverOpen_ ? 1.0f : 0.0f);
-    popoverAnimTarget_ = popoverOpen_ ? 1.0f : 0.0f;
-    popoverAnim_ = popoverAnimTarget_;
-    // Phase A：抽屉 Tween 归 LinkedDrawer 自己管
+    // Phase A：抽屉与 Popover 的 Tween 归各自组件管
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->snapToCurrent();
+    if (bandPopover_ != nullptr)
+        bandPopover_->snapToCurrent();
     (void) nowMs;
 }
 
@@ -119,6 +185,8 @@ void DisplayView::setTheme (MBTheme::Theme t)
     pal_ = MBTheme::palette (t);
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->setTheme (t);
+    if (bandPopover_ != nullptr)
+        bandPopover_->setTheme (t);
     curvePathsValid_ = false;
     repaint();
 }
@@ -138,6 +206,8 @@ void DisplayView::setActive (bool active) noexcept
         // Phase A：抽屉重新激活时吸附到当前状态，避免停表期间动画卡在中途
         if (linkedDrawer_ != nullptr)
             linkedDrawer_->snapToCurrent();
+        if (bandPopover_ != nullptr)
+            bandPopover_->snapToCurrent();
     }
 }
 
@@ -799,8 +869,8 @@ void DisplayView::timerCallback()
     }
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->tickEditCursors ((juce::uint32) nowMs);
-    for (auto& kb : popKnobs_)
-        if (kb != nullptr) kb->setEditCursorBlink ((juce::uint32) nowMs);
+    if (bandPopover_ != nullptr)
+        bandPopover_->tickEditCursors ((juce::uint32) nowMs);
 
     pollStructureParams();
 
@@ -867,25 +937,12 @@ void DisplayView::timerCallback()
             refreshCurvePaths();
         }
     }
-    // ---- Phase 5.2：抽屉滑入/收起动画（~250ms，Anim::kDrawerMs）----
-    // Phase A：抽屉已拆为 LinkedDrawer，这里只推进它的 Tween。
+    // ---- Phase 5.2 / 5.3：抽屉与 Popover 滑入/收起动画 ----
+    // Phase A：两者均已拆为独立组件，这里只推进它们的 Tween。
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->advance (nowMs);
-
-    // ---- Phase 5.3：Popover 展开动画（Anim::kPopoverMs，略快于抽屉）----
-    {
-        const float target = popoverOpen_ ? 1.0f : 0.0f;
-        if (target != popoverAnimTarget_)
-            popoverTween_.start (nowMs, target, Anim::kPopoverMs, popoverAnim_);
-        popoverAnimTarget_ = target;
-
-        popoverAnim_ = popoverTween_.value (nowMs);
-        if (std::abs (popoverAnim_ - target) < Anim::kSnapEps)
-        {
-            popoverAnim_ = target;
-            popoverTween_.snapTo (target);
-        }
-    }
+    if (bandPopover_ != nullptr)
+        bandPopover_->advance (nowMs);
 
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
     advanceTweens (nowMs);
@@ -1562,6 +1619,9 @@ bool DisplayView::keyPressed (const juce::KeyPress& key)
 void DisplayView::mouseMove (const juce::MouseEvent& e)
 {
     const auto p = e.position;
+    lastMousePos_ = p;
+    if (bandPopover_ != nullptr)
+        bandPopover_->setLastMousePos (p);
     int b = -1, j = -1;
     const bool onBtn = hitTestButton (p, b, j) != 0;
     int dotBand = -1;
@@ -1695,7 +1755,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     const auto p = e.position;
 
     // 0) Phase 5.3：Popover 打开时，点 ✕ → 收起
-    if (popoverOpen_ && hitTestPopoverClose (p))
+    if (bandPopover_ != nullptr && bandPopover_->isOpen() && bandPopover_->hitTestClose (p))
     {
         togglePopover (false);
         return;
@@ -1709,27 +1769,26 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     // 0b) Popover 内部控制：滑杆行 + EXPERT（旋钮由 Knob 子组件自行处理命中）
-    if (popoverOpen_)
+    if (bandPopover_ != nullptr && bandPopover_->isOpen())
     {
         int sk = -1;
-        if (hitTestPopSlider (p, sk))
+        if (bandPopover_->hitTestSlider (p, sk))
         {
-            popSliderDrag_ = sk;
-            popSliderDragX0_ = p.x;
-            popSliderDragV0_ = popoverSliders_[(size_t) sk];
+            bandPopover_->beginSliderDrag (sk, p.x);
             // 二态项（EXT/DETECTOR，k>=2）：点击即翻转，不进入拖动。
             // 2026-10-14：KNEE(k=1) 改为连续 0–48 dB，现在是可拖动滑杆。
             if (sk >= 2)
             {
-                applyPopSlider (sk, popoverSliders_[(size_t) sk] > 0.5f ? 0.0 : 1.0);
-                popSliderDrag_ = -1;
+                bandPopover_->applySliderForTest (sk,
+                    bandPopover_->sliderValue (sk) > 0.5 ? 0.0 : 1.0);
+                bandPopover_->endSliderDrag();
             }
             repaint();
             return;
         }
-        if (popExpertRect().contains (p))
+        if (bandPopover_->expertRect().contains (p))
         {
-            popoverExpertOpen_ = ! popoverExpertOpen_;
+            bandPopover_->toggleExpert();
             repaint();
             return;
         }
@@ -1739,7 +1798,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     if (linkedDrawer_ != nullptr && linkedDrawer_->hitTestButton (p))
     {
         // O6 方案1：与 Popover 互斥
-        if (popoverOpen_) togglePopover (false);
+        togglePopover (false);
         linkedDrawer_->setOpen (! linkedDrawer_->isOpen());
         repaint();
         return;
@@ -1852,6 +1911,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     for (int i = 0; i < 4; ++i)
         if (p.x >= edges[i] && p.x < edges[i + 1])
         {
+            const bool popoverWasOpen = (bandPopover_ != nullptr && bandPopover_->isOpen());
             if (selectedBand_ != i)
             {
                 selectedBand_ = i;
@@ -1861,17 +1921,20 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
                     tweenTo (hoverT_[(size_t) bb], animNowMs(),
                              (bb == i) ? 1.0f : 0.0f, Anim::kFadeMs);
                 curvePathsValid_ = false;          // #4：切段 → 强制重建
-                if (popoverOpen_) popoverBand_ = i;   // 跟随更新（不关闭）
-                else              togglePopover (true);
+                if (popoverWasOpen)
+                    openPopoverForBand (i);        // 跟随更新（不关闭）
+                else
+                    togglePopover (true);
             }
             else
-                togglePopover (! popoverOpen_);       // 同段再点 = toggle
-            if (popoverOpen_) syncPopoverFromParams();
+                togglePopover (! popoverWasOpen);      // 同段再点 = toggle
+            if (bandPopover_ != nullptr && bandPopover_->isOpen())
+                bandPopover_->syncFromParams();
             repaint();
             return;
         }
     // 6) 点空白 → 收起 Popover（§6）
-    if (popoverOpen_) togglePopover (false);
+    togglePopover (false);
     repaint();
 }
 
@@ -1880,16 +1943,15 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
     const auto p = e.position;
 
     // Popover 滑杆拖动（连续项：RATIO k=0、KNEE k=1；EXT/DETECTOR 仍是点击翻转）
-    if (popSliderDrag_ == 0 || popSliderDrag_ == 1)
+    if (bandPopover_ != nullptr)
     {
-        const int k = popSliderDrag_;
-        const float w = popSliderRect (k).getWidth();
-        float frac = popSliderDragV0_ + (p.x - popSliderDragX0_) / juce::jmax (1.0f, w);
-        frac = juce::jlimit (0.0f, 1.0f, frac);
-        if (k == 0) applyPopSlider (0, 1.0 + frac * 19.0);   // ratio 1..20
-        else        applyPopSlider (1, (double) frac);        // 2026-10-14：knee 0..48 dB（归一化）
-        repaint();
-        return;
+        const int k = bandPopover_->sliderDragIndex();
+        if (k == 0 || k == 1)
+        {
+            bandPopover_->dragSlider (k, p.x);
+            repaint();
+            return;
+        }
     }
 
     // O5-A：曲线上按下 → 真正发生位移才接管为 Makeup 拖拽，并收起 Popover
@@ -1915,7 +1977,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
             dragBand_ = rangePendingBand_;
             dragStartY_ = curveDownY_;
             dragStartRange_ = startRange;
-            if (popoverOpen_) togglePopover (false);
+            togglePopover (false);
             return;
         }
 
@@ -1925,7 +1987,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
         dragStartX_ = curveDownX_;
         dragStartMakeup_ = proc_.apvts.getRawParameterValue (
             "band" + juce::String (dragBand_) + "Makeup")->load();
-        if (popoverOpen_) togglePopover (false);        // 拖动模式：收起浮层
+        togglePopover (false);        // 拖动模式：收起浮层
         // 不 return —— 继续走 Makeup 分支，让本帧位移立即生效
     }
 
@@ -1987,7 +2049,8 @@ void DisplayView::mouseUp (const juce::MouseEvent&)
     dragAxisLocked_ = false;
     curvePending_ = false;
     rangePending_ = false;
-    popSliderDrag_ = -1;      // ⚠️ 必须复位：否则滑杆拖拽状态会吞掉后续所有拖拽
+    if (bandPopover_ != nullptr)
+        bandPopover_->endSliderDrag();   // ⚠️ 必须复位：否则滑杆拖拽状态会吞掉后续所有拖拽
 }
 void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 {
@@ -2011,401 +2074,13 @@ void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 // ============================================================
 
 // ============================================================
-// Phase 5.3 · 频段 Popover（UI_SPEC §6，Pro-MB 样式）
-//   点击分区 → 该段选中 + 浮层弹出；点空白/✕/Esc → 收起
-//   O6 方案1：与 LINKED 抽屉互斥
+// Phase 5.3 · 频段 Popover —— 已整体拆出为 BandPopover 组件
+//   （UI_PLAN_V2 §3.2）。DisplayView 只持有一个 unique_ptr<BandPopover>，
+//   负责：togglePopover/openPopoverForBand 开合仲裁（O6 与抽屉互斥）、
+//   bandEdgesPx 几何边界、mouseDown/mouseDrag/mouseUp 命中分发、
+//   timerCallback 里 advance() 与光标推进。
+//   玻璃面板/5 旋钮/3 滑杆/EXPERT/顶栏全部在 BandPopover.cpp。
 // ============================================================
-
-juce::Rectangle<float> DisplayView::popoverRect() const
-{
-    const float W = (float) getWidth();
-    const float H = (float) getHeight();
-    const float pw = sx (472.0f);
-    const float ph = sy (200.0f);
-
-    // 随分段居中：取该段左右边界的像素中点
-    const float Wd = W;
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], Wd };
-    const float midX = (edges[(size_t) popoverBand_] + edges[(size_t) popoverBand_ + 1]) * 0.5f;
-
-    float px = midX - pw * 0.5f;
-    px = juce::jlimit (sx (8.0f), W - pw - sx (8.0f), px);
-    const float plotTop = sy (kTopStripH);
-    const float plotBottom = H - sy (kGlobalBarH) - sy (29.0f);   // 抽屉按钮上方
-    // 垂直位置：绘图区 58% 处（ tuned：原 40% 偏高，压住曲线区上部）
-    const float py = plotTop + (plotBottom - plotTop) * 0.58f - ph * 0.5f;
-    return juce::Rectangle<float> (px, py, pw, ph);
-}
-
-bool DisplayView::hitTestPopoverClose (juce::Point<float> p) const
-{
-    // 顶栏 ✕ 按钮（右上 22×22）
-    const auto r = popoverRect();
-    const float s = sx (22.0f);
-    return juce::Rectangle<float> (r.getRight() - s - sx (10.0f), r.getY() + sy (8.0f), s, s)
-             .contains (p);
-}
-
-void DisplayView::togglePopover (bool open)
-{
-    if (open == popoverOpen_) return;
-    popoverOpen_ = open;
-    popoverBand_ = open ? selectedBand_ : -1;
-    if (open)
-    {
-        if (linkedDrawer_ != nullptr)                 // O6 方案1：与抽屉互斥
-            linkedDrawer_->setOpen (false);
-        ensurePopoverKnobs();
-        syncPopoverFromParams();
-        syncPopoverSliders();
-    }
-    layoutPopoverKnobs();
-    repaint();
-}
-
-void DisplayView::drawPopover (juce::Graphics& g)
-{
-    if (! popoverOpen_ || popoverAnim_ < 0.004f) return;
-    const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
-    const auto r = popoverRect();
-
-    // 半透明玻璃面板 + 阴影边
-    g.setColour (juce::Colours::black.withAlpha (0.35f * a));
-    g.fillRoundedRectangle (r.translated (0.0f, sy (3.0f)), sx (12.0f));
-    g.setColour (pal_.popA.withMultipliedAlpha (a));
-    g.fillRoundedRectangle (r, sx (12.0f));
-    g.setColour (pal_.accent.withAlpha (0.5f * a));
-    g.drawRoundedRectangle (r, sx (12.0f), 1.0f);
-
-    drawPopoverTopBar (g);
-    drawPopoverKnobs (g);
-}
-
-// Popover 打开/切段时从 APVTS 同步当前值（§6.4：参数改动即时写 APVTS）
-void DisplayView::syncPopoverFromParams()
-{
-    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
-    const juce::String ids[] = { Param::bandThreshold (b), Param::bandRange (b),
-                                 Param::bandAttack (b), Param::bandRelease (b),
-                                 Param::bandMix (b) };
-    for (int k = 0; k < 5; ++k)
-    {
-        popoverValues_[(size_t) k] = getParamPhysical (ids[k]);
-        popoverNormalisedValue_[(size_t) k] = juce::jlimit (0.0f, 1.0f,
-            (float) ((popoverValues_[(size_t) k] - paramRangeMinOf (ids[k]))
-                   / (double) juce::jmax (1.0e-6f, paramRangeMaxOf (ids[k]) - paramRangeMinOf (ids[k]))));
-    }
-    // 旋钮控件同步（不触发回调）
-    for (int k = 0; k < kPopKnobs; ++k)
-        if (popKnobs_[(size_t) k] != nullptr)
-            popKnobs_[(size_t) k]->setValue (popoverValues_[(size_t) k], false);
-}
-
-void DisplayView::syncPopoverSliders()
-{
-    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
-    popoverSliders_[0] = getParamPhysical (Param::bandRatio (b));
-    popoverSliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");
-    popoverSliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");
-    popoverSliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");
-}
-
-float DisplayView::getParamNorm (const juce::String& id) const
-{
-    const auto it = paramMap_.find (id);
-    return (it != paramMap_.end() && it->second != nullptr) ? it->second->getValue() : 0.0f;
-}
-
-float DisplayView::paramRangeMinOf (const juce::String& id) const
-{
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-            return (float) rp->getNormalisableRange().start;
-    return 0.0f;
-}
-
-float DisplayView::paramRangeMaxOf (const juce::String& id) const
-{
-    const auto it = paramMap_.find (id);
-    if (it != paramMap_.end() && it->second != nullptr)
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-            return (float) rp->getNormalisableRange().end;
-    return 1.0f;
-}
-
-float DisplayView::getParamPhysical (const juce::String& id) const
-{
-    const auto it = paramMap_.find (id);
-    if (it == paramMap_.end() || it->second == nullptr)
-        return 0.0f;
-    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (it->second))
-        return (float) rp->getNormalisableRange().convertFrom0to1 (it->second->getValue());
-    return it->second->getValue();
-}
-
-juce::String DisplayView::fmtHzShort (float hz)
-{
-    if (hz >= 1000.0f) return juce::String (hz / 1000.0f, 1) + "k";
-    return juce::String ((int) std::round (hz));
-}
-
-// Popover 顶栏：⚡BYP 宏 + 段名 + 频率范围 + ▼预留 + ✕（§6.3）
-void DisplayView::drawPopoverTopBar (juce::Graphics& g)
-{
-    if (! popoverOpen_) return;
-    const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
-    const auto r = popoverRect();
-
-    // ⚡ BYP 宏按钮（方案 A：记忆 Mix → 设 0 → 恢复，DESIGN §6.6）
-    const float boltS = sx (20.0f);
-    auto bolt = juce::Rectangle<float> (r.getX() + sx (10.0f), r.getY() + sy (7.0f), boltS, boltS);
-    g.setColour (pal_.track);
-    g.fillRoundedRectangle (bolt, sx (5.0f));
-    g.setColour (pal_.accent);
-    g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
-    g.drawText (juce::String::fromUTF8 ("\xE2\x9A\xA1"), bolt, juce::Justification::centred);
-
-    // 段名 + 频率范围
-    static const char* kNames[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
-    float lo, hi;
-    if (popoverBand_ == 0)      { lo = 20.0f;   hi = cachedX1_; }
-    else if (popoverBand_ == 1) { lo = cachedX1_; hi = cachedX2_; }
-    else if (popoverBand_ == 2) { lo = cachedX2_; hi = cachedX3_; }
-    else                        { lo = cachedX3_; hi = 22100.0f; }
-    g.setColour (pal_.text);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 12.0f));
-    g.drawText (juce::String (kNames[juce::jlimit (0, 3, popoverBand_)]) + "  "
-                + fmtHzShort (lo) + " - " + fmtHzShort (hi),
-                juce::Rectangle<float> (bolt.getRight() + sx (8.0f), r.getY() + sy (7.0f),
-                                        sx (300.0f), sy (20.0f)),
-                juce::Justification::centredLeft);
-
-    // ✕ 关闭按钮（右上）
-    const float cs = sx (22.0f);
-    auto closeBtn = juce::Rectangle<float> (r.getRight() - cs - sx (10.0f), r.getY() + sy (8.0f), cs, cs);
-    g.setColour (pal_.track);
-    g.fillRoundedRectangle (closeBtn, sx (6.0f));
-    g.setColour (pal_.text);
-    g.drawText ("\xE2\x9C\x95", closeBtn, juce::Justification::centred);
-
-    // 分隔线
-    g.setColour (pal_.grid);
-    g.fillRect (r.getX() + sx (10.0f), r.getY() + sy (30.0f), r.getWidth() - sx (20.0f), 1.0f);
-    (void) a;
-}
-
-// Popover 旋钮行：THRESHOLD / RANGE / ATTACK / RELEASE / MIX（v1.7 已删 MAKEUP）+ 范围标注（§6.2）
-void DisplayView::drawPopoverKnobs (juce::Graphics& g)
-{
-    if (! popoverOpen_) return;
-    const float a = juce::jlimit (0.0f, 1.0f, popoverAnim_);
-    const auto r = popoverRect();
-
-    static const char* kRange [5] = { "-60..0 dB", "-30..30 dB", "0..200 ms", "10..1000 ms", "0..100 %" };
-    const float unitW = (r.getWidth() - sx (16.0f)) / (float) kPopKnobs;
-
-    // ---- 5 旋钮：弧/帽/指针/标签/数值由 Knob 子组件绘制，这里只补底板与范围标注 ----
-    for (int k = 0; k < kPopKnobs; ++k)
-    {
-        const auto kr = popKnobRect (k);
-        const float cx = kr.getCentreX();
-        const bool hot = kr.contains (lastMousePos_);
-        g.setColour (pal_.track.withAlpha ((hot ? 0.50f : 0.28f) * a));
-        g.fillRoundedRectangle (kr.expanded (sx (2.0f)), sx (6.0f));
-
-        g.setColour (pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (MBTheme::regular(), 8.5f));
-        g.drawText (kRange[k],
-                    juce::Rectangle<float> (cx - unitW * 0.5f, kr.getBottom() - sy (12.0f),
-                                            unitW, 11.0f),
-                    juce::Justification::centredTop);
-    }
-
-    // ---- 滑杆行：RATIO / KNEE(0-48dB) / EXT(INT-EXT) ----
-    for (int k = 0; k < 3; ++k)
-    {
-        const auto sr = popSliderRect (k);
-        const bool hot = (popSliderDrag_ == k) || sr.contains (lastMousePos_);
-        g.setColour (pal_.track.withAlpha ((hot ? 0.75f : 0.50f) * a));
-        g.fillRoundedRectangle (sr, sx (11.0f));
-
-        float frac = 0.0f;
-        if (k == 0)      frac = (float) ((popoverSliders_[0] - 1.0) / 19.0);
-        else if (k == 1) frac = (float) popoverSliders_[1];   // 0..1 ↔ 0..48 dB
-        else             frac = (float) popoverSliders_[2];
-        frac = juce::jlimit (0.0f, 1.0f, frac);
-        g.setColour (pal_.accent.withAlpha (0.30f * a));
-        g.fillRoundedRectangle (sr.withWidth (juce::jmax (2.0f, sr.getWidth() * frac)), sx (11.0f));
-
-        g.setColour (hot ? pal_.text.withMultipliedAlpha (a) : pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-        // 2026-10-14：KNEE 从 HARD/SOFT 二态文本改为连续 dB 读数（Pro-MB 同款）
-        const juce::String kneeTxt = "KNEE  " + juce::String (popoverSliders_[1] * 48.0f, 1) + " dB";
-        const juce::String txt = (k == 0) ? ("RATIO  " + juce::String (popoverSliders_[0], 1) + " : 1")
-                              : (k == 1) ? kneeTxt
-                                         : (popoverSliders_[2] > 0.5f ? "EXT  SIDECHAIN" : "EXT  INTERNAL");
-        g.drawText (txt, sr, juce::Justification::centred);
-
-        if (hot)
-        {
-            g.setColour (pal_.accent.withMultipliedAlpha (a));
-            g.setFont (MBTheme::font (MBTheme::regular(), 8.0f));
-            g.drawText (juce::String::fromUTF8 ("\xE2\x9F\x95"), sr.withTrimmedLeft (sr.getWidth() - sx (16.0f)),
-                        juce::Justification::centred);
-        }
-    }
-
-    // ---- EXPERT 折叠区（§6.2/§6.3：DETECTOR / LOOKAHEAD 低频操作项） ----
-    const auto er = popExpertRect();
-    g.setColour (pal_.dim.withMultipliedAlpha (a));
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.0f));
-    g.drawText (juce::String ("EXPERT  ") + (popoverExpertOpen_ ? "\xE2\x96\xBC" : "\xE2\x96\xB6"),
-                er, juce::Justification::centredLeft);
-
-    if (popoverExpertOpen_)
-    {
-        g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
-        g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
-        g.drawText ("DETECTOR " + juce::String (popoverSliders_[3] > 0.5f ? "RMS" : "PEAK")
-                    + "    LOOKAHEAD " + juce::String (popoverSliders_[4] == 0 ? "OFF"
-                                                    : popoverSliders_[4] == 1 ? "1 ms" : "3 ms"),
-                    er.withY (er.getBottom() + sy (2.0f)),
-                    juce::Justification::centredLeft);
-    }
-}
-
-// ============================================================
-// Phase 5.3.2：Popover 控件真接 APVTS
-//   · 5 个旋钮 = THRESHOLD / RANGE / ATTACK / RELEASE / MIX（v1.7 已删 MAKEUP）
-//   · 滑杆行 = RATIO / KNEE(HARD-SOFT) / EXT(INT-EXT)
-//   · EXPERT 折叠区 = DETECTOR(PEAK-RMS) / LOOKAHEAD(Off-1ms-3ms)
-//   · 复用 Knob 控件（拖动/双击输入/滚轮/Shift/Ctrl），不另写交互
-// ============================================================
-
-juce::Rectangle<float> DisplayView::popExpertRect() const
-{
-    const auto r = popoverRect();
-    return juce::Rectangle<float> (r.getX() + sx (10.0f), r.getBottom() - sy (18.0f),
-                                   sx (140.0f), 12.0f);
-}
-
-void DisplayView::applyPopSlider (int k, double v)
-{
-    popoverSliders_[(size_t) k] = v;
-    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
-    switch (k)
-    {
-        case 0:  setParamPhysical (Param::bandRatio (b), (float) v);  break;
-        // 2026-10-14：Knee 改为连续 0–48 dB，直接写归一化值（原为 HARD/SOFT 二态翻转）
-        case 1:  setParamNorm ("band" + juce::String (b) + "Knee", (float) v);  break;
-        case 2:  setParamNorm ("band" + juce::String (b) + "Ext",  v > 0.5f ? 1.0f : 0.0f);     break;
-        case 3:  setParamNorm ("band" + juce::String (b) + "Detector", v > 0.5f ? 1.0f : 0.0f); break;
-        default: break;   // Lookahead 是全局参数（k=4 不在此写）
-    }
-    syncPopoverFromParams();
-    curvePathsValid_ = false;
-}
-juce::String DisplayView::popParamId (int k) const
-{
-    const int b = popoverBand_ >= 0 ? popoverBand_ : 0;
-    const juce::String p = "band" + juce::String (b);
-    switch (k)
-    {
-        case 0:  return Param::bandThreshold (b);
-        case 1:  return Param::bandRange (b);
-        case 2:  return Param::bandAttack (b);
-        case 3:  return Param::bandRelease (b);
-        default: return Param::bandMix (b);
-    }
-}
-
-juce::Rectangle<float> DisplayView::popKnobRect (int k) const
-{
-    const auto r = popoverRect();
-    const float unitW = (r.getWidth() - sx (16.0f)) / (float) kPopKnobs;
-    const float x = r.getX() + sx (8.0f) + unitW * (float) k + 2.0f;
-    return juce::Rectangle<float> (x, r.getY() + sy (34.0f), unitW - 4.0f, sy (74.0f));
-}
-
-juce::Rectangle<float> DisplayView::popSliderRect (int k) const
-{
-    const auto r = popoverRect();
-    const float rowW = (r.getWidth() - sx (20.0f)) / 3.0f;
-    const float x0 = r.getX() + sx (10.0f) + rowW * (float) k;
-    return juce::Rectangle<float> (x0, r.getY() + sy (142.0f), rowW - sx (10.0f), sy (22.0f));
-}
-
-bool DisplayView::hitTestPopSlider (juce::Point<float> p, int& kOut) const
-{
-    if (! popoverOpen_) return false;
-    for (int k = 0; k < 3; ++k)
-        if (popSliderRect (k).contains (p)) { kOut = k; return true; }
-    return false;
-}
-
-void DisplayView::ensurePopoverKnobs()
-{
-    if (popKnobsReady_) return;
-
-    // 参数范围与显示格式（§6.2：旋钮下显示范围标注）
-    struct Cfg { double mn, mx, iv, def; int dec; const char* suf; const char* label; };
-    const Cfg cfgs[kPopKnobs] = {
-        { -60.0,   0.0, 0.1, -20.0, 1, "dB", "THRESHOLD" },
-        { -30.0,  30.0, 0.1,  -6.0, 1, "dB", "RANGE"     },
-        {   0.1, 200.0, 0.1,  10.0, 1, "ms", "ATTACK"    },
-        {  10.0, 1000.0, 0.1, 100.0, 1, "ms", "RELEASE"  },
-        {   0.0, 100.0, 1.0, 100.0, 0, "%",  "MIX"       },
-    };
-
-    for (int k = 0; k < kPopKnobs; ++k)
-    {
-        auto* kb = new Knob();
-        kb->setRange (cfgs[k].mn, cfgs[k].mx, cfgs[k].iv);
-        kb->setDefaultValue (cfgs[k].def);
-        kb->setValue (cfgs[k].def, false);
-        kb->setLabel (cfgs[k].label);
-        kb->setValueSuffix (cfgs[k].suf);
-        kb->setDecimals (cfgs[k].dec);
-        kb->setKnobDiameter (38.0f);
-        kb->setShowLabel (true);
-        kb->setPalette (pal_);
-        const int kk = k;
-        kb->onValueChange = [this, kk] (double v) { applyPopoverKnob (kk, v); };
-        addAndMakeVisible (kb);
-        kb->setVisible (false);
-        popKnobs_[(size_t) k].reset (kb);
-    }
-    popKnobsReady_ = true;
-}
-
-void DisplayView::layoutPopoverKnobs()
-{
-    if (! popKnobsReady_) return;
-    const float a = popoverOpen_ ? 1.0f : 0.0f;
-    for (int k = 0; k < kPopKnobs; ++k)
-    {
-        if (popKnobs_[(size_t) k] == nullptr) continue;
-        const auto rc = popKnobRect (k);
-        const float y = rc.getY() + (1.0f - a) * rc.getHeight();
-        popKnobs_[(size_t) k]->setBounds ((int) rc.getX(), (int) y,
-                                          (int) rc.getWidth(), (int) rc.getHeight());
-        popKnobs_[(size_t) k]->setVisible (popoverOpen_ || popoverAnim_ > 0.001f);
-    }
-    if (! popoverOpen_ && popoverAnim_ <= 0.001f)
-        for (auto& kb : popKnobs_)
-            if (kb != nullptr) kb->setVisible (false);
-}
-
-void DisplayView::applyPopoverKnob (int k, double v)
-{
-    setParamPhysical (popParamId (k), (float) v);
-    syncPopoverFromParams();
-    // 与显示区联动：段增益/Range 变化 → 曲线与 Range 层需重建
-    curvePathsValid_ = false;
-}
-
 // ============================================================
 // Analyzer 设置面板（Pro-MB "Spectrum analyzer" 对标）
 //   Resolution: Low 1024 / Medium 2048 / High 4096 / Maximum 8192
@@ -2491,8 +2166,7 @@ void DisplayView::paint (juce::Graphics& g)
     drawFreqInput (g);       // #7：自绘频率输入框（最上层）
     // A4 修复（UI_PLAN_V2 §6.3）：此处此前连续调了两次 drawDrawer (g)，
     // 导致抽屉区域 alpha 双重混合（偏深偏灰）+ 每帧无谓多画一整个面板。
-    // Phase A：抽屉（梯形按钮 + 面板 + 旋钮）已整体拆为 LinkedDrawer 子组件自绘。
-    drawPopover (g);        // Phase 5.3：频段 Popover（浮于最上层）
+    // Phase A：抽屉与 Popover 均已整体拆为子组件自绘。
     drawMeters (g);
     drawTopStrip (g);
     drawGlobalBar (g);
@@ -2507,4 +2181,6 @@ void DisplayView::resized()
     // Phase A：抽屉按钮/面板位置依赖宿主 bounds，尺寸变化时同步并重排旋钮
     if (linkedDrawer_ != nullptr)
         linkedDrawer_->setHostBounds (getLocalBounds());
+    if (bandPopover_ != nullptr)
+        bandPopover_->setHostBounds (getLocalBounds());
 }
