@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第二十一轮 · 全局选择器接通）
+### 进度总览（更新于 2026-10-14，第二十三轮 · SPI 平滑）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -463,6 +463,7 @@ namespace Anim {
 | **IMBBackend facade 补齐**（`1d852e6`） | `TECH_SPEC.md` §8 写着"Crunch MB 原生实现 `IMBBackend` facade，从第一个 commit 起 UI 与外部调用方统一经 facade 访问后端"，但代码里一个字节都没有——§10.4 的 9 条 API 验收项也全部空白。本轮按 `crunch-api-interface.md` v1.0 §2/§3 完整落地：`IPluginBackend` 12 个通用方法（参数面/状态面/实时数据面/分析面/插件面）+ `IMBBackend` 5 个多段扩展。**操作上的变化：现在可以用一套统一 API 读写全部 84 个参数、拉取 metering/历史、拿每段传输曲线与分频响应、做统一控制偏移与交叉点钳制、序列化往返**。为支撑它新增了 `CrossoverBank::getMagnitudeDb`（三相位模式各自的响应算法）、`MultibandDSP` 的三个访问器、以及音频线程供电平历史环形缓冲 | — （规范要求，非 Pro-MB 对标项） |
 | **UI 全面改走 facade**（`fafa3da`） | `PLAN.md` Phase 6 有两半：① 实现 facade（上轮）② **UI 改走 facade，不直触 APVTS/DSP 内部**（本轮）。此前 DisplayView / BandPopover / LinkedDrawer **各持一份**自己的 id→参数缓存，绕过 facade 的钳制与值型拒绝——正是 API 规范 §6.2 列出的 D 类耦合。现在 `src/ui` 内 APVTS 引用数为 **0**，26 处读写全走 `proc_.getBackend()`。为不拖慢 UI 热路径，facade 加了 `getParamFast()`（一次性建哈希表，O(1) 查表；否则 `apvts.getParameter` 是 84 个参数的线性字符串比较，60fps 下每秒上千次扫描）。**操作上无可感知变化——这是纯架构解耦，用户看到的界面行为完全一致**（425 条既有断言零回归即证明） | — （PLAN Phase 6 要求，非 Pro-MB 对标项） |
 | **全局栏四个选择器接通**（`f1a9bec`） | `RESEARCH_UI.md` §五 P1 一直挂着的一项：全局栏的 Phase / Slope / Quality / Lookahead **画着 ▼ 下拉箭头却是点不动的静态文字**，而且值写死在代码里（"Natural Phase" / "24 dB/oct" / "Medium" / "Off"）——宿主自动化改了参数，这里显示的还是旧字符串。现在每项都可点，弹出与 Display Range 同一套的自绘下拉（同色圆角面板、当前项打勾 + accent 底、hover 高亮、三层投影），且**当前值从参数实时读取**。选完自动收起；再点同一项收起；点外面收起且不改值 | **Pro-MB**：全局栏的 Phase / Slope / Quality / Lookahead 全是可点下拉 |
+| **SPI 曲线层平滑**（`aa78e24`） | Pro-MB "Smart Parameter Interpolation"。原来曲线每帧取参数瞬时值 → 宿主自动化或切 preset 时**逐帧跳变**，看起来一格一格蹦。现在显示层加 τ=60ms 时间常数平滑（与量程切换同一手法）：实测改 +12dB Makeup 后，一帧只走 24% 路程，之后连续滑到新位置。**首帧用哨兵值直接吸附**，避免插件刚打开时曲线从 0dB 爬升；收敛后精确吸附，不会无限微动。**声音完全不变**——只平滑显示层，音频路径与 APVTS 都没碰（T54.5 断言参数未被污染） | **Pro-MB**：Smart Parameter Interpolation |
 
 ### Phase D 待做
 
@@ -715,7 +716,7 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **444**（+157） |
+| `CrunchMBTests` 断言数 | 287 | **450**（+163） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
@@ -766,6 +767,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
 
 
 
