@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第十三轮 · 全局 Mix 接通）
+### 进度总览（更新于 2026-10-14，第十四轮 · 自绘下拉）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -433,12 +433,12 @@ namespace Anim {
 | **C-4 Range 滑杆可见抓手**（`3b52675`） | Range 钟型下缘**本来就能拖，但没有任何可见抓手**，用户根本不知道那里可交互。现在选中/hover 段时，下缘段中心处出现一个胶囊手柄（带两道暗示可拖的小刻痕），拖动时高亮。命中区在段中心从 ±6px 加到 ±10px，让抓手真的好抓 | **Pro-MB**：每段一个可直接抓取的范围滑杆 |
 | **C-6 DynamicsMode Compress/Expand + 分段按钮**（`2539097`） | **全部 C/D 项里唯一需要动 DSP 的**。每段新增 COMPRESS/EXPAND 分段按钮：Compress = 朝阈值压（经典）；**Expand = 增益曲线取负，阈值以上抬升、扩大动态范围**——用于修复被过度压缩的音轨，或做门限扩展式清晰化。阈值/比率/膝宽/Range 语义全部不变，只翻方向；Range 钳制对 Expand 同样生效（实测 Range −6 → Expand 上限 +6 dB）。UI 是 Pro-MB 式 segmented：两段等宽，选中段实心 accent + 白字，未选中透明 + dim 字，带容器外框 | **Pro-MB**：每段 COMPRESS/EXPAND 分段按钮。官方帮助 "Expand mode increases the dynamic range" |
 
-### Phase C 待做（仅剩 TextSelect）
+### Phase C 待做（全部完成）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
 | ~~`SegButton`（COMPRESS↔EXPAND）~~ | ✅ 已做（`2539097`，含 DSP 扩张） | Pro-MB segmented |
-| `TextSelect` 文本选择器 | 文本选择器弹二级菜单（如 Output 面板的档位选择）。当前档位选择用原生 PopupMenu，功能可用但非自绘 | Pro-MB drop-down |
+| ~~`TextSelect` 文本选择器~~ | ✅ 已做（`c4e03d3`，Display Range 档位改用自绘下拉：同色圆角面板、当前项打勾、hover 高亮、三层投影） | Pro-MB drop-down |
 
 ### Phase D — 交互补齐 ✅ 完成（D-1..D-7）
 
@@ -458,6 +458,7 @@ namespace Anim {
 | **E-1 backdrop blur**（`9a9dfa8`） | 顶栏/底栏从"透明塑料"变成"磨砂玻璃"：背后的频谱/网格先被下采样 + 两遍可分离盒模糊糊化，再上半透明色。模糊源只含背景层（背景/网格/分区/频谱），不含玻璃条自身与上层控件，避免自我反馈。15Hz 刷新——模糊是低频信息，人眼对滞后不敏感，CPU 省 4× | **Pro-MB**：位图预渲染投影 / **Future MB**：shader 模糊 |
 | **侧链滤波 UI 暴露**（`6e45685`） | EXPERT 面板从 2 行扩到 5 行：新增 **Filtering（Band↔Free）、SC High-Pass（20/100/500/2000 Hz）、SC Low-Pass（500/2000/5000/20000 Hz）**，点击循环档位。**DSP 侧链滤波能力从第一轮起就存在，但一直没有 UI 触达**——这次把它接上：Free 模式下可以让该段触发于完全不同的频率范围 | **Pro-MB**：Side Chain Filtering + Free 模式的 LP/HP 频率。官方帮助 "let a band trigger on a completely different frequency range" |
 | **全局 Mix 0-200% 接通 DSP**（`b0aa94e`） | 底栏 OUT 面板的 Mix 行从"UI-only + TODO"变成真功能：**100% = 纯处理声；<100% = 与干声混合（减弱效果）；>100% = 并行压缩提响**。DSP 侧在输入增益后、分频前存一份干声参考，保证 Mix=0 时输出与输入（含输入增益）逐样本一致。`globalMixLin_==1.0` 时整块短路，默认路径零开销 | **Pro-MB**：全局 Mix，官方帮助 "Mix values above 100% can be used for parallel compression" |
+| **自绘 TextSelect 下拉**（`c4e03d3`） | 顶栏 Display Range 档位选择器原来是 `juce::PopupMenu`——**操作系统外观**（系统色、系统字体、系统圆角），是整个界面里唯一破坏主题一致性的地方。现在换成自绘：同色圆角面板、当前项打勾 + accent 底、hover 高亮、与其他弹层同一套三层投影。点击项即应用并收起；点外面收起且不改已选；打开时再点按钮收起 | **Pro-MB**：drop-down 是自绘的，与插件同色 |
 
 ### Phase D 待做
 
@@ -710,7 +711,7 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **370**（+83） |
+| `CrunchMBTests` 断言数 | 287 | **381**（+94） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
@@ -738,7 +739,7 @@ T39 频谱 17 项均通过）。
 
 ### 已知待办（低优先）
 
-- `TextSelect` 自绘下拉（当前用原生 PopupMenu，功能可用）
+- ~~`TextSelect` 自绘下拉~~ ✅ 已做（`c4e03d3`）
 - 1px 细线 AA 提亮（细节抛光）
 - ~~全局 Mix DSP 接入~~ ✅ 已完成
 - ~~侧链 LP/HP 频率的 UI 暴露~~ ✅ 已完成
