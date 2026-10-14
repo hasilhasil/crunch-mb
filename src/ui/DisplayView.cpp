@@ -1247,6 +1247,44 @@ void DisplayView::drawRangeBell (juce::Graphics& g)
         }
         g.setColour (pal_.accent.withAlpha (0.55f * a));
         g.strokePath (rangeEdgePath_[(size_t) b], juce::PathStrokeType (1.2f));
+
+        // ---- Phase C-4：Range 滑杆手柄（Pro-MB range slider 对标）----
+        // 钟型下缘本来就能拖，但**没有可见抓手**，用户不知道那里可交互。
+        // 在段中心频率处的下缘上放一个胶囊手柄，让"可拖"这件事不言自明。
+        // 只在选中或 hover 时显示（避免 4 段常驻造成视觉噪音）。
+        const float hoverK = hoverT_[(size_t) b].value (animNowMs());
+        const float selK   = selT_[(size_t) b].value (animNowMs());
+        const float showK  = juce::jmax (selK, hoverK);
+        if (showK > 0.01f && ! curveDb_.empty())
+        {
+            const float fcen = bandCenterFreq (b);
+            const float px   = freqToX (fcen);
+            // 找段中心处钟型的权重，算出下缘 y（与 hitTestRangeEdge 同公式）
+            int best = 0; float bd = 1.0e9f;
+            for (int i = 0; i < kCurvePoints; ++i)
+            {
+                const float d = std::abs (curveFreqs_[(size_t) i] - fcen);
+                if (d < bd) { bd = d; best = i; }
+            }
+            const float w    = bellWeight (b, fcen);
+            const float yLo  = gainToY (baseDb_[(size_t) best]
+                                        + w * rangeDisplay_[(size_t) b]);
+            if (w > 0.05f)
+            {
+                const float hw = sx (18.0f), hh = sy (7.0f);
+                auto handle = juce::Rectangle<float> (px - hw * 0.5f, yLo - hh * 0.5f, hw, hh);
+                const bool dragging = (drag_ == DragMode::Range && dragBand_ == b);
+                const float glow = dragging ? 1.0f : 0.0f;
+                g.setColour (pal_.accent.interpolatedWith (pal_.accent.brighter (0.35f), glow)
+                                          .withAlpha (0.95f * showK));
+                g.fillRoundedRectangle (handle, hh * 0.5f);
+                // 左右两道小刻痕，暗示"可横向/纵向拖"
+                g.setColour (pal_.light ? juce::Colours::black.withAlpha (0.55f * showK)
+                                        : juce::Colours::white.withAlpha (0.75f * showK));
+                g.fillRect (px - hw * 0.26f, yLo - hh * 0.18f, sx (1.5f), hh * 0.36f);
+                g.fillRect (px + hw * 0.26f - sx (1.5f), yLo - hh * 0.18f, sx (1.5f), hh * 0.36f);
+            }
+        }
     }
 }
 
@@ -1271,10 +1309,14 @@ void DisplayView::drawResponseCurve (juce::Graphics& g)
 bool DisplayView::hitTestRangeEdge (juce::Point<float> p, int& bandOut, bool& lowerEdge) const
 {
     // Range 钟型的下缘（压缩方向那条）：命中后可上下拖动改 range 值（用户额外要求）
+    // Phase C-4：下缘在段中心处放了个**可见胶囊手柄**（drawRangeBell），
+    // 所以那里的命中区从 ±6px 加宽到 ±10px，让抓手真的好抓；
+    // 非中心处仍保持 ±6px（避免与频点/曲线命中区互相抢占）。
     if (! curveVisible_ || curveDb_.empty())
         return false;
     const int b = selectedBand_;
     const float rangeDb = rangeDisplay_[(size_t) b];
+    const float fcen = bandCenterFreq (b);
     for (int i = 0; i < kCurvePoints; ++i)
     {
         const float f = curveFreqs_[(size_t) i];
@@ -1284,13 +1326,15 @@ bool DisplayView::hitTestRangeEdge (juce::Point<float> p, int& bandOut, bool& lo
         const float yTop = gainToY (curveDb_[(size_t) i]);                // 上缘：当前曲线
         if (std::abs (p.x - x) > sx (4.0f))          // #3：窗收到 ±4px（原 6px 太宽，
             continue;                               // 与频点命中区重叠 → "抓错目标卡住")
-        if (std::abs (p.y - yLo) <= sy (6.0f) && w > 0.05f)
+        const bool atCentre = std::abs (f - fcen) < fcen * 0.02f;
+        const float tolY = atCentre ? sy (10.0f) : sy (6.0f);
+        if (std::abs (p.y - yLo) <= tolY && w > 0.05f)
         {
             bandOut = b;
             lowerEdge = true;
             return true;
         }
-        if (std::abs (p.y - yTop) <= sy (6.0f) && w > 0.05f)
+        if (std::abs (p.y - yTop) <= tolY && w > 0.05f)
         {
             bandOut = b;
             lowerEdge = false;
