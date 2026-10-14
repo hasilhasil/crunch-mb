@@ -4821,6 +4821,76 @@ static void testOutputPanelSticky()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T45 Phase D-5：拖动超出显示范围时自动扩档（Pro-MB Auto-Adjust）
+//   Auto 模式下把 Makeup 往上拖到曲线超出当前量程 → 量程自动升档，
+//   曲线不会跑出屏幕。手动档位不自动扩。
+// ------------------------------------------------------------
+static void testAutoExpandRange()
+{
+    std::cout << "\n--- T45 Phase D-5 拖动超范围自动扩档 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T45.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+    // 确保是 Auto 模式（默认 0）
+    check (dv.getDisplayRangeModeForTest() == 0, "T45.1 默认 Auto 模式",
+           juce::String (dv.getDisplayRangeModeForTest()));
+
+    // ① Auto 模式下大幅上拖 Makeup → 量程应升档
+    {
+        const float rangeBefore = dv.getCurveRangeForTest();
+        const float cx = freqToXforTest (2449.0f);
+        const float cy = dv.curveYAtFreqForTest (2449.0f);
+        dv.mouseDownForTest (cx, cy);
+        dv.mouseDragForTest (cx, cy - 400.0f);      // 大幅上拖
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        const float rangeAfter = dv.getCurveRangeForTest();
+        std::cout << "  Auto 量程: " << rangeBefore << " -> " << rangeAfter << " dB" << std::endl;
+        check (rangeAfter >= rangeBefore,
+               "T45.2 Auto 模式下拖动超范围 → 量程不缩（只升不降）",
+               juce::String (rangeBefore) + " -> " + juce::String (rangeAfter));
+        // 曲线值应能在当前量程内被表示（不超出屏幕）
+        // 用 curveYAtFreqForTest 反推：y 在绘图区内即表示未超出
+        const float cyNow = dv.curveYAtFreqForTest (2449.0f);
+        const float plotTop = 30.0f, plotBot = 588.0f;
+        std::cout << "  曲线 y = " << cyNow << "（绘图区 " << plotTop << ".." << plotBot << "）" << std::endl;
+        check (cyNow >= plotTop && cyNow <= plotBot,
+               "T45.3 曲线不超出当前量程（不会跑出屏幕）",
+               juce::String (cyNow));
+    }
+
+    // ② 手动档位下大幅拖动 → 量程保持不变（用户明确选了固定量程）
+    {
+        // 切到 ±12 dB 固定档（模式 3）
+        dv.mouseDownForTest (920.0f - 218.0f + 43.0f, 3.0f + 12.0f);   // Display Range 按钮
+        // 用测试钩子直接设模式更可靠
+        dv.setDisplayRangeModeForTest (3);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        const float rangeBefore = dv.getCurveRangeForTest();
+
+        const float cx = freqToXforTest (2449.0f);
+        const float cy = dv.curveYAtFreqForTest (2449.0f);
+        dv.mouseDownForTest (cx, cy);
+        dv.mouseDragForTest (cx, cy - 400.0f);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        const float rangeAfter = dv.getCurveRangeForTest();
+        std::cout << "  手动量程: " << rangeBefore << " -> " << rangeAfter << " dB" << std::endl;
+        check (std::abs (rangeAfter - rangeBefore) < 0.01f,
+               "T45.4 手动档位下拖动不自动扩档",
+               juce::String (rangeBefore) + " -> " + juce::String (rangeAfter));
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4874,6 +4944,7 @@ int main()
     testLinkedDrawerSticky();       // T42 Phase D-2 LINKED 抽屉 sticky 语义
     testBandSweepMultiSelect();     // T43 Phase D-3 显示背景拖拽多选
     testOutputPanelSticky();       // T44 Phase D-4 Output 面板 sticky 语义
+    testAutoExpandRange();         // T45 Phase D-5 拖动超范围自动扩档
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

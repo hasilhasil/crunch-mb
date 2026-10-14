@@ -1163,9 +1163,32 @@ void DisplayView::updateCurve()
     // P1：Display Range 目标量程（平滑动画在 timerCallback 里做，那里有 dt）
     //   · Auto（模式 0）：按曲线值/Range 深度自动选档（3/6/12/30），只升不降
     //   · 手动（1..4）：固定档位
-    //   ⚠️ Makeup/Range 拖动期间**冻结目标量程**：否则拖动让曲线值变化 → 触发升档
+    //   ⚠️ Makeup/Range 拖动期间冻结目标量程：否则拖动让曲线值变化 → 触发升档
     //   → 量程平滑追赶 → gainToY 映射持续微动 → 用户看到"卡顿/抖动"（2026-09-23）
-    if (drag_ != DragMode::Makeup && drag_ != DragMode::Range)
+    //
+    //   Phase D-5 例外：Auto 模式下，如果拖动把曲线**拖出当前显示范围之外**，
+    //   仍然要升档——否则用户把 Makeup 往上拖时曲线会跑到屏幕外看不见，
+    //   这就是"拖不动了"的手感。Pro-MB 的 Auto-Adjust Display Range 正是这个行为。
+    //   实现上只认"超出范围"这一种情况，曲线值本身的变化不触发升档，
+    //   所以原注释里担心的"量程追赶导致抖动"不会出现。
+    if (drag_ == DragMode::Makeup || drag_ == DragMode::Range)
+    {
+        if (displayRangeMode_ == 0)
+        {
+            float mx = 0.0f;
+            for (int i = 0; i < kCurvePoints; ++i)
+                mx = juce::jmax (mx, std::abs (curveDb_[(size_t) i]));
+            // 只有**超出**当前量程才升档（不是"曲线值变了就升"）
+            if (mx > curveRangeDb_ * 0.98f)
+            {
+                const float autoTarget = (mx <= 3.0f) ? 3.0f : (mx <= 6.0f) ? 6.0f
+                                       : (mx <= 12.0f) ? 12.0f : 30.0f;
+                curveRangeDb_ = juce::jmax (curveRangeDb_, autoTarget);
+            }
+        }
+        // 手动档位下不自动扩（用户明确选了固定量程）
+    }
+    else
     {
         float target = curveRangeDb_;
         if (displayRangeMode_ == 0)
