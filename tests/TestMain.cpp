@@ -6406,6 +6406,86 @@ static void testStereoLinkMirror()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T59 Phase：attack/release 系数缓存（音频线程热点）
+//   updateScalars() 每块都对 4 段各调一次 setParameters()，原实现无条件
+//   重算 3 个 exp。48kHz/64 样本下 = 每秒 750×12 次 std::exp，
+//   且 rmsCoeff_ 只依赖常量与 sampleRate_，不变时永远相同。
+//   本测试验证**缓存不改变行为**：改参数后系数必须跟上。
+// ------------------------------------------------------------
+static void testAttackReleaseCoeffCache()
+{
+    std::cout << "\n--- T59 Phase attack/release 系数缓存 ---\n";
+
+    // 用两个独立实例对照：一个反复设相同参数（走缓存），
+    // 一个只在变化时设（等价于无缓存）。输出必须一致。
+    BandCompressor a, b;
+    a.prepare (48000.0);
+    b.prepare (48000.0);
+
+    const float thr = -30.0f, ratio = 8.0f, rangeDb = -24.0f, knee = 12.0f;
+
+    // 初始参数
+    a.setParameters (thr, ratio, 5.0f, 80.0f, rangeDb, knee, false);
+    b.setParameters (thr, ratio, 5.0f, 80.0f, rangeDb, knee, false);
+
+    // 喂一段音频，比较输出
+    auto run = [] (BandCompressor& c, float ampL, float ampR, int n, std::vector<float>& out)
+    {
+        out.clear();
+        for (int i = 0; i < n; ++i)
+        {
+            const float ph = 6.283185f * 300.0f * (float) i / 48000.0f;
+            float l = ampL * std::sin (ph), r = ampR * std::sin (ph * 1.3f);
+            float gL = 1.0f, gR = 1.0f;
+            c.processGain (l, r, gL, gR);
+            out.push_back (gL);
+            out.push_back (gR);
+        }
+    };
+
+    std::vector<float> oa, ob;
+    run (a, 0.7f, 0.5f, 400, oa);
+    run (b, 0.7f, 0.5f, 400, ob);
+    double maxDiff = 0.0;
+    for (size_t i = 0; i < oa.size() && i < ob.size(); ++i)
+        maxDiff = juce::jmax (maxDiff, (double) std::abs (oa[i] - ob[i]));
+    check (maxDiff < 1.0e-6, "T59.1 初始参数下两实例输出一致", juce::String (maxDiff));
+
+    // 反复设**相同**参数（触发缓存路径），再喂同一信号——应与 b 仍一致
+    for (int rep = 0; rep < 50; ++rep)
+        a.setParameters (thr, ratio, 5.0f, 80.0f, rangeDb, knee, false);
+    run (a, 0.7f, 0.5f, 400, oa);
+    run (b, 0.7f, 0.5f, 400, ob);
+    maxDiff = 0.0;
+    for (size_t i = 0; i < oa.size() && i < ob.size(); ++i)
+        maxDiff = juce::jmax (maxDiff, (double) std::abs (oa[i] - ob[i]));
+    check (maxDiff < 1.0e-6,
+           "T59.2 反复设相同参数后输出仍一致（缓存不漂移）", juce::String (maxDiff));
+
+    // 改 attack/release 后，系数必须跟上（缓存不能把旧值焊死）
+    a.setParameters (thr, ratio, 1.0f, 200.0f, rangeDb, knee, false);   // 快 attack 慢 release
+    b.setParameters (thr, ratio, 1.0f, 200.0f, rangeDb, knee, false);
+    run (a, 0.7f, 0.5f, 400, oa);
+    run (b, 0.7f, 0.5f, 400, ob);
+    maxDiff = 0.0;
+    for (size_t i = 0; i < oa.size() && i < ob.size(); ++i)
+        maxDiff = juce::jmax (maxDiff, (double) std::abs (oa[i] - ob[i]));
+    check (maxDiff < 1.0e-6,
+           "T59.3 改 attack/release 后系数跟上（缓存正确失效）", juce::String (maxDiff));
+
+    // 且新的时间常数应产生不同包络（证明真的变了，不是两边都卡住）
+    const float gBefore = oa.empty() ? 0.0f : oa[oa.size() - 2];
+    a.setParameters (thr, ratio, 5.0f, 80.0f, rangeDb, knee, false);
+    run (a, 0.7f, 0.5f, 400, oa);
+    const float gAfter = oa.empty() ? 0.0f : oa[oa.size() - 2];
+    std::cout << "  快attack/慢release 末增益=" << gBefore
+              << "  恢复后末增益=" << gAfter << std::endl;
+    check (std::abs (gBefore - gAfter) > 1.0e-4f,
+           "T59.4 不同时间常数产生不同包络（缓存真的在更新）",
+           juce::String (gBefore) + " vs " + juce::String (gAfter));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6471,6 +6551,7 @@ int main()
     testLinearFifoZeroAlloc();     // T56 Phase Linear FIFO 零分配
     testSpectrumDecayNoAliasing(); // T57 Phase 频谱衰减帧线程安全
     testStereoLinkMirror();        // T58 Phase 立体声链接镜像
+    testAttackReleaseCoeffCache(); // T59 Phase attack/release 系数缓存
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

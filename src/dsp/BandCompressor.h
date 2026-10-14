@@ -24,7 +24,6 @@ public:
 
     void setParameters (float thresholdDb, float ratio, float attackMs, float releaseMs,
                         float rangeDb, float kneeDb, bool useRmsDetector) noexcept;
-
     /** Phase C-6：动态模式（Compress / Expand）。 */
     void setDynamicsMode (DynamicsMode m) noexcept { dynamicsMode_ = m; }
 
@@ -46,6 +45,8 @@ public:
 
 private:
     float computeTargetGainDb (float levelDb) const noexcept;
+    /** 时间常数（ms）→ 单极点系数。仅在参数变化时调用（音频线程热点缓存）。 */
+    float coeffFor (double ms) const noexcept;
 
     double sampleRate_ = 48000.0;
 
@@ -59,6 +60,10 @@ private:
     float attackCoeff_  = 0.0f;   // exp(-1/(tau*fs)) 形式，63%@tau
     float releaseCoeff_ = 0.0f;
     float rmsCoeff_     = 0.0f;
+    // Phase：系数缓存（updateScalars 每块调用 setParameters，避免重复 exp）
+    float lastAttackMs_  = -1.0f;
+    float lastReleaseMs_ = -1.0f;
+    bool  rmsCoeffReady_ = false;
 
     float smoothedGainDb_ = 0.0f;
     float smoothedGainDbR_ = 0.0f;     // 右声道包络（2026-10-14 立体声链接）

@@ -9,6 +9,10 @@ namespace
 void BandCompressor::prepare (double sampleRate)
 {
     sampleRate_ = juce::jmax (1.0, sampleRate);
+    // 采样率变了 → 所有系数作废，强制重算
+    lastAttackMs_ = -1.0f;
+    lastReleaseMs_ = -1.0f;
+    rmsCoeffReady_ = false;
     reset();
 }
 
@@ -33,14 +37,21 @@ void BandCompressor::setParameters (float thresholdDb, float ratio, float attack
     kneeWidthDb_ = juce::jmax (0.0f, kneeDb);
     useRms_      = useRmsDetector;
 
-    const auto coeffFor = [this] (double ms)
-    {
-        const double tauSec = juce::jmax (0.0001, ms * 0.001);
-        return (float) std::exp (-1.0 / (tauSec * sampleRate_));
-    };
-    attackCoeff_  = coeffFor ((double) attackMs);
-    releaseCoeff_ = coeffFor ((double) releaseMs);
-    rmsCoeff_     = coeffFor (kRmsWindowSec * 1000.0);
+    // Phase（音频线程热点）：updateScalars() 每块都对 4 段各调一次本函数，
+    // 而原实现无条件重算 3 个 exp。在 48kHz/64 样本下那是每秒 750×12 次
+    // std::exp —— 且 rmsCoeff_ 只依赖常量 kRmsWindowSec 与 sampleRate_，
+    // sampleRate_ 不变时它永远相同。
+    // 现缓存各时间常数对应的系数，仅在 ms 值真正变化时重算。
+    if (attackMs  != lastAttackMs_)  { attackCoeff_  = coeffFor (attackMs);  lastAttackMs_  = attackMs; }
+    if (releaseMs != lastReleaseMs_) { releaseCoeff_ = coeffFor (releaseMs); lastReleaseMs_ = releaseMs; }
+    if (! rmsCoeffReady_)           { rmsCoeff_     = coeffFor (kRmsWindowSec * 1000.0);
+                                      rmsCoeffReady_ = true; }
+}
+
+float BandCompressor::coeffFor (double ms) const noexcept
+{
+    const double tauSec = juce::jmax (0.0001, ms * 0.001);
+    return (float) std::exp (-1.0 / (tauSec * sampleRate_));
 }
 
 float BandCompressor::computeTargetGainDb (float levelDb) const noexcept
