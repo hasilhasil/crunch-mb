@@ -11,6 +11,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "MBTheme.h"
+#include "Anim.h"
 
 class Knob : public juce::Component
 {
@@ -87,6 +88,25 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
+    // ---- Phase C-2：四态（Pro-MB Overlay{NORMAL,ACTIVE,DOWN,ROTATE}）----
+    void mouseEnter (const juce::MouseEvent&) override;
+    void mouseExit  (const juce::MouseEvent&) override;
+
+    /**
+     * 推进四态渐变。由宿主组件的定时器调用（旋钮自身没有 Timer，
+     * 避免 14 个旋钮各起一个定时器）。
+     *   NORMAL  — 默认
+     *   ACTIVE  — 悬停（帽略亮）
+     *   DOWN    — 按下（帽再亮一档）
+     *   ROTATE  — 拖动中（帽转暖色 + 弧加粗，即 Pro-MB 的 OverlayRotate）
+     * 三个维度各一个 Tween，叠加成最终亮度/色相。
+     */
+    void advanceStates (double nowMs);
+    /** 测试钩子：当前四态合成量（0..1）。 */
+    float stateGlowForTest() const { return juce::jmax (hoverT_.value (1.0e18),
+                                                          juce::jmax (downT_.value (1.0e18),
+                                                                      rotateT_.value (1.0e18))); }
+
 private:
     void commitValue (double v);
     void openEditor();
@@ -104,6 +124,9 @@ private:
     bool   linkedMark_ = false;                    // §5.2：⊞ 联动标识
     bool   dragging_ = false;
     bool   shiftFine_ = false;
+    bool   hovered_  = false;                      // Phase C-2：ACTIVE 态
+    bool   mouseDownHeld_ = false;                 // Phase C-2：DOWN 态（按下未起拖）
+    Tween  hoverT_, downT_, rotateT_;              // Phase C-2：三个维度各一个 Tween
     float  slowAccum_ = 0.0f;                  // 慢拖累积（速度比例）
 
     juce::String label_, suffix_, valuePrefix_;

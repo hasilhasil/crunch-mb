@@ -185,6 +185,15 @@ void LinkedDrawer::tickEditCursors (juce::uint32 nowMs)
             kb->setEditCursorBlink (nowMs);
 }
 
+void LinkedDrawer::advanceKnobStates (double nowMs)
+{
+    // Phase C-2：四态渐变。旋钮自身没有 Timer（14 个旋钮各起一个太浪费），
+    // 由宿主的 60fps 定时器统一推进。
+    for (auto& kb : knobs_)
+        if (kb != nullptr)
+            kb->advanceStates (nowMs);
+}
+
 void LinkedDrawer::applyOffset (int k, double newValue)
 {
     // ---- Mix（k=4）：**绝对值语义**（§5.2 v1.6 例外）——四段 Mix 同设为该值 ----

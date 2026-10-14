@@ -865,9 +865,15 @@ void DisplayView::timerCallback()
     if (freqInput_ != nullptr)
         freqInput_->tickCursor ((juce::uint32) nowMs);
     if (linkedDrawer_ != nullptr)
+    {
         linkedDrawer_->tickEditCursors ((juce::uint32) nowMs);
+        linkedDrawer_->advanceKnobStates (nowMs);       // Phase C-2：旋钮四态渐变
+    }
     if (bandPopover_ != nullptr)
+    {
         bandPopover_->tickEditCursors ((juce::uint32) nowMs);
+        bandPopover_->advanceKnobStates (nowMs);        // Phase C-2：旋钮四态渐变
+    }
 
     pollStructureParams();
 

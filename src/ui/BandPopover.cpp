@@ -302,6 +302,14 @@ void BandPopover::tickEditCursors (juce::uint32 nowMs)
             kb->setEditCursorBlink (nowMs);
 }
 
+void BandPopover::advanceKnobStates (double nowMs)
+{
+    // Phase C-2：四态渐变（旋钮无自有 Timer，由宿主 60fps 定时器统一推进）
+    for (auto& kb : knobs_)
+        if (kb != nullptr)
+            kb->advanceStates (nowMs);
+}
+
 // ---------------- 命中测试 ----------------
 bool BandPopover::hitTestClose (juce::Point<float> p) const
 {

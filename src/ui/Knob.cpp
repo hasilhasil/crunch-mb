@@ -53,14 +53,16 @@ void Knob::mouseDown (const juce::MouseEvent& e)
 
     dragStartValue_ = value_;
     dragging_ = true;
+    mouseDownHeld_ = true;          // Phase C-2：DOWN 态
     slowAccum_ = 0.0f;
     shiftFine_ = e.mods.isShiftDown();
 
-    // Ctrl+click = 复位（Fablerler 官方：Ctrl/Cmd + click resets to default）
+    // Ctrl+click = 复位（FabFilter 官方：Ctrl/Cmd + click resets to default）
     if (e.mods.isCtrlDown() || e.mods.isCommandDown())
     {
         setValue (default_, true);
         dragging_ = false;
+        mouseDownHeld_ = false;
         return;
     }
     if (onDragStart) onDragStart();
@@ -85,6 +87,7 @@ void Knob::mouseUp (const juce::MouseEvent&)
 {
     if (dragging_ && onDragEnd) onDragEnd();
     dragging_ = false;
+    mouseDownHeld_ = false;         // Phase C-2：DOWN 态解除
     slowAccum_ = 0.0f;
 }
 
@@ -100,6 +103,19 @@ void Knob::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetail
     double step = (interval_ > 0.0) ? interval_ : span * 0.02;
     if (wheel.deltaY < 0) step = -step;
     commitValue (value_ + step);
+}
+
+// ---------------- Phase C-2：四态 ----------------
+void Knob::mouseEnter (const juce::MouseEvent&) { hovered_ = true; }
+void Knob::mouseExit  (const juce::MouseEvent&) { hovered_ = false; }
+
+void Knob::advanceStates (double nowMs)
+{
+    // 三个维度各自独立 Tween，从"当前显示值"起跳，目标变化不打断。
+    const double ms = Anim::kKnobMs;
+    tweenTo (hoverT_,  nowMs, hovered_        ? 1.0f : 0.0f, ms);
+    tweenTo (downT_,   nowMs, mouseDownHeld_  ? 1.0f : 0.0f, ms);
+    tweenTo (rotateT_, nowMs, dragging_       ? 1.0f : 0.0f, ms);
 }
 
 // ---------------- 内嵌输入 ----------------
@@ -242,12 +258,21 @@ void Knob::paint (juce::Graphics& g)
     g.drawImageAt (backLayer_, (int) (cx - backLayer_.getWidth() * 0.5f),
                                   (int) (cy - backLayer_.getHeight() * 0.5f));
 
+    // ---- Phase C-2：四态合成（Pro-MB Overlay{NORMAL,ACTIVE,DOWN,ROTATE}）----
+    // 三个 Tween 取最大值作为"提亮量"，rotate 额外把帽转向暖色。
+    // 原实现是 dragging_ ? 1.35f : 1.0f 硬跳；现在 120ms 渐变。
+    const double nowMs = (double) juce::Time::getMillisecondCounter();
+    const float hoverK  = hoverT_.value (nowMs);
+    const float downK   = downT_.value (nowMs);
+    const float rotateK = rotateT_.value (nowMs);
+    const float glow    = juce::jmax (hoverK, juce::jmax (downK, rotateK));
+
     // ---- OVERLAY：值弧（轨道 + 值）----
-    // §5.2：拖动中"联动脉冲"——弧加亮加粗
     const float a0 = valueToAngle (min_);
     const float a1 = valueToAngle (max_);
     const float av = valueToAngle (value_);
-    const float thick = juce::jmax (2.0f, d * 0.10f) * (dragging_ ? 1.35f : 1.0f);
+    // 弧粗随 glow 渐变（1.0 → 1.35），不再是二态跳变
+    const float thick = juce::jmax (2.0f, d * 0.10f) * (1.0f + 0.35f * glow);
 
     juce::Path track;
     track.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f, a0, a1, true);
@@ -259,14 +284,20 @@ void Knob::paint (juce::Graphics& g)
     const float from = bipolar_ ? valueToAngle (default_) : a0;
     val.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f,
                        juce::jmin (from, av), juce::jmax (from, av), true);
-    g.setColour (dragging_ ? pal_.accent.brighter (0.30f) : pal_.accent);
+    // 弧色随 glow 变亮（accent → accent.brighter(0.30)）
+    g.setColour (pal_.accent.interpolatedWith (pal_.accent.brighter (0.30f), glow));
     g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
 
-    // ---- 帽（近白）+ 深色指针（延伸到弧内缘，与蓝弧头对头）----
+    // ---- 帽（近白）+ 深色指针 ----
+    // 四态：NORMAL = knob；ACTIVE/DOWN = 逐级提亮；ROTATE = 转向暖色（accent 方向）
     const float capR = r - thick - juce::jmax (1.0f, d * 0.05f);
-    juce::ColourGradient grad (pal_.knob.brighter (0.25f), cx, cy - capR,
-                               pal_.knob.darker (0.15f), cx, cy + capR, false);
+    juce::Colour capCol = pal_.knob;
+    if (rotateK > 0.001f)
+        capCol = capCol.interpolatedWith (pal_.accent.brighter (0.45f), rotateK * 0.55f);
+    capCol = capCol.brighter (0.25f * hoverK + 0.15f * downK);
+    juce::ColourGradient grad (capCol.brighter (0.12f), cx, cy - capR,
+                               capCol.darker (0.15f), cx, cy + capR, false);
     g.setGradientFill (grad);
     g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
 

@@ -72,6 +72,8 @@ public:
 
     /** 光标闪烁推进。 */
     void tickEditCursors (juce::uint32 nowMs);
+    /** Phase C-2：推进所有子旋钮的四态渐变（由宿主 60fps 定时器调用）。 */
+    void advanceKnobStates (double nowMs);
 
     /** 同步参数 → 控件（切段/外部改动后调用）。 */
     void syncFromParams();

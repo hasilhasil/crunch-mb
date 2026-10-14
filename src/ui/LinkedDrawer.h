@@ -67,6 +67,8 @@ public:
 
     /** 光标闪烁推进（转发给所有子旋钮）。 */
     void tickEditCursors (juce::uint32 nowMs);
+    /** Phase C-2：推进所有子旋钮的四态渐变（由宿主 60fps 定时器调用）。 */
+    void advanceKnobStates (double nowMs);
 
     /** 测试钩子：直接施加一次偏移（applyOffset 为 private）。 */
     void applyOffsetForTest (int k, double v) { applyOffset (k, v); }
