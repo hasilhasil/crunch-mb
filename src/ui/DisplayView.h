@@ -400,7 +400,8 @@ private:
     // ---- Phase 4.3 数据 ----
     void pollStructureParams();          // 每帧比对结构参数（变化→权重重算）
     void updateWeights();                // w_i(f)：交叉权重（结构变化时）
-    void updateCurve();                  // y(f)=Σw·g：每帧
+    /** y(f)=Σw·g：每帧。dtSeconds 供 Phase SPI 显示层平滑用。 */
+    void updateCurve (double dtSeconds = 1.0 / 60.0);
     // Phase A：refreshSpectrumPaths() 已拆到 SpectrumView 组件。
     void refreshCurvePaths();            // 曲线/Range 几何变化时
     float bellWeight (int band, float freq) const;   // 段内 sin² 钟型
@@ -641,8 +642,11 @@ private:
     std::array<float, kCurvePoints> curveDb_ {};
     std::array<float, 4> bandGainTotalDb_ {};       // 段增益+Makeup（每帧）
     std::array<float, 4> bandDisplayDb_    {};      // 段显示增益（range 截断 + bypass 归原）
-    std::array<float, 4> bandRawDb_       {};       // 未压缩响应（makeup only）
-    std::array<float, 4> bandLiveDb_      {};      // 实际压缩响应（向下弹）
+    // Phase：raw/live 初值用 NaN 标记"未初始化"——首帧 updateCurve 会
+    // 直接吸附到真实值，避免插件刚打开时曲线从 0 dB 慢慢爬上来。
+    static constexpr float kUninitDb = -1.0e30f;   // 哨兵值：isfinite 但远离任何真实 dB
+    std::array<float, 4> bandRawDb_  { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
+    std::array<float, 4> bandLiveDb_ { { kUninitDb, kUninitDb, kUninitDb, kUninitDb } };
     std::array<float, 4> bandRangeDb_     {};       // 段 range 值（每帧读取）
     std::array<float, 4> rangeDisplay_    {};       // range 显示值（拖动动画平滑）
     std::array<float, kCurvePoints> baseDb_ {};     // 未压缩基准逐点（Range 层，静态）

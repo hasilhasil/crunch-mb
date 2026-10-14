@@ -1154,7 +1154,7 @@ void DisplayView::timerCallback()
         }
     }
 
-    updateCurve();
+    updateCurve (dt);
 
     // P1：显示量程平滑追赶目标（τ=90ms，档位切换动画）
     if (std::abs (curveRangeDisplay_ - curveRangeDb_) < 0.01f)
@@ -1302,10 +1302,30 @@ void DisplayView::updateWeights()
     weightsDirty_ = false;
 }
 
-void DisplayView::updateCurve()
+void DisplayView::updateCurve (double dtSeconds)
 {
     if (weightsDirty_)
         updateWeights();
+
+    // Phase：SPI 的显示层平滑辅助（时间常数型，与 curveRangeDisplay_ 同手法）。
+    // dtSeconds 为秒；tau 为时间常数（秒）。首帧（缓存为哨兵值时）直接吸附，
+    // 避免插件刚打开时曲线从 0 dB 慢慢爬上来。
+    auto smoothTowards = [this] (float& cur, float target, double dtSeconds, float tau)
+    {
+        if (cur <= kUninitDb * 0.5f)      // 哨兵值 → 首帧吸附
+        {
+            cur = target;
+            return target;
+        }
+        if (std::abs (target - cur) < 0.005f)
+        {
+            cur = target;                    // 收敛后吸附，避免无限微动
+            return target;
+        }
+        const float k = (float) (1.0 - std::exp (-dtSeconds / (double) tau));
+        cur += (target - cur) * k;
+        return cur;
+    };
 
     // 三层曲线模型（Pro-MB 语义，2026-09-23 用户纠正）：
     //   raw    = Σw×makeup          未压缩响应（BYP 打开时的"原定 EQ 曲线"）
@@ -1319,8 +1339,18 @@ void DisplayView::updateCurve()
         bandRangeDb_[(size_t) b] = rangeDb;
         const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 0.5f;
 
-        bandRawDb_[(size_t) b]  = mk;                                  // 未压缩
-        bandLiveDb_[(size_t) b] = mk + proc_.getBandGainDb (b);        // 实际响应
+        // Phase：SPI（Smart Parameter Interpolation，Pro-MB 对标）
+        // 原来 raw/live 直接取参数瞬时值 → 宿主自动化、切 preset、
+        // 或拖动滑杆时曲线**逐帧跳变**。这里给显示层加时间常数平滑
+        // （τ=60ms，与 curveRangeDisplay_ 的 90ms 同一手法），
+        // 让曲线连续移动而不是瞬移。
+        // ⚠️ 只平滑**显示层**，不碰 proc_.getBandGainDb() 的音频路径——
+        //    声音完全不受影响（这是纯视觉改动）。
+        const float rawTarget  = mk;
+        const float liveTarget = mk + proc_.getBandGainDb (b);
+
+        bandRawDb_[(size_t) b]  = smoothTowards (bandRawDb_[(size_t) b],  rawTarget,  dtSeconds, 0.060f);
+        bandLiveDb_[(size_t) b] = smoothTowards (bandLiveDb_[(size_t) b], liveTarget, dtSeconds, 0.060f);
 
         // P0：一条实时粗线 = 实际响应（**不做 range 截断**，Pro-MB 语义：
         // 黄线允许压过 range 深度；range 只决定"潜在范围"钟型区的底板）

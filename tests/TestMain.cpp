@@ -5827,6 +5827,76 @@ static void testGlobalSelectors()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T54 Phase：SPI 曲线层平滑（Pro-MB Smart Parameter Interpolation）
+//   宿主自动化 / 切 preset 时曲线不逐帧跳变；纯视觉，不动音频路径
+// ------------------------------------------------------------
+static void testSmartParamInterp()
+{
+    std::cout << "\n--- T54 Phase SPI 曲线层平滑 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T54.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    { juce::Image img (juce::Image::ARGB, 920, 620, true);
+      juce::Graphics g (img); dv.paintForTest (g); }
+    for (int t = 0; t < 40; ++t) dv.tickForTest();
+
+    // ① 首帧吸附：初始（哨兵值）后第一帧应直接到真实值，不从 0 爬升
+    {
+        const float y0 = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  首帧后曲线 y(1kHz) = " << y0 << std::endl;
+        check (std::isfinite (y0) && y0 > 0.0f, "T54.1 首帧后曲线已就位（无 0 爬升）",
+               juce::String (y0));
+    }
+
+    // ② 大幅改变 Makeup → 曲线应**渐进**移动，不是瞬移
+    {
+        const float before = dv.curveYAtFreqForTest (1000.0f);
+        mb->setParamPhysicalForTest ("band1Makeup", 12.0f);   // LM 段抬 12 dB
+
+        // 推一帧（16ms）——τ=60ms，所以只应走完约 24% 的路程
+        dv.tickForTest (16.0);
+        const float after1 = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  1 帧后: " << before << " -> " << after1 << std::endl;
+        check (std::abs (after1 - before) > 0.5f,
+               "T54.2 改 Makeup 后曲线开始移动", juce::String (after1));
+
+        // 推到收敛（60 帧 ≈ 1s，远超 5τ）
+        for (int t = 0; t < 60; ++t) dv.tickForTest (16.0);
+        const float converged = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  收敛后: " << converged << std::endl;
+        check (std::abs (converged - after1) > 1.0f,
+               "T54.3 曲线继续移动到新值（非一步跳变）", juce::String (converged));
+    }
+
+    // ③ 平滑不应无限微动：收敛后值必须稳定
+    {
+        const float a = dv.curveYAtFreqForTest (1000.0f);
+        for (int t = 0; t < 10; ++t) dv.tickForTest (16.0);
+        const float b = dv.curveYAtFreqForTest (1000.0f);
+        std::cout << "  稳定性: " << a << " -> " << b << std::endl;
+        check (std::abs (a - b) < 0.01f,
+               "T54.4 收敛后值稳定（无无限微动）", juce::String (a) + " vs " + juce::String (b));
+    }
+
+    // ④ 声音路径不受影响：SPI 只改显示层
+    //    验证 APVTS 里的 Makeup 仍是刚设的 12 dB（平滑没污染参数本身）
+    {
+        const float mk = mb->apvts.getRawParameterValue ("band1Makeup")->load();
+        std::cout << "  APVTS band1Makeup = " << mk << " dB" << std::endl;
+        check (std::abs (mk - 12.0f) < 0.05f,
+               "T54.5 SPI 不污染参数本身（APVTS 仍是 12 dB）", juce::String (mk));
+    }
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -5887,6 +5957,7 @@ int main()
     testGlobalMix();               // T49 Phase 全局 Mix
     testSelfDrawnDropDown();       // T50 Phase 自绘 TextSelect 下拉
     testGlobalSelectors();         // T53 Phase 全局栏 Choice 选择器
+    testSmartParamInterp();        // T54 Phase SPI 曲线层平滑
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
