@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第五十三轮 · R19b：量纲换算收归 facade）
+### 进度总览（更新于 2026-10-14，第五十五轮 · R19c：Choice 索引换算单一来源）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -479,6 +479,7 @@ namespace Anim {
 | **R18 修复：旋钮常态键盘步进**（`175fdde`） | 旋钮在正常态下**方向键/PgUp/Home/Backspace 全部无效**，只能鼠标拖动或滚轮。现补全：↑/↓ 步进 coarse（interval×10）、Shift+方向 = fine（一个 interval）、PgUp/PgDn = 双倍 coarse、Home/End = min/max、Backspace/Delete = 复位默认值（与 Ctrl+click 同义）、Enter/Space = 进文本编辑（与双击同义），全部钳制。**操作表现上**：现在可以 Tab 到任一旋钮用键盘精调，Shift 细调、Backspace 复位都与鼠标等效 | **Pro-MB / Future MB**：两者旋钮均支持方向键步进；Backspace/Delete 复位是 FabFilter 系列惯例 |
 | **R19 修复：popover 滑块键盘/滚轮 + Knee 量纲**（`4ea45c3`） | ① Ratio/Knee/Ext/Detector/Lookahead 五个自绘滑轨此前**只有鼠标拖动**，现补键盘与滚轮（Shift = 细调）。② 更关键：`getParamNorm()` 一直返回实际值而非归一化值，**Knee 滑轨的视觉位置与实际膝宽长期不一致**，每次拖动后握柄还会"跳"回。修后滑轨位置与参数值严格对应。**操作表现上**：拖动 Knee 不再跳，滚轮悬停在滑轨上不再误改频段宽度 | **Pro-MB / Future MB**：两者滑轨控件均支持键盘与滚轮；Pro-MB 的 Knee 滑轨位置与膝宽严格对应 |
 | **R19b：量纲换算收归 facade**（`52ac15a`） | `DisplayView::getParamNorm()` 是 R19 修掉的那个函数的同名同错副本（注释写着陷阱、函数体照旧踩进去），零调用点所以今天无害。结构性根因：facade 有 normalized 写却没有 normalized 读，UI 层只能各自造。现由 `MBBackend::getParamNorm()` 统一提供，`BandPopover` 改为委托、`DisplayView` 的死副本删除。**无可感知变化**——这是消除"将来会踩"的隐患，不是修当前行为 | — （工程重构；对齐 PLAN Phase 6 的去重论证） |
+| **R19c：Choice 索引换算单一来源**（`026129c`） | Choice 参数的"实际值→选项索引"换算在 processor 与 DisplayView 各有一份（外加 R9 修掉的历史坏副本 `getParamNorm*(N-1)`）。两份当前都对，但属于 R19b 刚立为教训 24 的同型风险。现统一为 `Param::choiceIndexFromValue()`。**无可感知变化**——纯属在漂移之前消掉第二份 | — （工程重构） |
 
 ### Phase D 待做
 
@@ -541,8 +542,9 @@ namespace Anim {
 | **R18 ✅ 已修复**（第四十九轮，`175fdde`） | **旋钮常态下无键盘入口**：`Knob::keyPressed` 开头就是 `if (! editing_) return false;`——正常态下方向键/PgUp/Home/Backspace **全部无效**，只能鼠标拖动或滚轮。另外 `setWantsKeyboardFocus(true)` 只在 `openEditor()` 里调，即使补了键盘分支也收不到事件 | 与 R17 同根，是**把 R17 的教训应用到其余自绘控件时发现的第二例**：Phase C 重写旋钮时对标了鼠标交互（拖动/滚轮/Shift 细调/Ctrl+click 复位/双击输入），唯独没做键盘。而"控件是自己的"这个事实让人误以为"没有的就是不需要的" | 常态键盘：↑/↓（←/→ 同义）步进 coarse（interval×10）、Shift+方向 = fine（一个 interval）、PgUp/PgDn = 双倍 coarse、Home/End = min/max、Backspace/Delete = 复位默认值（与 Ctrl+click 同义）、Enter/Space = 进文本编辑（与双击同义），全部钳制在范围内。构造时即 `setWantsKeyboardFocus(true)`。原编辑态逻辑拆为 `keyPressedEditing()` 保持独立。T66 二十一条断言全锁（含"编辑态 Enter/Esc 原有行为未被破坏"） |
 | **R19 ✅ 已修复**（第五十一轮，`4ea45c3`） | **两处**：① **popover 内 5 个自绘滑轨无键盘/滚轮**（Ratio/Knee/Ext/Detector/Lookahead 只有 `beginSliderDrag`/`dragSlider` 鼠标拖动）——R17/R18 清点清单漏掉的**第三例**。② **`getParamNorm()` 返回的是实际值而非归一化值**（`return proc_.getBackend().getParamFast(id)`）——facade 迁移起就存在，与 R7/R9 同族。后果：`sliders_[1]`（Knee）存 0..1 读回变 0..48，**滑轨视觉位置与实际膝宽长期不一致**，且 `applySlider` 总紧跟 `syncFromParams()`，每次拖动后握柄都会"跳" | ① 同 R17/R18：自绘控件只做了鼠标。② 同 R7/R9：**函数名承诺 normalized，交付的却是 actual**——`getRawParameterValue` 是出名的陷阱，`getParamFast` 同样是 | ① 新增 `stepSlider(k, notches, fine)`：Ratio/Knee 连续步进、Ext/Detector 翻转、Lookahead 三档循环；`DisplayView` 的滚轮与键盘在 popover 内转给它（含 `sliderFocus_` 回退）。Lookahead 必须显式写全局参数——`applySlider` 对 k=4 故意不写，否则会被 `syncFromParams()` 覆盖回"看起来没反应"。② `getParamNorm` 改为真实 physical→normalized 换算；**所有想要实际值的调用点改调 `getParamPhysical`**（Lookahead 行、`syncFromParams` 初始化）——不改这些调用点，Lookahead 循环立刻错乱（T55.4 当场抓住） |
 | **R19b ✅ 已修复**（第五十三轮，`52ac15a`） | **同一个 physical→normalized 换算在 UI 层写了两遍，其中一遍是错的**：`DisplayView::getParamNorm()` 与 R19 修掉的 `BandPopover::getParamNorm()` 是同名同错的副本——注释甚至写着"getParamFast 返回实际值，不是 normalized"，函数体照样 `return getParamFast(id)`。它**零调用点**，所以今天无害、明天是上了膛的枪。根因是结构性的：facade 只提供 `getParamFast`（实际值）和 `setParamNormFast`（normalized 写），**没有 normalized 读**，于是每个需要它的 UI 类自己造一个 | 与 PLAN Phase 6 消灭 `paramMap_` 的理由完全同构：**同一份逻辑在两处各存一份，迟早漂移**。Phase 6 清掉了 id→参数的映射重复，却没清掉"量纲换算"的重复 | facade 新增 `MBBackend::getParamNorm()`（与 `getParamFast` 同查找路径，直接返回 `p->getValue()` 即 normalized）；`BandPopover::getParamNorm()` 改为委托，本地副本删除；`DisplayView::getParamNorm()` 直接删除（死代码 + 错语义） |
+| **R19c ✅ 已修复**（第五十五轮，`026129c`） | **Choice 索引换算同样有两份活副本**（+ 一份历史的坏副本）：① `PluginProcessor` 匿名命名空间的 `choiceIndex(atomic<float>*)`；② `DisplayView` 里内联的 `roundToInt(getParamFast(id))`（两处）；③ 历史坏副本是 R9 修掉的 `getParamNorm(...) * (N-1)`（四处）。①②当前都对，但"同一换算两份"正是 R19b 刚立为教训 24 的模式——这次两份都对，下次改一处忘另一处就对不齐 | 教训 24 的**直接延续**：上轮扫完 physical↔normalized，这轮扫 Choice 索引。说明"扫两份实现"不是一次性的动作，而是**每立一条这类教训就要立刻再扫一类** | 新增 `Param::choiceIndexFromValue(float)` 作为单一来源并写清文档；`PluginProcessor::choiceIndex()` 改为委托；`DisplayView` 两处内联副本改用它。**无行为变化**——这是在漂移之前消掉第二份 |
 
-> **教训（第五十三轮补充，共 24 条）**：
+> **教训（第五十五轮补充，共 25 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -563,6 +565,7 @@ namespace Anim {
 > 23. **修一个函数语义之前，先把它的调用点全列出来**。R19：`getParamNorm()` 名字承诺 normalized、实际返回 actual。这个错从 facade 迁移起就在，但**没人发现**——因为"读回来和写进去对不上"只在连续操作时才显形（拖动滑块 → 跳回）。而修它的时候我又差点制造一次回归：只改了函数，没改"其实想要 actual"的调用点，Lookahead 循环当场错乱（T55.4 抓住）。**"改语义"和"改调用点"必须是同一次提交里的同一件事**，且要靠回归测试确认后者没漏。
 > 10. **迁移读取 API 时，要把跟着它的每一段算术都当嫌疑人**。R7 扫了"比较表达式"（`< 0.5f`）就以为扫完了，R9 证明"转换表达式"（`* (N-1)`）同样会留坑。正确做法：grep 出所有 `getParamFast|getParamNorm` 的调用点，逐个问"这个参数的类型是什么（Bool/Choice/Float），这个表达式假设的是哪种语义"。**另外，注释里的错误论断比没有注释更危险**——`getParamNorm` 上那句"Choice 实际值与 normalized 同为 0/1"直接导致了 R9。
 > 24. **"清掉重复"要清到底：不只是映射，还有换算**。R19b：Phase 6 把 `paramMap_`（id→参数映射）从 UI 收进 facade，论证是"同一份逻辑存两处必然漂移"——论证完全正确，但**只执行了一半**。量纲换算（physical↔normalized）同样是"一份逻辑"，UI 层又各自存了一份，于是 BandPopover 一份对的、DisplayView 一份错的。**每次以"去重复"为理由做重构，收尾时都要再问一句：还有什么是两份的？** 特别是那些不在显眼位置的基础换算。
+> 25. **"扫两份实现"不是一次性动作，是每立一条这类教训就立刻再扫一类**。R19c：教训 24 说完"去重要去到底"，我扫了 physical↔normalized（R19b）。但**同一份代码库里还有别的两份实现**——Choice 索引换算就是。这次两份都对，所以没有任何症状提示我它存在，是**主动按模式找**才找到的。**凡是"同一逻辑多处实现"的清理，都要列一张清单逐类扫**（量纲换算 / 索引换算 / 频率↔像素 / dB↔像素 / 钳制规则…），而不是扫到一类就收工。
 > 9. **"平滑"类改动要枚举所有跳变来源，不只是参数变化**。R8：SPI 平滑了参数变化，却漏了 BYP 状态切换——后者同样是瞬时跳变。**并且，测平滑的测试必须制造出真实差值**：不喂音频时 `getBandGainDb()` 返回 0，目标和当前值相等，平滑是空转，断言会假通过。
 
 ---
@@ -764,12 +767,12 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **594**（+307） |
+| `CrunchMBTests` 断言数 | 287 | **606**（+319） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
-| 重构/迁移引入的真 bug | **21 个，全部修复**（R1-R19b，均有测试锁定） | 见 §8.2 |
+| 重构/迁移引入的真 bug | **22 个，全部修复**（R1-R19c，均有测试锁定） | 见 §8.2 |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
 
@@ -815,6 +818,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
 
 
 
