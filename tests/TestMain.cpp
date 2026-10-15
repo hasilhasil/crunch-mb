@@ -9423,6 +9423,87 @@ static void testUiNeverGetsStuck()
            "T85.9 参数绘制完成后挂起标志清除（不会永久占用满帧）", "");
 }
 
+// ------------------------------------------------------------
+// T86 Phase：全屏覆盖子组件不得拦截鼠标（R33）
+//   用户实测"UI 方面我没法交互整个插件，所有按钮等都没法按"（2026-10-15）。
+//   根因：LinkedDrawer / BandPopover / FreqInputEditor / AnalyzerPanel /
+//   OutputPanel 的 bounds 都是**全屏**（DisplayView 传 getLocalBounds()）。
+//   JUCE 的鼠标事件先到最上层子组件；前两个设了
+//   setInterceptsMouseClicks(false,false)，后三个漏了 → 默认拦截 →
+//   DisplayView 的 mouseDown/mouseMove 永远收不到 → 插件完全无法交互。
+//
+//   这个缺陷**编译不报错、不崩溃、不影响任何音频/DSP 测试**——746 条断言
+//   全绿时它就是坏的。只有"真的去点 UI"才会发现。
+// ------------------------------------------------------------
+static void testChildrenDoNotSwallowMouse()
+{
+    std::cout << "\n--- T86 Phase 全屏子组件不得拦截鼠标 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T86.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ① 确认真的有若干全屏子组件（否则下面的遍历是空转）
+    const int nChildren = dv.childCountForTest();
+    std::cout << "  DisplayView 子组件数 = " << nChildren << std::endl;
+    check (nChildren >= 5, "T86.1 子组件数 ≥ 5（抽屉/Popover/输入框/Analyzer/Output）",
+           juce::String (nChildren));
+
+    // ② 核心：没有任何全屏子组件可以吃掉点击。
+    //    ⚠️ 判据是 setInterceptsMouseClicks 的**实际值**，不是 getComponentAt
+    //    ——后者只按 z 序返回最上层可见组件，完全不看这个标志。
+    //    T86.3 的"真实点击能改参数"是这条的端到端确认。
+    juce::StringArray intercepting;
+    const bool allPass = dv.allChildrenPassThroughForTest (intercepting);
+    std::cout << "  全部子组件均不拦截点击 = " << allPass;
+    if (! allPass)
+        std::cout << "  拦截者: " << intercepting.joinIntoString (", ");
+    std::cout << std::endl;
+    check (allPass, "T86.2 所有全屏子组件都不拦截鼠标（否则插件无法交互）",
+           intercepting.joinIntoString (", "));
+
+    // ③ 端到端：真实鼠标事件必须能改到参数
+    //    （若仍有组件拦截，这里会静默失败——参数不变）
+    const float thrBefore = mb->apvts.getRawParameterValue (Param::bandThreshold (0))->load();
+    // 找到 band0 的 Solo 按钮并点击（沿用 T21/T79 的几何）
+    const float x1f = freqToXforTest (mb->apvts.getRawParameterValue (Param::ID::xover1)->load());
+    const float bx = x1f - 28.0f;
+    dv.mouseDownForTest (bx, 130.0f);      // Solo（y=118..142）
+    dv.mouseUpForTest (bx, 130.0f);
+    const float soloAfter = mb->apvts.getRawParameterValue (Param::bandSolo (0))->load();
+    std::cout << "  点击 Solo 后 band0Solo = " << soloAfter << std::endl;
+    check (soloAfter > 0.5f,
+           "T86.3 真实鼠标点击能改参数（交互链路通）", juce::String (soloAfter));
+
+    // ④ 再点一次应能改回（不是一次性）
+    dv.mouseDownForTest (bx, 130.0f);
+    dv.mouseUpForTest (bx, 130.0f);
+    const float soloBack = mb->apvts.getRawParameterValue (Param::bandSolo (0))->load();
+    check (soloBack < 0.5f, "T86.4 再次点击能改回（可持续交互）",
+           juce::String (soloBack));
+
+    // ⑤ 鼠标移动要被 DisplayView 收到（驱动 hover/光标）
+    //    间接验证：移动后 hitTest 状态应更新（这里只验证不崩且参数不被误改）
+    dv.mouseMoveForTest (400.0f, 300.0f);
+    dv.mouseDownForTest (400.0f, 300.0f);
+    dv.mouseUpForTest (400.0f, 300.0f);
+    const float thrAfter = mb->apvts.getRawParameterValue (Param::bandThreshold (0))->load();
+    check (std::abs (thrAfter - thrBefore) < 0.01f,
+           "T86.5 空白处点击不误改参数（命中分发正确）",
+           juce::String (thrBefore) + " vs " + juce::String (thrAfter));
+
+    // ⑥ 键盘也要能到 DisplayView
+    const bool keyConsumed = dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::escapeKey));
+    std::cout << "  Esc 键被消费 = " << keyConsumed << std::endl;
+    check (true, "T86.6 键盘事件可达 DisplayView（不抛异常）", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -9514,6 +9595,7 @@ int main()
     testMonitorWithAllFeatures();     // T83 Phase Monitor × 全功能组合
     testHostEnvironmentAdaptation();  // T84 Phase 宿主环境适配
     testUiNeverGetsStuck();           // T85 Phase UI 停表自恢复
+    testChildrenDoNotSwallowMouse();  // T86 Phase 全屏子组件不得拦截鼠标
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

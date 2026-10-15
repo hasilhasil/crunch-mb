@@ -101,6 +101,35 @@ public:
                                         : 0; }
     /** R32 测试钩子：是否有"参数已变但未绘制"的挂起状态。 */
     bool uiStatePendingForTest() const { return uiStatePending_; }
+
+    /** R33 测试钩子：给定点是否会被**本 DisplayView** 收到（而非被全屏
+     *  覆盖的子组件吃掉）。JUCE 的 getComponentAt 返回最上层可见组件，
+     *  所以它返回 this 才说明交互链路通。
+     *  2026-10-15 用户实测"所有按钮都没法按"即此因。 */
+    /** R33 测试钩子：所有子组件是否都不拦截鼠标点击。
+     *  ⚠️ 不能用 getComponentAt 判断——它只按 z 序返回最上层可见组件，
+     *  不看 setInterceptsMouseClicks。真正决定"谁收到点击"的是那个标志。
+     *  2026-10-15 用户实测"所有按钮都没法按"即 FreqInputEditor /
+     *  AnalyzerPanel / OutputPanel 漏设此标志所致。 */
+    bool allChildrenPassThroughForTest (juce::StringArray& outNames)
+    {
+        bool ok = true;
+        bool a = false, b = false;
+        for (int i = 0; i < getNumChildComponents(); ++i)
+        {
+            auto* c = getChildComponent (i);
+            if (c == nullptr) continue;
+            c->getInterceptsMouseClicks (a, b);
+            if (a)      // allowsClicksOnThisComponent == true → 会吃掉点击
+            {
+                ok = false;
+                outNames.add (juce::String (typeid (*c).name()));
+            }
+        }
+        return ok;
+    }
+    /** R33 测试钩子：子组件数量（确认上面真的遍历到了）。 */
+    int childCountForTest() const { return getNumChildComponents(); }
     // 测试钩子：直接派发鼠标事件（mouseXxx 为 protected；内部经 Desktop 取 MouseInputSource）
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);

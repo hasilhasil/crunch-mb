@@ -26,7 +26,15 @@ public:
     /** 应用回调：divider>=0 时为分割线索引，否则 band>=0 为段索引。 */
     std::function<void (int divider, int band, float hz)> onApply;
 
-    FreqInputEditor() = default;
+    FreqInputEditor()
+    {
+        // R33：bounds 是**全屏**（DisplayView 给它 getLocalBounds()）。
+        // 若沿用默认的 setInterceptsMouseClicks(true)，这个全屏子组件会
+        // 吞掉所有鼠标事件 → DisplayView 的 mouseDown/mouseMove 永远收不到
+        // → 用户实测"所有按钮都没法按"（2026-10-15）。
+        // 命中统一由 DisplayView 分发（与 LinkedDrawer/BandPopover 同一策略）。
+        setInterceptsMouseClicks (false, false);
+    }
     ~FreqInputEditor() override = default;
 
     void paint (juce::Graphics&) override;

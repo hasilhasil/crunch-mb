@@ -33,7 +33,14 @@ public:
     /** 设置变化回调（宿主用来 applyAnalyzerSettings）。 */
     std::function<void()> onSettingsChanged;
 
-    AnalyzerPanel() = default;
+    AnalyzerPanel()
+    {
+        // R33：bounds 是全屏（DisplayView 传 getLocalBounds()）。默认的
+        // setInterceptsMouseClicks(true) 会让这个全屏子组件吞掉所有鼠标事件，
+        // DisplayView 的 mouseDown/mouseMove 收不到 → 插件完全无法交互。
+        // 命中统一由 DisplayView 分发（同 LinkedDrawer/BandPopover）。
+        setInterceptsMouseClicks (false, false);
+    }
     ~AnalyzerPanel() override = default;
 
     void paint (juce::Graphics&) override;
