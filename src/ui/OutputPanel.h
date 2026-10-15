@@ -16,6 +16,7 @@ class CrunchMBAudioProcessor;
 //   → 再点或点面板外收起
 //
 // 内容（Pro-MB Output 面板对标）：
+//   Input Gain    ±36 dB（全局参数 inputGain）
 //   Output Gain   ±36 dB（现有全局参数 outputGain）
 //   Mix           0–200%（全局干湿比）
 //   Global Bypass 开关
@@ -48,6 +49,7 @@ public:
     void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); repaint(); }
 
     // ---- 当前设置 ----
+    float inputGainDb()  const noexcept { return inputGainDb_; }
     float outputGainDb() const noexcept { return outputGainDb_; }
     float globalMixPct() const noexcept { return globalMixPct_; }
     bool  globalBypass() const noexcept { return globalBypass_; }
@@ -55,6 +57,7 @@ public:
     bool  autoGain() const noexcept { return autoGain_; }
 
     /** 测试钩子 */
+    void  setInputGainForTest (float v)  { inputGainDb_ = v; }
     void  setOutputGainForTest (float v)  { outputGainDb_ = v; }
     void  setGlobalMixForTest (float v)   { globalMixPct_ = v; }
     void  setGlobalBypassForTest (bool v) { globalBypass_ = v; }
@@ -62,7 +65,7 @@ public:
 
     // ---- 命中测试 ----
     juce::Rectangle<float> panelRect() const;
-    /** rowOut: 0=OutputGain 1=GlobalMix 2=GlobalBypass 3=AutoGain */
+    /** rowOut: 0=InputGain 1=OutputGain 2=GlobalMix 3=GlobalBypass 4=AutoGain */
     bool hitTestRow (juce::Point<float> p, int& rowOut) const;
     void clickRow (int row);
 
@@ -74,6 +77,7 @@ private:
     Tween tween_;
     juce::Rectangle<int> hostBounds_;
 
+    float inputGainDb_  = 0.0f;
     float outputGainDb_ = 0.0f;
     float globalMixPct_ = 100.0f;
     bool  globalBypass_ = false;

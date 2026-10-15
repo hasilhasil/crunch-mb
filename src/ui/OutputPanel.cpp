@@ -11,7 +11,7 @@ namespace
     constexpr float kDesignH = 620.0f;
     constexpr float kGlobalBarH = 32.0f;
     constexpr float kRowH = 22.0f;
-    constexpr int   kNumRows = 4;   // OutputGain / GlobalMix / GlobalBypass / AutoGain
+    constexpr int   kNumRows = 5;   // InputGain / OutputGain / GlobalMix / GlobalBypass / AutoGain
 }
 
 juce::Rectangle<float> OutputPanel::panelRect() const
@@ -107,11 +107,13 @@ void OutputPanel::clickRow (int row)
 {
     switch (row)
     {
-        case 0:  outputGainDb_ += 3.0f; if (outputGainDb_ > 36.0f)  outputGainDb_ = -36.0f; break;
-        case 1:  globalMixPct_ += 25.0f; if (globalMixPct_ > 200.0f) globalMixPct_ = 0.0f;   break;
-        case 2:  globalBypass_ = ! globalBypass_; break;
+        // Input Gain：±36 dB，3 dB 步进环绕（与 Output Gain 同一操作逻辑）
+        case 0:  inputGainDb_ += 3.0f; if (inputGainDb_ > 36.0f)  inputGainDb_ = -36.0f; break;
+        case 1:  outputGainDb_ += 3.0f; if (outputGainDb_ > 36.0f)  outputGainDb_ = -36.0f; break;
+        case 2:  globalMixPct_ += 25.0f; if (globalMixPct_ > 200.0f) globalMixPct_ = 0.0f;   break;
+        case 3:  globalBypass_ = ! globalBypass_; break;
         // Auto-Gain（Future MB 对标）：响度自动补偿。默认关。
-        case 3:  autoGain_ = ! autoGain_; break;
+        case 4:  autoGain_ = ! autoGain_; break;
         default: break;
     }
     if (onSettingsChanged)
@@ -153,6 +155,7 @@ void OutputPanel::paint (juce::Graphics& g)
 
     struct Item { const char* label; juce::String value; bool on; };
     const Item items[kNumRows] = {
+        { "Input Gain",  juce::String (inputGainDb_, 1) + " dB",  false },
         { "Output Gain", juce::String (outputGainDb_, 1) + " dB", false },
         { "Mix",         juce::String ((int) globalMixPct_) + " %",  false },
         { "Global Bypass", globalBypass_ ? "ON" : "OFF",       globalBypass_ },

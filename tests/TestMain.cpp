@@ -4839,7 +4839,13 @@ static void testOutputPanelSticky()
         check (dv.isOutputStickyForTest(), "T44.7 前置：Output 面板已 sticky", "");
 
         const auto pr = dv.outputPanelRectForTest();
-        const float rowY = pr.getY() + pr.getHeight() * 0.20f;   // 第一行 = Output Gain
+        // R24：面板从 3 行扩到 5 行（InputGain / OutputGain / Mix / GlobalBypass /
+        //   AutoGain）。这里用与 OutputPanel::hitTestRow 相同的精确行几何取
+        //   **第 2 行（row 1 = Output Gain）**，而不是早先按高度比例估的"第一行"。
+        const float kRowH = 22.0f, kNumRows = 5.0f;
+        const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
+        const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
+        const float rowY = top + rowH * 1.0f + rowH * 0.5f;   // 第 2 行 = Output Gain
         dv.mouseDownForTest (pr.getCentreX(), rowY);
         dv.mouseUpForTest (pr.getCentreX(), rowY);
 
@@ -8037,13 +8043,14 @@ static void testAutoGainUiRow()
     check (! dv.outputPanelAutoGainForTest(),
            "T76.3 打开时面板副本与参数一致（关）", "");
 
-    // ④ 点第 4 行（row 3）→ 参数应翻转为开
+    // ④ 点第 5 行（row 4 = Auto-Gain）→ 参数应翻转为开
     const auto pr = dv.outputPanelRectForTest();
-    // 行几何与 OutputPanel::hitTestRow 相同：top = y + H*(7/(4*22+14))
-    const float kRowH = 22.0f, kNumRows = 4.0f;
+    // 行几何与 OutputPanel::hitTestRow 相同：top = y + H*(7/(N*22+14))
+    // R24：kNumRows 3→4→5（加了 InputGain 与 AutoGain），Auto-Gain 现在在 row 4
+    const float kRowH = 22.0f, kNumRows = 5.0f;
     const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
     const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-    const float rowY = top + rowH * 3.0f + rowH * 0.5f;      // 第 4 行中心
+    const float rowY = top + rowH * 4.0f + rowH * 0.5f;      // 第 5 行（Auto-Gain）中心
     const float rowX = pr.getCentreX();
 
     dv.mouseDownForTest (rowX, rowY);
@@ -8074,6 +8081,121 @@ static void testAutoGainUiRow()
     for (int t = 0; t < 20; ++t) dv.tickForTest();
     check (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load() < 0.5f,
            "T76.7 关闭面板不改变参数", "");
+}
+
+// ------------------------------------------------------------
+// T77 Phase：Input Gain / Oversampling 的 UI 暴露（R24，教训 33）
+//   按教训 33 核对全部 85 个参数时发现三个"用户碰不到"的：
+//     · inputGain     输入增益——UI 零引用
+//     · oversampling  过采样档位——全局栏只有 Phase/Slope/Quality/Lookahead
+//     · enabled       插件总开关——UI 只有"Global Bypass"（四段 Mix=0 宏），
+//                      不是同一个东西
+//   本轮补前两个；enabled 留待下一轮（它需要新的顶栏/底栏控件）。
+// ------------------------------------------------------------
+static void testInputGainAndOversamplingUi()
+{
+    std::cout << "\n--- T77 Phase InputGain / Oversampling UI 暴露 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T77.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ===== Input Gain（Output 面板 row 0）=====
+    mb->setParamPhysicalForTest (Param::ID::inputGain, 0.0f);
+    dv.openOutputPanelForTest();
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+    check (dv.isOutputOpenForTest(), "T77.1 Output 面板可打开", "");
+
+    const auto pr = dv.outputPanelRectForTest();
+    const float kRowH = 22.0f, kNumRows = 5.0f;
+    const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
+    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
+
+    // ① 点 Input Gain 行（row 0）→ 参数 +3 dB
+    {
+        const float rowY = top + rowH * 0.0f + rowH * 0.5f;
+        const float rowX = pr.getCentreX();
+        const float before = mb->apvts.getRawParameterValue (Param::ID::inputGain)->load();
+        dv.mouseDownForTest (rowX, rowY);
+        dv.mouseUpForTest (rowX, rowY);
+        const float after = mb->apvts.getRawParameterValue (Param::ID::inputGain)->load();
+        std::cout << "  Input Gain: " << before << " -> " << after << std::endl;
+        check (std::abs (after - (before + 3.0f)) < 0.01f,
+               "T77.2 点 Input Gain 行 → 参数 +3 dB",
+               juce::String (before) + " -> " + juce::String (after));
+    }
+
+    // ② 从参数侧设为 +12，重开面板 → 副本应反映（反向同步）
+    {
+        mb->setParamPhysicalForTest (Param::ID::inputGain, 12.0f);
+        dv.openOutputPanelForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        check (std::abs (dv.outputPanelInputGainForTest() - 12.0f) < 0.01f,
+               "T77.3 参数 +12 时打开面板，副本反映 +12（反向同步）",
+               juce::String (dv.outputPanelInputGainForTest()));
+    }
+
+    // ===== Oversampling（全局栏第 5 个选择器）=====
+    // ③ 全局栏应有 5 个选择器。
+    //    ⚠️ globalSelectorIds_/Rects_ 是在 drawGlobalBar()（paint）里填充的，
+    //    必须真正画一次才有内容——只 tick 不 paint 时它们是空的。
+    { juce::Image img (juce::Image::ARGB, 920, 620, true);
+      juce::Graphics g (img); dv.paintForTest (g); }
+    check (dv.globalSelectorCountForTest() == 5,
+           "T77.4 全局栏选择器数 = 5（Phase/Slope/Quality/Lookahead/Oversampling）",
+           juce::String (dv.globalSelectorCountForTest()));
+
+    // ④ 第 5 个应是 oversampling
+    check (dv.globalSelectorIdForTest (4) == Param::ID::oversampling,
+           "T77.5 第 5 个选择器绑定 oversampling",
+           dv.globalSelectorIdForTest (4));
+
+    // ⑤ 点它 → 下拉打开且项数 = 3（Off/2x/4x）
+    {
+        const auto r = dv.globalSelectorRectForTest (4);
+        dv.mouseDownForTest (r.getCentreX(), r.getCentreY());
+        dv.mouseUpForTest (r.getCentreX(), r.getCentreY());
+        check (dv.isDropDownOpenForTest(), "T77.6 点 Oversampling 选择器 → 下拉打开", "");
+        check (dv.dropDownCountForTest() == 3,
+               "T77.7 Oversampling 下拉 3 项（Off/2x/4x）",
+               juce::String (dv.dropDownCountForTest()));
+    }
+
+    // ⑥ 选第 2 项（2x）→ 参数应变 index 1
+    {
+        const auto dr = dv.dropDownRectForTest();
+        const float rowHh = dr.getHeight() / 3.0f;
+        const float iy = dr.getY() + rowHh * 1.0f + rowHh * 0.5f;
+        dv.mouseDownForTest (dr.getCentreX(), iy);
+        dv.mouseUpForTest (dr.getCentreX(), iy);
+        const float v = mb->apvts.getRawParameterValue (Param::ID::oversampling)->load();
+        std::cout << "  选 2x 后 oversampling = " << v << std::endl;
+        check (std::abs (v - 1.0f) < 0.01f,
+               "T77.8 选 2x → oversampling 参数 = 1", juce::String (v));
+    }
+
+    // ⑦ 选第 3 项（4x）→ 参数应变 index 2
+    {
+        dv.mouseDownForTest (dv.globalSelectorRectForTest (4).getCentreX(),
+                             dv.globalSelectorRectForTest (4).getCentreY());
+        dv.mouseUpForTest (dv.globalSelectorRectForTest (4).getCentreX(),
+                           dv.globalSelectorRectForTest (4).getCentreY());
+        const auto dr = dv.dropDownRectForTest();
+        const float rowHh = dr.getHeight() / 3.0f;
+        const float iy = dr.getY() + rowHh * 2.0f + rowHh * 0.5f;
+        dv.mouseDownForTest (dr.getCentreX(), iy);
+        dv.mouseUpForTest (dr.getCentreX(), iy);
+        const float v = mb->apvts.getRawParameterValue (Param::ID::oversampling)->load();
+        std::cout << "  选 4x 后 oversampling = " << v << std::endl;
+        check (std::abs (v - 2.0f) < 0.01f,
+               "T77.9 选 4x → oversampling 参数 = 2", juce::String (v));
+    }
 }
 
 int main()
@@ -8159,6 +8281,7 @@ int main()
     testExpandEndToEndAudio();       // T74 Phase Expand 端到端音频效果
     testAutoGain();                  // T75 Phase Auto-Gain 响度匹配
     testAutoGainUiRow();             // T76 Phase Output 面板 Auto-Gain 行
+    testInputGainAndOversamplingUi(); // T77 Phase InputGain / Oversampling UI 暴露
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

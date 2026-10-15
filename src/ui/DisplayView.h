@@ -285,6 +285,25 @@ public:
     {
         return outputPanel_ != nullptr && outputPanel_->autoGain();
     }
+    /** T77 测试钩子：Output 面板的 Input Gain 副本值。 */
+    float outputPanelInputGainForTest() const
+    {
+        return outputPanel_ != nullptr ? outputPanel_->inputGainDb() : 0.0f;
+    }
+    /** T77 测试钩子：全局栏选择器数量。 */
+    int globalSelectorCountForTest() const { return globalSelectorIds_.size(); }
+    /** T77 测试钩子：第 i 个全局栏选择器绑定的参数 id。 */
+    juce::String globalSelectorIdForTest (int i) const
+    {
+        return (i >= 0 && i < globalSelectorIds_.size())
+                   ? globalSelectorIds_[i] : juce::String();
+    }
+    /** T77 测试钩子：第 i 个全局栏选择器的矩形。 */
+    juce::Rectangle<float> globalSelectorRectForTest (int i) const
+    {
+        return (i >= 0 && i < globalSelectorRects_.size())
+                   ? globalSelectorRects_[i] : juce::Rectangle<float>();
+    }
     /** T76 测试钩子：等价于点击 OUT 按钮（含"打开前从参数同步副本"）。 */
     void openOutputPanelForTest()
     {
@@ -292,6 +311,7 @@ public:
             return;
         outputPanel_->setHostBounds (getLocalBounds());
         // 与 mouseDown 的 OUT 按钮分支一致：先同步副本再打开，避免显示过期值
+        outputPanel_->setInputGainForTest (getParamPhysical (Param::ID::inputGain));
         outputPanel_->setOutputGainForTest (getParamPhysical (Param::ID::outputGain));
         outputPanel_->setGlobalMixForTest (getParamPhysical (Param::ID::globalMix));
         outputPanel_->setGlobalBypassForTest (isAllBypassed());

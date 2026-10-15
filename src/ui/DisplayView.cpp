@@ -839,9 +839,11 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     // Phase E-4：hairline 提亮
     drawHairlineH (g, y0, 0.0f, W, pal_.gridZ.withAlpha (0.6f));
 
-    // 全局选择器（Phase / Slope / Quality / Lookahead）
+    // 全局选择器（Phase / Slope / Quality / Lookahead / Oversampling）
     // RESEARCH_UI §五 P1：原来是"画着 ▼ 却点不动的静态文字"。
     // 现在每项都可点，弹出与 Display Range 同一套的自绘下拉（Pro-MB drop-down 对标）。
+    // Phase（R24）：补 Oversampling —— 2026-10-14 新增的参数，全局栏此前漏了它，
+    //   用户只能靠宿主自动化切换（教训 33：功能要包含"用户能碰到它"）。
     g.setFont (MBTheme::font (MBTheme::regular(), 11.5f));
     float x = sx (14.0f);
     globalBarY_ = y0;
@@ -886,6 +888,7 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     item ("Slope:",    Param::ID::xoverSlope);
     item ("Quality:",  Param::ID::linearQuality);
     item ("Lookahead:", Param::ID::lookahead);
+    item ("Oversmp:",  Param::ID::oversampling);
 
     // Analyzer 按钮（Pro-MB 底栏 Analyzer 对标）——占据原 IN 读数位置；
     // 点击弹出二级菜单（Resolution / Speed / Tilt / Freeze / Pre-Post）。
@@ -2775,6 +2778,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         if (outputPanel_ != nullptr)
         {
             // 打开前先从参数同步当前值，避免显示过期副本
+            outputPanel_->setInputGainForTest (getParamPhysical (Param::ID::inputGain));
             outputPanel_->setOutputGainForTest (getParamPhysical (Param::ID::outputGain));
             outputPanel_->setGlobalMixForTest (getParamPhysical (Param::ID::globalMix));
             outputPanel_->setGlobalBypassForTest (isAllBypassed());
@@ -3152,6 +3156,9 @@ void DisplayView::applyOutputSettings()
         return;
     // Output Gain 直接写全局参数（现有 outputGain，±36 dB）
     setParamPhysical (Param::ID::outputGain, outputPanel_->outputGainDb());
+
+    // Input Gain（Pro-MB Output 面板对标，R24 补 UI 暴露）
+    setParamPhysical (Param::ID::inputGain, outputPanel_->inputGainDb());
 
     // Phase：全局 Mix 0-200% 已接线 DSP（MultibandDSP::globalMixLin_）
     setParamPhysical (Param::ID::globalMix, outputPanel_->globalMixPct());
