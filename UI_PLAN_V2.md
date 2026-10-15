@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-15，第七十八轮 · R31：mono 崩溃 + 切采样率延迟不更新（已修，VST3 已重装））
+### 进度总览（更新于 2026-10-15，第七十九轮 · ✅ 最终验收通过，目标完成）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -574,7 +574,8 @@ namespace Anim {
 | **S4 ✅ 已扫完，无缺陷**（第七十六轮） | **测试套件稳定性 + 产物真实加载**（两项此前从未验证过）：① **连跑 8 次测试套件**，8/8 完全一致——`exit 0`、`PASS 722 / FAIL 0`、零失败行。R20 曾是偶发崩溃（`0xC0000005`，花了整轮才定位到是测试 UB 而非线程竞争），其修复经受住了时间检验；② **CMake 只有一个 `juce_add_plugin` 目标**（`FORMATS VST3 Standalone`），确认两种格式产物齐全：`Crunch MB.exe`（Standalone）与 `Crunch MB.vst3/Contents/x86_64-win/Crunch MB.vst3`；`moduleinfo.json` 含三个标准类（Audio Module / Component Controller / Plugin Compatibility），CID 编码 `Kilo`+`CRMB`，SDK VST 3.7.12，Sub Categories `Fx|Dynamics`；③ **真实启动 Standalone**：12 秒后仍在运行、编辑器窗口标题 "Crunch MB"、收到关闭请求后干净退出——这覆盖了**插件构造、编辑器创建、消息循环**三件事，而这三件编译通过都不能证明 | — （验证空白，非缺陷。记它是为了让后人知道这一类已查过，见教训 30） |
 | **成品 VST3 已装机**（第七十七轮） | 用户要求在宿主里测试，故把 Release 构建的 VST3 装到宿主默认扫描路径。**安装位置**：`%LOCALAPPDATA%\Programs\Common\VST3\Crunch MB.vst3`（用户级 VST3 目录，Ableton / Reaper / Studio One / FL 默认都会扫，且不需要管理员权限）。**系统级** `C:\Program Files\Common Files\VST3\` 写入被拒（当前会话非 Administrator，沙箱亦拒绝），已向用户说明。装机前旧的同名安装**已备份**为 `_CrunchMB_backup_<时间戳>.vst3`（留在系统目录，确认新版无误后可删）。装机后三项校验：① 文件树完整（`moduleinfo.json` + `x86_64-win/Crunch MB.vst3` 4.56 MB）；② **SHA256 与构建产物完全一致**（`68ED5AE9…D80DE`）；③ **`LoadLibrary` 真实加载成功**（宿主加载 VST3 就是这个调用），handle 非空、`FreeLibrary` 正常返回 | — （部署动作，非缺陷） |
 | **R31 ✅ 已修复**（第七十八轮，`64163bb`） | **mono 输入第一块即崩（`0xC0000005`）** + **切采样率后延迟上报不更新**。两者都在宿主适配路径上，而**全部既有测试都写死 48kHz + 512 块 + 立体声**，从未碰过别的组合。① 崩溃根因：`processBlock` 用 `getMainBusNumInputChannels()` 推通道数，但它与 **buffer 实际通道数可能不一致**（实测 `mainInCh=2` 而 buffer 只有 1 通道），于是 `chans>1` 分支调 `buffer.getSample(1,i)` / `getWritePointer(1)` **越界**。修法：以 buffer 实况收敛 `safeCh`，并给 `MultibandDSP::process`/`processChain` 加显式 `numChannels` 参数（不再信任 prepare 时捕获的值）。② 延迟根因：`applyStructure()`/`updateLatency()` 只在 `setStateInformation` 里跑，而**宿主切工程采样率只调 `prepareToPlay`**，分频器/过采样器继续按旧采样率跑、延迟上报停留旧值。修法：`prepareToPlay` 里补一次结构重应用 + 延迟刷新。修复后实测延迟 **48k=582 → 96k=1158**（正好 2 倍） | **两类教训**：① "宿主会告诉我几个通道"不能信——**以 buffer 实况为准**。② **"什么时机重算派生状态"要按宿主的调用序列设计**，不能只按自己觉得合理的时机（参数变更）。宿主切采样率走的是 prepareToPlay，不是 setStateInformation | T84 十条断言（746/0）：五种采样率（44.1k/48k/88.2k/96k/192k）输出有限非静音且延迟随率缩放；七种块长（含非 2 幂的 333）；**mono in/out（原先崩的）**；mono 进/stereo 出；切采样率后稳定且延迟跟踪新率；切块长后稳定；release/prepare 反复 3 次正常。**VST3 已重新构建并装机**（旧版备份，SHA256 校验一致，LoadLibrary 通过） |
-> **教训（第七十八轮补充，共 43 条）**：
+| **最终验收 ✅ 目标完成**（第七十九轮） | 按目标"插件做完后进行测试，测试完整即目标完成"执行终检，四项全过：① **git 同步**：`origin/master` = `HEAD` = `7f72923`，无 ahead/behind，工作树干净，源码零诊断残留；② **三目标完整构建**：`CrunchMB` / `CrunchMB_VST3` / `CrunchMBTests` 全部 OK，产物齐全（Standalone exe 4.88 MB + VST3 module 4.56 MB + Tests exe 4.84 MB）；③ **完整测试套件**：**87 个测试组 / 746 条断言，PASS 746 / FAIL 0，exit 0**，另复跑 3 次仍 3/3 全绿（稳定性确认）；④ **成品 VST3 装机**：`%LOCALAPPDATA%\Programs\Common\VST3\Crunch MB.vst3`，SHA256 与最新构建一致（`8F5E3FB8…`），`LoadLibrary` 通过（宿主加载路径），旧版已备份 | — （终检记录，非缺陷） |
+> **教训（第七十九轮补充，共 43 条，终检无新增）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -871,6 +872,7 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
 
 
 
