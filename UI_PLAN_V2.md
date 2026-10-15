@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第六十三轮 · 固定数组入口清单扫完，无新缺陷）
+### 进度总览（更新于 2026-10-14，第六十四轮 · S2：DSP 声音路径审完 + T74 端到端）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -485,6 +485,7 @@ namespace Anim {
 | **R21 修复：popover 读取入口钳制不一致**（`1e37a68`） | `sliderValue(k)` 无 `jlimit` 而同义的 `sliderValueForTest(k)` 有；`popoverValueForTest(k)` 同样无。当前调用点都传已验证索引所以今天不出事，但属于"下一个调用方只会看那个恰好安全的入口"。已统一加钳制。**无可感知变化**——纯属消隐患 | — （工程修复） |
 | **R22 修复：DisplayView 访问器钳制**（`4b06e05`） | 按教训 28 的"按读什么归类"继续扫，`rangeEdgePath_` 的三个入口里只有 `bandLevelDbForTest` 有钳制，`getRangeEdgeRect`/`getRangeEdgeLenForTest` 无；`getRangeDisplay` 对 `rangeDisplay_` 同样无。已统一补齐。**无可感知变化**——三个入口当前都无调用点 | — （工程修复） |
 | **固定数组入口清单扫完（S1，无缺陷）** | 按教训 29 列清全部按段索引的固定数组并逐个查入口钳制，余下部分（API 按值返回的 array、DSP 音频线程内联索引、DisplayView 其余段数组）**均无越界风险**。顺手删掉 `setBandGroupDelta` 的恒等冗余 | — （工程清理；无可感知变化） |
+| **S2：DSP 声音路径审完 + T74 端到端验证 Expand**（`b2a4868`） | 目标要求"对齐声音表现"，故本轮专审 DSP 可闻路径：膝宽曲线（标准 soft-knee 二次插值 ✓）、`|Range|` 钳制对 Expand 生效 ✓、lookahead 始终预热不 click ✓、mono 右声道写入/读取回退 ✓——**无新缺陷**。同时发现 Expand 此前只有裸 `BandCompressor` 的静态曲线测试（T47），**没喂音频、没走整条链**，违反 Phase C 立的规矩。补 T74：峰谷比 **Compress 6.29× → Expand 37.69×**，动态范围确实扩大约 6 倍 | **Pro-MB**：Expand 档位用于"修复被过度压缩的音轨"，即扩大动态范围——T74 的峰谷比就是它的量化签名 |
 
 ### Phase D 待做
 
@@ -555,7 +556,8 @@ namespace Anim {
 | **R21 ✅ 已修复**（第六十轮， `1e37a68`） | **同一个读取的两个入口，一个钳制一个不钳**：`BandPopover::sliderValue(k)` 是 `return sliders_[(size_t) k];`（无钳制），而同义的 `sliderValueForTest(k)` 有 `jlimit(0,4,k)`。`popoverValueForTest(k)` 对 `values_` 同样无钳制。当前所有调用点都传的是已验证索引（`hitTestSlider` 保证 0..4），所以今天不出事——但"下一个调用方只会去看那个恰好安全的入口" | 与 R19b/R19c 同根：**两份实现必然一份漏**。这次连"两份"都算不上——是同一语义的两个入口，一个细心一个不细心 | `sliderValue()` 与 `popoverValueForTest()` 都加 `jlimit`；越界返回端点值而非越界读。T72 六条断言：越界返回有限值、−1 钳到索引 0、99 钳到索引 4（用端点值反证）、`popoverValueForTest` 同样钳制、合法索引不受影响 |
 | **R22 ✅ 已修复**（第六十二轮，`4b06e05`） | **按"读什么"归类继续扫，发现 `rangeEdgePath_` 的三个入口里只有一个有钳制**：`bandLevelDbForTest` 有范围检查，而 `getRangeEdgeRect` / `getRangeEdgeLenForTest` 直接 `rangeEdgePath_[(size_t) band]` 无钳制；`getRangeDisplay` 对 `rangeDisplay_` 同样无。三个当前都无调用点，但都是公开/测试入口 | 教训 28 的**直接延续**：上轮按"读什么"归类找到了 BandPopover 的 `sliders_`/`values_`，这轮找到 DisplayView 的 `rangeEdgePath_`/`rangeDisplay_`。**这个扫法确实有效，但要按数组逐个过，不能只扫一个文件** | 三个访问器统一加 `0..kNumBands-1` 钳制，与 `bandLevelDbForTest` 一致。附带清掉一个**永远不可能失败的守卫**：`curveDb_` 是 `std::array<float,241>`，`empty()` 恒为 false，原代码却写着 `if (! curveDb_.empty())`——看起来在防空，实际从来没防过（三个容器始终等长所以索引本就安全），改为按真实不变量直写并注明 |
 | **S1 ✅ 已扫完，无缺陷**（第六十三轮） | 按教训 29 的清单扫完**余下全部固定数组**，未发现新缺陷。清单与结论：① `IPluginBackend::gainReductionDb` / `IMBBackend::actualValues` / `MBGroupSetResult` —— 均为**按值返回**的 `std::array<float,4>`，调用方索引越界属调用方责任，与"访问器内部越界"不同类；② `setBandGroupDelta` 内 `res.actualValues[b]` 的 `b` 由 `b < Param::kNumBands` 固定循环保证；③ DSP 侧 `laBuf_`/`gStore_`/`bandStore_`/`scStore_`/`gateT_`/`deltaT_`/`gateSm_`/`deltaSm_`/`makeupLin_`/`mixLin_`/`mixSmooth_`/`extEnabled_` —— 全是音频线程内联索引，无公开入口；④ `DisplayView` 其余 `bandPeakDb_`/`bandPeakHoldMs_`/`bandGainTotalDb_`/`bandRawDb_`/`bandLiveDb_`/`bandDisplayDb_`/`bandRangeDb_`/`lastDrawnGainDb_`/`lastDrawnRange_`/`bandWeights_`/`bypassMemo_`/`selT_`/`hoverT_`/`bypT_`/`bandBypassed_` —— 索引全部来自固定循环或已校验的 `selectedBand_` | — | 顺手删掉 `setBandGroupDelta` 里的恒等冗余（`res.applied = any; if (!any) res.applied = false;` 后半句恒等于前半句结果）。**记这条是为了让后人知道这一类已经查过**（教训 30） |
-> **教训（第六十三轮补充，共 30 条）**：
+| **S2 ✅ 已扫完，无缺陷**（第六十四轮，`b2a4868`） | **DSP 声音路径审查**（目标要求"对齐声音表现"）：① 膝宽曲线是标准 soft-knee 二次插值，正确；② `|Range|` 钳制对 Expand 同样生效（`jlimit(-lim,lim,gainDb)` 在 `sign` 取负之后，两侧都受限）；③ lookahead 环形延迟**始终写环预热**，切入不会 click；④ mono 正确跳过 `bandStore_[b][1]` 的冗余写，且所有读取方都回退到 `[0]`；⑤ `gL`/`gR` 在 mono 下也都写。**结论：无新缺陷**。同时发现 Expand 只有静态传输曲线测试（T47，跑在裸 `BandCompressor` 上），**没有喂音频、没走整条链**——违反 Phase C 立的"数据驱动图层必须喂音频"规矩，故补 T74 端到端验证 | — | T74 经整条链（分频→段压缩→求和）喂音频：高声压下 Compress 峰值 0.284 / Expand 1.864；低声压下两者都基本不动（Expand 不抬噪声底）；**峰谷比 Compress 6.29× → Expand 37.69×**，即动态范围确实扩大约 6 倍——这是 expander 的听感签名 |
+> **教训（第六十四轮补充，共 31 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -585,6 +587,7 @@ namespace Anim {
 ---
 > 29. **按数组扫，不要按文件扫**。R22：教训 28 的扫法有效，但上轮只扫了 `BandPopover`（因为缺陷是在那儿发现的），`DisplayView` 里的 `rangeEdgePath_` 同样有三个入口、同样只有一个钳制。**正确做法是列出所有"按段索引的固定数组"，然后逐个数组看它有几个入口、每个入口有没有钳制**——按文件扫会漏掉同名模式的其它实例。本次清单：`sliders_`/`values_`（BandPopover，已修）、`rangeEdgePath_`/`rangeDisplay_`（DisplayView，已修）、`bandLevelDb_`（DisplayView，本就有钳制）、`laBuf_`/`gStore_`/`bandStore_`（MultibandDSP，音频线程内联索引、无公开入口）。
 > 30. **扫完一类要明确记下"已扫完"，否则下一轮会重复扫**。第六十三轮按教训 29 的清单扫完了余下全部固定数组（含 `IPluginBackend::gainReductionDb`、`IMBBackend::actualValues`、`MBGroupSetResult`、DSP 侧 `laBuf_`/`gStore_`/`bandStore_`/`gateT_`/`deltaT_`/`makeupLin_` 等），**未发现新缺陷**。结论本身要记录：`setBandGroupDelta` 里 `res.actualValues[b]` 的索引由 `b < Param::kNumBands` 的固定循环保证；API 侧数组都是**按值返回**的 `std::array<float,4>`，调用方索引越界属调用方责任，与"访问器内部越界"不同类。**"扫完无事可记"和"没扫"在文档上必须区分开**，否则后人无法判断这一类是否已经查过。
+> 31. **"功能做完了"不等于"功能被验证过了"——要问的是"它的声音表现有测试吗"**。S2：Expand 的静态传输曲线早有测试（T47），但那是跑在裸 `BandCompressor` 上的几个 `getStaticGainDb()` 调用，**没喂音频、没走整条链**。也就是说这个功能"代码正确"从未被证明"听起来对"。补了 T74 端到端（分频→段压缩→求和）后才拿到可感知的证据：峰谷比 6.29× → 37.69×。**凡是可闻的功能，验收标准应该是"喂音频测输出"，而不是"调函数查返回值"**——后者只能证明算术对，不能证明声音对。
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -783,7 +786,7 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **634**（+347） |
+| `CrunchMBTests` 断言数 | 287 | **640**（+353） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
@@ -834,6 +837,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
 
 
 
