@@ -401,7 +401,7 @@ namespace Anim {
 | **B-3 移除绘图区上下硬边框** | 原来把频谱区框成盒子的两条 1px 硬线删除，**频谱全出血**铺满窗口 | **Pro-MB**：频谱铺满，无绘图区边框 |
 | **（附带）修复频谱 z-order 回归** | 见下方"回归记录"——不修则**播音频时频谱会盖住 EQ 曲线、双刻度、分割线、段名、电平表** | Pro-MB 的图层顺序：频谱在最底，曲线/刻度/控件在其上 |
 
-### Phase B 待做
+### Phase B 交付记录（全部完成）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
@@ -433,7 +433,7 @@ namespace Anim {
 | **C-4 Range 滑杆可见抓手**（`3b52675`） | Range 钟型下缘**本来就能拖，但没有任何可见抓手**，用户根本不知道那里可交互。现在选中/hover 段时，下缘段中心处出现一个胶囊手柄（带两道暗示可拖的小刻痕），拖动时高亮。命中区在段中心从 ±6px 加到 ±10px，让抓手真的好抓 | **Pro-MB**：每段一个可直接抓取的范围滑杆 |
 | **C-6 DynamicsMode Compress/Expand + 分段按钮**（`2539097`） | **全部 C/D 项里唯一需要动 DSP 的**。每段新增 COMPRESS/EXPAND 分段按钮：Compress = 朝阈值压（经典）；**Expand = 增益曲线取负，阈值以上抬升、扩大动态范围**——用于修复被过度压缩的音轨，或做门限扩展式清晰化。阈值/比率/膝宽/Range 语义全部不变，只翻方向；Range 钳制对 Expand 同样生效（实测 Range −6 → Expand 上限 +6 dB）。UI 是 Pro-MB 式 segmented：两段等宽，选中段实心 accent + 白字，未选中透明 + dim 字，带容器外框 | **Pro-MB**：每段 COMPRESS/EXPAND 分段按钮。官方帮助 "Expand mode increases the dynamic range" |
 
-### Phase C 待做（全部完成）
+### Phase C 交付记录（全部完成）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
@@ -493,7 +493,7 @@ namespace Anim {
 | **R26：Solo/Mute/Delta 三语义**（`2225f18`） | 逆向报告 `50_COMPARISON.md` 第 211 行明载的"值得抄的交互细节"第 2 条：**"按住 = 临时，Ctrl-点击 = 独占（solo/mute）——一个按钮三种语义"**。我们此前只有"点击 = 切换"。现补全：① 点击 = 切换（`mouseDown` 即时生效，保原行为）；② **按住 ≥ 250ms = 临时**（松手还原成按下前状态，试听某段不会卡在开）；③ **Ctrl/Cmd+点击 = 独占**（solo band0 时其他段自动 unsolo——四段插件里这才让 solo 有用）。**Delta 故意不参与独占**：TECH_SPEC §3.7 允许多段同开 Delta，因为对比多段正是它的用途。**操作表现上**：按住 S 试听 LOW 段，松手自动恢复原状；Ctrl+点 S 只听 LOW 一段 | **Pro-MB**：手册原文"press and hold for momentary, ctrl-click for exclusive (solo/mute)" |
 | **R27：LINKED 抽屉端到端声音验证**（`7a13c03`） | T35 只验证参数联动，**从未喂音频**。T80 补端到端：四段同设激进参数 + 宽带噪声过整条链，测**每段 GR**（非合计）：基准 1.0/4.8/10.8/16.5 dB → Threshold 偏移 −10dB 后 7.2/12.6/19.5/25.4 dB → 回升后 0.1/1.8/6.8/12.2 dB。**四段每一段都同向变化（4/4）**。**操作/声音表现上**：在 LINKED 抽屉里拖 Threshold 旋钮，四段压缩深度一起变——这正是"全局 Scale"；拖 Attack/Release 则四段时间常数一起变（"全局 Time"） | **Future MB**：`50_COMPARISON.md` 第 222 行"全局 Time / Scale 统调——一次改所有段的 attack/release 或深度" |
 
-### Phase D 待做
+### Phase D 交付记录（全部完成）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
@@ -504,7 +504,7 @@ namespace Anim {
 | ~~Alt+拖 OUTPUT = Output Gain~~ | ✅ 已做（`6f3cf53`，见上） | Pro-MB Alt-drag Output = makeup gain |
 | ~~MIDI Learn~~ | ✅ 已做（`9ca898d`，见上；**可视化学习流程**，不含 MIDI 消息路由） | Pro-MB MIDI learn 流程 |
 
-### Phase D/E 待做（对齐目标）
+### Phase D/E 交付记录（对齐目标，全部完成）
 
 | 项 | 预期表现 | 对齐对象 |
 |---|---|---|
@@ -611,10 +611,14 @@ namespace Anim {
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
 | A | 结构地基（Anim.h + 4 bug + 参数缓存 + 拆 4 类） | ✅ **完成**（4/4 抽取） | `25ccd25` `3f03c6b` `837cabd` `04fb573` `799a706` |
-| B | 布局改造（频谱全出血 / 分割线 / 刻度） | ⬜ 未开始 | — |
-| C | 控件改造（旋钮四态 / BandLevelDot / RangeSlider / SegButton） | ⬜ 未开始 | — |
-| D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ⬜ 未开始 | — |
-| E | 打磨 | ✅ **完成**（E-1/E-2/E-3 全部） | `85a366b` `41e3bd3` `9a9dfa8` |
+| B | 布局改造（频谱全出血 / 分割线 / 刻度） | ✅ **完成**（B-1..B-4） | `4919fa8` `4cd4e08` `1eacead` `07915d6` |
+| C | 控件改造（旋钮四态 / BandLevelDot / RangeSlider / SegButton） | ✅ **完成**（C-1..C-6） | `ab2812b` `aa5595c` `d5b1094` `3b52675` `363d576` `2539097` |
+| D | 交互补齐（sticky / 多选 / Alt-makeup / MIDI Learn） | ✅ **完成**（D-1..D-7） | `e2e8784` `8c9bb40` `b2d86fc` `1d6dff8` `6f3cf53` `9ca898d` |
+| E | 打磨 | ✅ **完成**（E-1/E-2/E-3/E-4 全部） | `85a366b` `41e3bd3` `9a9dfa8` `18f58f5` |
+| 6 | API facade（IMBBackend + UI 全量改道） | ✅ **完成** | `1d852e6` `fafa3da` `10074ff` |
+| 附加 | Auto-Gain（DSP + 参数 + UI） | ✅ **完成**（默认关闭） | `ceb59c4` `b7c8ab2` |
+| 附加 | 参数 UI 可达性补齐（InputGain/Oversampling/POWER） | ✅ **完成** | `bd0397f` `752ec41` |
+| 附加 | Solo/Mute/Delta 三语义 | ✅ **完成** | `2225f18` |
 
 **Phase A 全部完成项**：
 
@@ -671,8 +675,7 @@ T39 频谱 17 项均通过）。
 2. 修 A1–A4 四个动画 bug ✅
 3. 建参数查找缓存（`unordered_map<String, AudioProcessorParameter*>`，消掉 39 处线性扫描） ✅
 4. 从 `DisplayView` 拆出 `BandPopover` / `LinkedDrawer` / `SpectrumView` / `FreqInputEditor` ✅ 全部完成
-5. **验收**：`DisplayView.cpp ≤ 900 行` ⬜ 未达标（实际 1936，理由见上方说明）；
-   `CrunchMBTests` 全绿 ✅（287/0）
+5. **验收**：`DisplayView.cpp ≤ 900 行` ⬜ **主动未达标**（实际约 3300 行，理由见上方说明：核心绘制函数与坐标映射/12 个 Tween 深度耦合，强拆会让接口比实现长）；`CrunchMBTests` 全绿 ✅（703/0）
 
 ### Phase B — 布局改造（4-5 天）✅ 完成（B-1 未做，见下）
 
@@ -716,12 +719,12 @@ T39 频谱 17 项均通过）。
 ### Phase D — 交互补齐（3-4 天）✅ 完成（D-1..D-7）
 
 1. Analyzer 面板 + hover-open / click-sticky 语义 ✅（`e2e8784`）
-2. sticky 语义推广到 Output / LINKED 按钮 ⬜ 未做
-3. 显示背景拖拽多选 + 自动扩档 ⬜ 未做
-4. Alt+拖 OUTPUT = makeup gain ⬜ 未做
-5. MIDI Learn ⬜ 未做
-6. `SegButton`（COMPRESS↔EXPAND） ⬜ 未做（需新增 `DynamicsMode` 参数 + 扩张 DSP）
-7. **验收**：§5 全部手势可执行，无硬跳 ⬜（§5.1/5.3 已可执行；5.2/5.4/5.5 未做）
+2. sticky 语义推广到 Output / LINKED 按钮 ✅（`8c9bb40` LINKED，`b2d86fc` Output）
+3. 显示背景拖拽多选 + 自动扩档 ✅（`8c9bb40` 多选，`1d6dff8` 自动扩档）
+4. Alt+拖 OUTPUT = makeup gain ✅（`6f3cf53`）
+5. MIDI Learn ✅（`9ca898d`）
+6. `SegButton`（COMPRESS↔EXPAND） ✅（`2539097`）
+7. **验收**：§5 全部手势可执行，无硬跳 ✅（§5.1/5.2/5.3/5.4/5.5 全部可执行）
 
 1. 按钮列 hover 淡入淡出（N5）+ 按住临时 / Ctrl 独占
 2. Popover 位移入场 + 切段横滑（N1/N2）
@@ -856,6 +859,7 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
 
 
 

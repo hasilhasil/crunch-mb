@@ -13,8 +13,8 @@
 | **双层刻度** | "two display scales are drawn: the **yellow scale** ... corresponds to the band curves, range and the yellow overall curve. The **gray scale** is used by the spectrum analyzer and output level meter" | ✅ 已做（P1） |
 | **黄色粗曲线** | "the **thick yellow curve shows the overall dynamic frequency response at the present moment**" | ✅ 已做（单线=实时总响应） |
 | **Band 区（潜在动态范围）** | "Each band visualizes its **potential dynamic range**" | ✅ 已做（Range 钟型区） |
-| **Display Range 档位** | 右上角下拉 ±3/6/12/30 dB；"dragging a curve outside the current range → **will expand automatically**" | ✅ 自动扩档已做；⏳ 档位 UI 待 Phase 5 |
-| **Freeze** | Analyzer 设置面板有 Freeze 按钮（冻结最大值） | ❌ 未做 |
+| **Display Range 档位** | 右上角下拉 ±3/6/12/30 dB；"dragging a curve outside the current range → **will expand automatically**" | ✅ 已做（自动扩档 `1d6dff8`；档位 UI `c4e03d3`） |
+| **Freeze** | Analyzer 设置面板有 Freeze 按钮（冻结最大值） | ✅ 已做（`e2e8784`，AnalyzerPanel 含 Freeze） |
 | **Pre/Post/SC 三层** | Analyzer 面板可独立开关 pre/post/sidechain 频谱 | ⚠️ 我们只有 Pre+Post（MB 双层），无 SC |
 
 ### 1.2 交互（Display and workflow）
@@ -26,9 +26,9 @@
 | **双击 peak dot = 文本输入** | "double-click the peak dot, you start editing the gain ... press Tab ... edit the center frequency" | ✅ 已做（自绘输入框 #7） |
 | **crossover 线独立拖** | "The crossover lines let you drag each crossover independently" | ✅ 已做 |
 | **range line 上下拖** | "The range line lets you easily adjust the Range ... by dragging the line up and down" | ✅ 已做（Range 缘拖动） |
-| **双击 crossover/slope/range = 键盘输入** | "double-click the crossovers, slope buttons and range line to enter a value with the keyboard" | ✅ crossover/range 已做；⏳ slope 按钮待 Phase 5 |
+| **双击 crossover/slope/range = 键盘输入** | "double-click the crossovers, slope buttons and range line to enter a value with the keyboard" | ✅ crossover/range 已做（`04fb573` 频率输入框）；slope 改为**可点下拉**（`f1a9bec`），比双击输入更直接 |
 | **snap 吸附** | 靠近自动吸附、共享 crossover；hover 出现 Split/Unsnap 按钮 | ❌ 未做（我们有 1 八度钳制） |
-| **框选多段** | 背景拖矩形选相邻段；Ctrl/Shift 多选 | ❌ 未做 |
+| **框选多段** | 背景拖矩形选相邻段；Ctrl/Shift 多选 | ✅ 已做（`8c9bb40`，背景拖拽段扫多选） |
 | **hover 出现 solo/mute + slope 按钮** | "When you hover the mouse over a band, additional controls appear" | ✅ 已做（S/M/BYP/Δ 按钮列） |
 | **水平缩放** | 拖动底部频率刻度缩放；双击复位 | ❌ 未做（按 UI_SPEC 决策不做） |
 | **Full Screen** | 全屏模式做精细调整 | ❌ 未做（Editor 可缩放已做） |
