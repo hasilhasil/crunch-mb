@@ -2894,6 +2894,9 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             // Auto-Gain：Bool 参数实际值 0/1
             outputPanel_->setAutoGainForTest (
                 getParamPhysical (Param::ID::autoGain) >= 0.5f);
+            // Monitor：Choice 参数实际值 = 选项索引
+            outputPanel_->setMonitorForTest (Param::choiceIndexFromValue (
+                getParamPhysical (Param::ID::monitorMode)));
             outputPanel_->clickButton();
             applyOutputSettings();
         }
@@ -3320,6 +3323,9 @@ void DisplayView::applyOutputSettings()
     // Auto-Gain（Future MB 对标）：直接写全局 Bool 参数。
     // DSP 侧 readScalars 每块读它，所以这里写完立即生效。
     setParamPhysical (Param::ID::autoGain, outputPanel_->autoGain() ? 1.0f : 0.0f);
+
+    // Monitor（Future MB 对标）：写 Choice 参数（实际值 = 选项索引）。
+    setParamPhysical (Param::ID::monitorMode, (float) outputPanel_->monitorIndex());
 
     // Global Bypass：与既有全局 BYPASS 胶囊同一语义（四段 Mix=0 宏）
     const bool wantBypass = outputPanel_->globalBypass();

@@ -234,6 +234,9 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
         autoGainEnabled_ = true;
     }
 
+    // ---- Monitor（Future MB 对标）----
+    monitorMode_ = juce::jlimit (0, 6, p.monitorMode);
+
     // lookahead 以**墙钟时间**为准：过采样下换算成 procRate_ 下的样本数
     laSamples_ = (int) std::lround (p.lookaheadMs * 0.001 * procRate_);
     laSamples_ = juce::jlimit (0, laMax_, laSamples_);
@@ -550,6 +553,44 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         {
             juce::FloatVectorOperations::multiply (outStore_[ch].data(), outGain_, n);
             juce::FloatVectorOperations::copy (chPtr[ch], outStore_[ch].data(), n);
+        }
+
+        // 7) Monitor（Future MB 对标）：用选中信号**替换**输出。
+        //    ⚠️ monitorMode_ == 0（Output）时整段跳过——默认行为逐样本不变。
+        //    所有源信号都在本块内现成（bandStore_ / dryStore_ / gStore_），
+        //    无额外缓冲、无分配。
+        if (monitorMode_ != 0)
+        {
+            const int m = monitorMode_;
+            for (int ch = 0; ch < chans; ++ch)
+            {
+                float* out = chPtr[ch];
+                if (m == 1)                       // Input = 干声
+                {
+                    juce::FloatVectorOperations::copy (out, dryStore_[(size_t) ch].data(), n);
+                }
+                else if (m >= 2 && m <= 5)        // Band 1-4 = 该段信号
+                {
+                    const int b = m - 2;
+                    juce::FloatVectorOperations::copy (out, bandStore_[(size_t) b][(size_t) ch].data(), n);
+                    juce::FloatVectorOperations::multiply (out, outGain_, n);
+                }
+                else                              // 6 = Gain Reduction
+                {
+                    // GR 作为可听信号：把该段增益的"衰减量"写进输出。
+                    // gStore_ 存的是 g×makeup（线性），GR ≈ 1 − g。
+                    // 取四段平均后整体衰减 20dB，避免过响。
+                    for (int i = 0; i < n; ++i)
+                    {
+                        float gSum = 0.0f;
+                        for (int b = 0; b < Param::kNumBands; ++b)
+                            gSum += gStore_[b][(size_t) ch][(size_t) i];
+                        const float gAvg = 0.25f * gSum;
+                        const float gr = 1.0f - gAvg;             // 0..1（正数=有衰减）
+                        out[i] = juce::jlimit (-1.0f, 1.0f, gr * 0.1f);
+                    }
+                }
+            }
         }
     }
 }

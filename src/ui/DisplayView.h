@@ -290,6 +290,11 @@ public:
     {
         return outputPanel_ != nullptr ? outputPanel_->inputGainDb() : 0.0f;
     }
+    /** T82 测试钩子：Output 面板的 Monitor 副本值。 */
+    int outputPanelMonitorForTest() const
+    {
+        return outputPanel_ != nullptr ? outputPanel_->monitorIndex() : 0;
+    }
     /** T77 测试钩子：全局栏选择器数量。 */
     int globalSelectorCountForTest() const { return globalSelectorIds_.size(); }
     /** T77 测试钩子：第 i 个全局栏选择器绑定的参数 id。 */
@@ -334,6 +339,8 @@ public:
         outputPanel_->setGlobalMixForTest (getParamPhysical (Param::ID::globalMix));
         outputPanel_->setGlobalBypassForTest (isAllBypassed());
         outputPanel_->setAutoGainForTest (getParamPhysical (Param::ID::autoGain) >= 0.5f);
+        outputPanel_->setMonitorForTest (Param::choiceIndexFromValue (
+            getParamPhysical (Param::ID::monitorMode)));
         outputPanel_->clickButton();
         applyOutputSettings();
     }

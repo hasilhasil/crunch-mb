@@ -19,6 +19,9 @@ namespace Param
     enum class Lookahead     { Off = 0, Ms1 = 1, Ms3 = 2 };
     enum class LinearQuality { Low = 0, Medium = 1, High = 2 };
     enum class Oversampling  { Off = 0, X2 = 1, X4 = 2 };          // 2026-10-14
+    /** Monitor（Future MB 对标）：试听哪个内部信号。Output = 正常输出。 */
+    enum class Monitor       { Output = 0, Input = 1, Band1 = 2, Band2 = 3,
+                               Band3 = 4, Band4 = 5, GainReduction = 6 };
 
     inline int   slopeIndexToDb (int idx) { return 12 * (juce::jlimit (0, 3, idx) + 1); }
 
@@ -74,6 +77,7 @@ namespace Param
         inline constexpr const char* oversampling  = "oversampling";   // 2026-10-14
         inline constexpr const char* globalMix     = "globalMix";      // Phase：全局干湿比 0-200%
         inline constexpr const char* autoGain      = "autoGain";       // Future MB 对标：响度自动补偿（默认关）
+        inline constexpr const char* monitorMode   = "monitorMode";    // Future MB 对标：内部信号试听（默认 Output）
     }
 
     // ---------- 频段参数 ID（"band" + i + PascalCase） ----------

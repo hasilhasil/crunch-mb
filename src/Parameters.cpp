@@ -93,6 +93,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     // 使"调参不改变输出音量"（Future MB 的亮点功能）。
     addBool   (pid (ID::autoGain), "Auto-Gain", false);
 
+    // Monitor（Future MB 对标，RESEARCH_UI 交互清单第 9 条）：
+    // 试听内部信号——不用戴耳机接跳线就能听"压缩机到底在做什么"。
+    //   Output  = 正常输出（**默认**，行为与不设此参数时逐样本一致）
+    //   Input   = 干声（输入增益后、分频前）
+    //   Band 1-4 = 该段自己的信号（分频后、求和前）
+    //   Gain Reduction = 增益衰减量本身作为可听信号
+    addChoice (pid (ID::monitorMode), "Monitor",
+               { "Output", "Input", "Band 1", "Band 2", "Band 3", "Band 4",
+                 "Gain Reduction" },
+               (int) Monitor::Output);
+
     // ================= 每频段参数（13 × 4 = 52，TECH_SPEC §5.2） =================
     for (int i = 0; i < kNumBands; ++i)
     {

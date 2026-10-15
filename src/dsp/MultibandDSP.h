@@ -70,6 +70,7 @@ public:
         float globalMixPct = 100.0f;   // Phase：全局 Mix 0-200%（Pro-MB 对标）
         int   lookaheadMs  = 0;                                   // 0 / 1 / 3
         bool  autoGain     = false;   // Auto-Gain 开关（Future MB 对标；默认关）
+        int   monitorMode  = 0;       // Monitor：0=Output 1=Input 2..5=Band1-4 6=GR
         std::array<BandParams, Param::kNumBands> bands;
     };
 
@@ -133,6 +134,11 @@ private:
     float autoGainDb_ = 0.0f;            // 当前补偿量（dB，平滑后）
     float autoGainCoeff_ = 0.0f;         // 平滑系数
     float autoGainMaxDb_ = 24.0f;        // 补偿量上限（防失控）
+
+    // ---- Monitor（Future MB 对标，默认 Output = 现有行为）----
+    // 0=Output（正常路径）1=Input 2..5=Band1-4 6=Gain Reduction。
+    // 非 0 时在 processChain 末尾用选中信号**替换**输出。
+    int   monitorMode_ = 0;
 
     // Lookahead：每段每通道环形延迟（容量按 3ms@maxSR 预分配，标量切换零分配）
     std::array<std::array<std::vector<float>, 2>, Param::kNumBands> laBuf_;

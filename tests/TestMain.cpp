@@ -88,7 +88,7 @@ static void testParamSystem()
     DummyProc proc;
     juce::AudioProcessorValueTreeState apvts (proc, nullptr, "PARAMS", Param::createLayout());
 
-    check (proc.getParameters().size() == 85, "T0.1 布局参数数 = 85（2026-10-14：oversampling + 侧链滤波×3 + StereoLink + Dynamics + globalMix + autoGain）",
+    check (proc.getParameters().size() == 86, "T0.1 布局参数数 = 86（2026-10-14：oversampling + 侧链滤波×3 + StereoLink + Dynamics + globalMix + autoGain + monitorMode）",
            "actual " + juce::String (proc.getParameters().size()));
 
     check (apvts.getParameter (Param::bandRange (2)) != nullptr
@@ -1388,7 +1388,7 @@ static void testParameterInventory()
     std::cout << "\n--- T0b 参数清单盘点 ---\n";
     std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
     const auto& params = proc->getParameters();
-    check ((int) params.size() == 85, "T0b.1 参数总数 = 85（2026-10-14 + autoGain）", juce::String (params.size()));
+    check ((int) params.size() == 86, "T0b.1 参数总数 = 86（2026-10-14 + autoGain + monitorMode）", juce::String (params.size()));
 
     juce::StringArray names;
     for (auto* p : params)
@@ -5408,7 +5408,7 @@ static void testBackendFacade()
     // ===== ① 参数面 =====
     {
         const auto params = api.listParams();
-        check ((int) params.size() == 85, "T52.1 listParams 覆盖全部 85 参数",
+        check ((int) params.size() == 86, "T52.1 listParams 覆盖全部 86 参数",
                juce::String ((int) params.size()));
 
         // 抽查元数据完整性：每个参数都要有 id / 范围 / 默认值
@@ -5429,7 +5429,7 @@ static void testBackendFacade()
             else if (pi.category == ParamInfo::Category::Band) ++nBand;
         }
         std::cout << "  参数类别: Global=" << nGlobal << " Band=" << nBand << std::endl;
-        check (nGlobal == 13, "T52.3 Global 参数 = 13", juce::String (nGlobal));
+        check (nGlobal == 14, "T52.3 Global 参数 = 14", juce::String (nGlobal));
         check (nBand == 72, "T52.4 Band 参数 = 72（18 × 4 段）", juce::String (nBand));
 
         // getParam / setParam 往返
@@ -5484,8 +5484,8 @@ static void testBackendFacade()
         api.setParam (Param::bandRatio (1), 7.5f);
         api.setParam (Param::ID::globalMix, 137.0f);
         const auto snap = api.getStateSnapshot();
-        check (snap.state.isValid() && snap.parameterCount == 85,
-               "T52.9 getStateSnapshot 有效（85 参数）",
+        check (snap.state.isValid() && snap.parameterCount == 86,
+               "T52.9 getStateSnapshot 有效（86 参数）",
                juce::String (snap.parameterCount));
 
         // 改掉值，再加载回快照
@@ -8046,8 +8046,9 @@ static void testAutoGainUiRow()
     // ④ 点第 5 行（row 4 = Auto-Gain）→ 参数应翻转为开
     const auto pr = dv.outputPanelRectForTest();
     // 行几何与 OutputPanel::hitTestRow 相同：top = y + H*(7/(N*22+14))
-    // R24：kNumRows 3→4→5（加了 InputGain 与 AutoGain），Auto-Gain 现在在 row 4
-    const float kRowH = 22.0f, kNumRows = 5.0f;
+    // R24/R29：kNumRows 3→4→5→6（加了 InputGain / AutoGain / Monitor）。
+    //   行序：0=InputGain 1=OutputGain 2=Mix 3=GlobalBypass 4=AutoGain 5=Monitor
+    const float kRowH = 22.0f, kNumRows = 6.0f;
     const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
     const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
     const float rowY = top + rowH * 4.0f + rowH * 0.5f;      // 第 5 行（Auto-Gain）中心
@@ -8724,6 +8725,163 @@ static void testAllFeaturesCombined()
            juce::String (peak) + " < " + juce::String (peakNoAg));
 }
 
+// ------------------------------------------------------------
+// T82 Phase：Monitor 内部信号试听（R29，Future MB 交互清单第 9 条）
+//   Future MB 的 Monitor 旋钮"可以直接听内部信号（Gate/Upward/Compressor/Spec
+//   的增益变化）——调音利器"。我们此前没有。
+//   ⚠️ 与 Auto-Gain 同样的纪律：**默认 Output = 现有行为逐样本不变**。
+//   档位：Output / Input / Band 1-4 / Gain Reduction。
+// ------------------------------------------------------------
+static void testMonitorModes()
+{
+    std::cout << "\n--- T82 Phase Monitor 内部信号试听 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T82.0 处理器实例可访问", "");
+
+    // ① 默认 Output：参数默认值必须是 0
+    const float defMon = mb->apvts.getRawParameterValue (Param::ID::monitorMode)->load();
+    std::cout << "  monitorMode 默认值 = " << defMon << std::endl;
+    check (defMon < 0.5f, "T82.1 monitorMode 默认为 Output（现有行为不变）",
+           juce::String (defMon));
+
+    // 四段都开，制造可闻的段间差异
+    for (int b = 0; b < 4; ++b)
+    {
+        const juce::String bn = "band" + juce::String (b);
+        mb->setParamPhysicalForTest (bn + "Threshold", -20.0f - b * 5.0f);
+        mb->setParamPhysicalForTest (bn + "Ratio", 6.0f);
+        mb->setParamPhysicalForTest (bn + "Range", -30.0f);
+        mb->setParamPhysicalForTest (bn + "Makeup", 0.0f);
+        mb->setParamPhysicalForTest (bn + "Mix", 100.0f);
+    }
+    mb->setParamPhysicalForTest ("globalMix", 100.0f);
+    mb->setParamPhysicalForTest ("inputGain", 0.0f);
+    mb->setParamPhysicalForTest ("outputGain", 0.0f);
+
+    const int nn = 512;
+    juce::AudioBuffer<float> buf (2, nn);
+    juce::MidiBuffer midi;
+
+    // 用同一段确定性信号，测各 Monitor 档位下的输出 RMS
+    auto measureRms = [&] (int monitorIdx) -> float
+    {
+        mb->setParamPhysicalForTest ("monitorMode", (float) monitorIdx);
+        juce::Random rng (4242);
+        double p = 0.0;
+        int counted = 0;
+        for (int t = 0; t < 50; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const float v = 0.4f * (rng.nextFloat() * 2.0f - 1.0f);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            if (t >= 30)
+            {
+                for (int i = 0; i < nn; ++i)
+                { const float s = buf.getSample (0, i); p += (double) s * s; }
+                counted += nn;
+            }
+        }
+        return (float) std::sqrt (p / juce::jmax (1, counted));
+    };
+
+    const float rmsOutput = measureRms (0);      // Output
+    const float rmsInput  = measureRms (1);      // Input
+    const float rmsBand1  = measureRms (2);      // Band 1
+    const float rmsBand4  = measureRms (5);      // Band 4
+    const float rmsGr     = measureRms (6);      // Gain Reduction
+
+    std::cout << "  RMS: Output=" << rmsOutput << " Input=" << rmsInput
+              << " Band1=" << rmsBand1 << " Band4=" << rmsBand4
+              << " GR=" << rmsGr << std::endl;
+
+    // ② Input 档应接近干声 RMS（无压缩）
+    //    宽带噪声 0.4 幅 → RMS ≈ 0.4/sqrt(3) ≈ 0.231
+    check (rmsInput > 0.15f && rmsInput < 0.32f,
+           "T82.2 Monitor=Input 输出接近干声 RMS（无压缩）", juce::String (rmsInput));
+
+    // ③ Output 应低于 Input（四段都在压缩）
+    check (rmsOutput < rmsInput,
+           "T82.3 Monitor=Output 低于 Input（压缩生效）",
+           juce::String (rmsOutput) + " < " + juce::String (rmsInput));
+
+    // ④ Band1 与 Band4 的 RMS 应不同（分频后能量不同 + 阈值不同）
+    check (std::abs (rmsBand1 - rmsBand4) > 0.01f,
+           "T82.4 Band1 与 Band4 试听 RMS 不同（确实是不同段的信号）",
+           juce::String (rmsBand1) + " vs " + juce::String (rmsBand4));
+
+    // ⑤ Band 试听 RMS 应低于全带宽 Input（只含该段能量）
+    check (rmsBand1 < rmsInput && rmsBand4 < rmsInput,
+           "T82.5 单段试听 RMS 低于全带宽（只含该段能量）",
+           juce::String (rmsBand1) + "/" + juce::String (rmsBand4)
+           + " < " + juce::String (rmsInput));
+
+    // ⑥ GR 档应是一个小幅正信号（有压缩但不过响）
+    check (rmsGr > 0.0f && rmsGr < 0.1f,
+           "T82.6 Monitor=GainReduction 输出为小幅信号（可听不过响）",
+           juce::String (rmsGr));
+
+    // ⑦ 切回 Output 后应与首次测量一致（档位切换无残留）
+    const float rmsOutputAgain = measureRms (0);
+    check (std::abs (rmsOutputAgain - rmsOutput) < 1.0e-5f,
+           "T82.7 切回 Output 与首次一致（切换无残留）",
+           juce::String (rmsOutputAgain) + " vs " + juce::String (rmsOutput));
+
+    // ⑧ 所有档位输出必须有限
+    check (std::isfinite (rmsOutput) && std::isfinite (rmsInput)
+        && std::isfinite (rmsBand1) && std::isfinite (rmsBand4) && std::isfinite (rmsGr),
+           "T82.8 所有 Monitor 档位输出有限", "");
+
+    // ---- UI：Output 面板 Monitor 行 ----
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+    dv.openOutputPanelForTest();
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+    check (dv.isOutputOpenForTest(), "T82.9 Output 面板可打开", "");
+    check (dv.outputPanelMonitorForTest() == 0,
+           "T82.10 面板 Monitor 副本初始为 Output", "");
+
+    // 点 Monitor 行（row 5）→ 副本变 1 且参数写入
+    {
+        const auto pr = dv.outputPanelRectForTest();
+        const float kRowH = 22.0f, kNumRows = 6.0f;
+        const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
+        const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
+        const float rowY = top + rowH * 5.0f + rowH * 0.5f;
+        dv.mouseDownForTest (pr.getCentreX(), rowY);
+        dv.mouseUpForTest (pr.getCentreX(), rowY);
+        const float v = mb->apvts.getRawParameterValue (Param::ID::monitorMode)->load();
+        std::cout << "  点 Monitor 行后 monitorMode = " << v << std::endl;
+        check (std::abs (v - 1.0f) < 0.01f,
+               "T82.11 点 Monitor 行 → 参数变为 1（Input）", juce::String (v));
+        check (dv.outputPanelMonitorForTest() == 1,
+               "T82.12 面板副本同步为 1", "");
+    }
+
+    // 再点一次 → 2（Band 1）
+    {
+        const auto pr = dv.outputPanelRectForTest();
+        const float kRowH = 22.0f, kNumRows = 6.0f;
+        const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
+        const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
+        const float rowY = top + rowH * 5.0f + rowH * 0.5f;
+        dv.mouseDownForTest (pr.getCentreX(), rowY);
+        dv.mouseUpForTest (pr.getCentreX(), rowY);
+        const float v = mb->apvts.getRawParameterValue (Param::ID::monitorMode)->load();
+        std::cout << "  再点 Monitor 行后 monitorMode = " << v << std::endl;
+        check (std::abs (v - 2.0f) < 0.01f,
+               "T82.13 再点一次 → 参数变为 2（Band 1）", juce::String (v));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -8812,6 +8970,7 @@ int main()
     testBandToggleThreeStates();      // T79 Phase Solo/Mute/Delta 三语义
     testLinkedDrawerEndToEndAudio();  // T80 Phase LINKED 抽屉端到端声音验证
     testAllFeaturesCombined();        // T81 Phase 全功能组合压力测试
+    testMonitorModes();               // T82 Phase Monitor 内部信号试听
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -8819,6 +8978,8 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
+
 
 
 

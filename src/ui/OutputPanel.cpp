@@ -11,7 +11,11 @@ namespace
     constexpr float kDesignH = 620.0f;
     constexpr float kGlobalBarH = 32.0f;
     constexpr float kRowH = 22.0f;
-    constexpr int   kNumRows = 5;   // InputGain / OutputGain / GlobalMix / GlobalBypass / AutoGain
+    constexpr int   kNumRows = 6;   // InputGain / OutputGain / Mix / GlobalBypass / AutoGain / Monitor
+    /** Monitor 档位名（与 Param::Monitor 枚举顺序一致）。 */
+    const char* const kMonitorNames[7] = {
+        "Output", "Input", "Band 1", "Band 2", "Band 3", "Band 4", "Gain Reduction"
+    };
 }
 
 juce::Rectangle<float> OutputPanel::panelRect() const
@@ -114,6 +118,8 @@ void OutputPanel::clickRow (int row)
         case 3:  globalBypass_ = ! globalBypass_; break;
         // Auto-Gain（Future MB 对标）：响度自动补偿。默认关。
         case 4:  autoGain_ = ! autoGain_; break;
+        // Monitor（Future MB 对标）：循环切换试听目标。
+        case 5:  monitorIdx_ = (monitorIdx_ + 1) % 7; break;
         default: break;
     }
     if (onSettingsChanged)
@@ -161,6 +167,8 @@ void OutputPanel::paint (juce::Graphics& g)
         { "Global Bypass", globalBypass_ ? "ON" : "OFF",       globalBypass_ },
         // Auto-Gain：打开时用 accent 高亮，与 Global Bypass 同一视觉语言
         { "Auto-Gain",  autoGain_ ? "ON" : "OFF",             autoGain_ },
+        // Monitor（Future MB 对标）：非 Output 时高亮（提示正在试听内部信号）
+        { "Monitor",    kMonitorNames[juce::jlimit (0, 6, monitorIdx_)], monitorIdx_ != 0 },
     };
 
     g.setFont (MBTheme::font (MBTheme::regular(), 9.5f));
