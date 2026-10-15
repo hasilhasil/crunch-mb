@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第六十七轮 · R24：InputGain/Oversampling UI 暴露）
+### 进度总览（更新于 2026-10-14，第六十八轮 · R25：总开关 POWER UI（R24 审计完成））
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -489,6 +489,7 @@ namespace Anim {
 | **Auto-Gain 交付（默认关闭）**（`ceb59c4`） | RESEARCH_UI §5 最后一项 P3 交付。新增 `LoudnessMeter`（ITU-R BS.1770-4 K 加权：+4dB high-shelf @1681.9Hz + RLB high-pass @38Hz，400ms 滑动均方窗，固定容量环形零分配），在 `MultibandDSP` 里测**处理前**（输入增益后）与**处理后**（段求和+全局 Mix 后）的响度，补偿 = 干声−湿声，钳 ±24dB、300ms 平滑，作用于 Output Gain **之前**（用户 output trim 语义不变）。**默认关闭 = 现有行为逐样本不变**；关闭时整段跳过且补偿量平滑归零（不留残余增益）。**听感/操作表现**：打开后调 Ratio/Knee/Makeup/阈值，输出音量基本恒定——改 Ratio 2→12 的输出差异从 0.0716 降到 **0.00035**（205 倍），加 12dB Makeup 只变 **0.0019** | **Future MB**：调参时听感音量恒定是其亮点功能；**Pro-MB** 用 Output Level 手动补，我们做成了自动且默认关 |
 | **Auto-Gain UI 暴露**（`b7c8ab2`） | 上一轮只做了 DSP + 参数，**UI 上无控件**（只能靠宿主自动化切换）——不符合"UI 尽可能贴近 Pro-MB / Future MB"。现补：Output 面板加第 4 行 `Auto-Gain  ON/OFF`，视觉语言与 Global Bypass 完全一致（accent 高亮 + 标签/值两栏）；面板高度由 `kNumRows` 派生所以自动多一行；点击即写 `autoGain` 参数、下一音频块生效；打开面板前先从参数同步副本（与其余三行同一机制，避免显示过期值） | **Future MB / Pro-MB**：两者的自动增益都是 Output 区里的一个可见开关，而非隐藏参数 |
 | **R24：Input Gain / Oversampling UI 暴露**（`bd0397f`） | 按教训 33 核对全部 85 个参数，发现**三个"鼠标用户碰不到"**：`inputGain`（UI 层零引用）、`oversampling`（全局栏只有 Phase/Slope/Quality/Lookahead，漏了它）、`enabled`（插件总开关；UI 只有"Global Bypass"= 四段 Mix=0 宏，**不是同一个东西**）。本轮补前两个：① Output 面板加**第 1 行 Input Gain**（±36 dB，3 dB 步进环绕，与 Output Gain 同操作逻辑；`kNumRows` 3→4→5）；② 全局栏加**第 5 个选择器 Oversampling**（Off/2x/4x，复用既有自绘下拉）。`enabled` 留待下轮（需新的顶栏/底栏控件）。**操作表现上**：Input Gain 现在可以像 Output Gain 一样点一下 +3dB 环绕；Oversampling 现在可以点全局栏直接选档 | **Pro-MB**：Input/Output Gain 成对放在 Output 区；Oversampling 是全局栏的一个档位选择器 |
+| **R25：总开关 POWER UI（R24 审计完成）**（`752ec41`） | R24 审计的最后一项。**关键是与底栏 BYPASS 胶囊区分**——名字相近但语义不同：POWER（`enabled`）= 整链旁通、直通**原始输入**（Input Gain 不生效）；底栏 BYPASS = 四段 Mix=0 宏（Input/Output Gain 仍生效）。T78.7/8 用端到端音频证明了这一点：关 POWER 且 Input Gain=+12dB 时输出峰值 **0.25**（= 原始输入），开时 **0.78**（Input Gain 生效）。命名用 POWER + 电源圆符号、位置放**顶栏**（层级一眼可见）、关闭时顶栏显示 `PLUGIN OFF - CLICK POWER TO ENABLE` 提示条。**操作表现上**：点顶栏 POWER 立即整链旁通/恢复，与底栏 BYPASS 是两种可观测的不同行为 | **Pro-MB / Future MB**：两者的总开关都是顶栏的电源式按钮，而非底栏的段级 bypass |
 
 ### Phase D 待做
 
@@ -562,7 +563,8 @@ namespace Anim {
 | **S2 ✅ 已扫完，无缺陷**（第六十四轮，`b2a4868`） | **DSP 声音路径审查**（目标要求"对齐声音表现"）：① 膝宽曲线是标准 soft-knee 二次插值，正确；② `|Range|` 钳制对 Expand 同样生效（`jlimit(-lim,lim,gainDb)` 在 `sign` 取负之后，两侧都受限）；③ lookahead 环形延迟**始终写环预热**，切入不会 click；④ mono 正确跳过 `bandStore_[b][1]` 的冗余写，且所有读取方都回退到 `[0]`；⑤ `gL`/`gR` 在 mono 下也都写。**结论：无新缺陷**。同时发现 Expand 只有静态传输曲线测试（T47，跑在裸 `BandCompressor` 上），**没有喂音频、没走整条链**——违反 Phase C 立的"数据驱动图层必须喂音频"规矩，故补 T74 端到端验证 | — | T74 经整条链（分频→段压缩→求和）喂音频：高声压下 Compress 峰值 0.284 / Expand 1.864；低声压下两者都基本不动（Expand 不抬噪声底）；**峰谷比 Compress 6.29× → Expand 37.69×**，即动态范围确实扩大约 6 倍——这是 expander 的听感签名 |
 | **R23 ✅ 已修复**（第六十五轮，`ceb59c4`） | **新功能自带的两处 bug**：① **平滑系数用错粒度**——`autoGainCoeff_ = exp(-1/(0.300*procRate_))` 是**每样本**系数，却被用在**每块**只调一次的平滑上（`mixSmooth_` 在每样本循环里推所以它的系数一直是对的）。等于把 300ms 拖成 300ms×procBlock_。诊断实测：220 块只建立 **0.06 dB** 补偿，功能形同不存在。修法：`pow(autoGainCoeff_, n)` 按本块样本数提升。② **`MultibandDSP` 变成不可拷贝**（`LoudnessMeter` 内含 `std::atomic`），两个按值返回它的测试 helper 直接编译失败，改为返回 `unique_ptr` | ① 是"同一份代码里两种推进粒度并存"：每样本平滑（`mixSmooth_`）与每块平滑（新的 autoGain）用同一个公式算系数，只对前者成立。**加第二种粒度的平滑时，必须重新推导系数，不能抄旁边那行**。② 是"给已有类加含 atomic 的成员"的必然后果，编译期就抓住了（这类反而安全） | ① 改为按块长提升，并把两种粒度的差异写进注释；② helper 改 `unique_ptr` 返回，调用点改 `->`。修复后 T75.3：改 Ratio 2→12 的输出差异 **0.0716 → 0.00035**（缩小 205 倍）；T75.4：加 12dB Makeup 只变 **0.0019** |
 | **R24 ✅ 已修复**（第六十七轮，`bd0397f`） | **按教训 33 核对全部 85 个参数，发现三个"鼠标用户碰不到"**：① `inputGain` —— UI 层**零引用**；② `oversampling` —— 全局栏有 Phase/Slope/Quality/Lookahead 四项，**漏了它**（2026-10-14 新增参数时没同步加全局栏项）；③ `enabled` —— 插件总开关，UI 只有"Global Bypass"（四段 Mix=0 宏），**语义不同物**。另有一处连带损伤：Output 面板插入 Input Gain 行后，T44.8 原本用**高度比例**（`pr.getY()+H*0.20`）猜"第一行 = Output Gain"，猜错了行 → 点击无效、测试失败 | ① ② 同根：**加参数时只加了"参数 + DSP + 宿主自动化"三样，没加 UI**——这正是教训 33 说的交付缺口，而且 `oversampling` 是 2026-10-14 批量加参数时漏的，说明当时没有"逐个参数确认有 UI 控件"的清单。③ 是**命名误导**：`Global Bypass` 听起来像总开关，实际是四段 Mix=0 宏，用户会误以为二者等价 | ① Output 面板加第 1 行 Input Gain（±36 dB、3 dB 环绕，与 Output Gain 同操作）；② 全局栏加第 5 个选择器 Oversampling（复用自绘下拉）；③ `enabled` 留待下轮（需新的顶栏/底栏控件）。T44.8 改用与 `hitTestRow` 相同的**精确行几何**并显式指定 row 1 |
-> **教训（第六十七轮补充，共 34 条）**：
+| **R25 ✅ 已修复**（第六十八轮，`752ec41`） | **R24 审计的最后一个：`enabled`（插件总开关）无 UI**。这个需要小心，因为有**命名陷阱**：底栏已有 BYPASS 胶囊，听起来像同一回事，实际不是——① `enabled`：整条链旁通，直通**原始输入**（Input Gain **不生效**）；② 底栏 BYPASS：四段 Mix=0 宏，段级旁通，**Input/Output Gain 仍生效**。两个不同行为、名字相近，用户会误以为等价 | 命名相近 + 语义不同 = 最容易出错也最容易被漏的组合。**加新控件前先查"有没有名字相近的老控件"**，有就必须在命名/位置/视觉上同时区分，且在每个引用点写清"它不是什么" | 新控件命名 **POWER**（配电源圆符号 U+23FC）而非 Bypass；放**顶栏**（层级高于底栏一切，一眼看出不是底栏那个）；关闭时除胶囊变 accent + "OFF" 外，顶栏还显示 `PLUGIN OFF - CLICK POWER TO ENABLE` 提示条（小胶囊易被忽略，而用户会发现"调什么都没反应"）；`mouseDown` 里放在**最前面**处理（Popover ✕ 之前），保证面板开着时也能立即响应。命中测试**现算矩形**而非读 paint 副作用成员（同 `hitTestOutputButton` 的理由，T44.2） |
+> **教训（第六十八轮补充，共 35 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -596,6 +598,7 @@ namespace Anim {
 > 32. **同一份代码里出现第二种"推进粒度"时，系数必须重新推导，不能抄旁边那行**。R23：`MultibandDSP` 原有**每样本**平滑（`mixSmooth_`/`gateSm_`，系数 `exp(-1/(τ·fs))`），我新加的 Auto-Gain 是**每块**平滑，却直接抄了同一个公式——于是 300ms 被拖成 300ms×512，220 块只建立 0.06dB，功能形同不存在。**判据：看这个系数被用在循环的哪一层**。每样本 → `exp(-1/(τ·fs))`；每块 → `exp(-n/(τ·fs))` 或 `pow(每样本系数, n)`。两种粒度并存时，要把差异写进注释，否则下一个人还会抄错。
 > 33. **"功能做完了"要包含"用户能碰到它"——交付清单里必须有 UI 一项**。第六十六轮：Auto-Gain 上一轮做完 DSP + 参数，我以为交付完成了，但** UI 上没有任何控件**，只能靠宿主自动化切换。这与"UI 尽可能贴近 Pro-MB / Future MB"直接冲突（两者的自动增益都是 Output 区里一个可见开关）。**判定方法：问"一个不懂宿主自动化的用户，能否只用鼠标找到并改变这个设置？"** 答不上来就是没做完。本轮补了 Output 面板第 4 行后才是真交付。
 > 34. **"加参数"是一个四件套，漏一件就是缺陷**。R24：按教训 33 逐个核对 85 个参数，抓到 `inputGain`（UI 零引用）、`oversampling`（全局栏漏项）、`enabled`（语义被 `Global Bypass` 的名字掩盖）三个"鼠标用户碰不到"的。四件套是：**① 参数注册 ② DSP 接线 ③ 宿主自动化（APVTS 白给）④ UI 控件**。前三件是机械劳动，第四件最易漏——因为它不影响任何现有测试，参数照样能设、DSP 照样响应，只是人碰不到。**批量加参数时（如 2026-10-14 那次加 5 个）必须逐个数一遍 UI 控件**，否则就会漏。
+> 35. **"名字相近的老控件"是新控件最容易踩的坑**。R25：补 `enabled` 的 UI 时发现底栏已有 `BYPASS` 胶囊——听起来完全是一回事，实际一个是整链旁通（直通原始输入、Input Gain 不生效）、一个是四段 Mix=0 宏（Input/Output Gain 仍生效）。**加新控件前先 grep 一遍名字相近的**；有就必须在三个维度同时区分：**命名**（POWER 而非 Bypass）、**位置**（顶栏 vs 底栏，层级差异一眼可见）、**注释**（每个引用点写清"它不是什么"）。只改其中一个，用户照样混。
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -794,12 +797,12 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **664**（+377） |
+| `CrunchMBTests` 断言数 | 287 | **673**（+386） |
 | 参数总数 | 62 | **85**（+23：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix、**autoGain**） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
-| 重构/迁移引入的真 bug | **28 个，全部修复**（R1-R24，均有测试锁定） | 见 §8.2 |
+| 重构/迁移引入的真 bug | **29 个，全部修复**（R1-R25，均有测试锁定） | 见 §8.2 |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
 
@@ -845,6 +848,7 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
 
 
 
