@@ -374,9 +374,10 @@ MBGroupSetResult MBBackend::setBandGroupDelta (const juce::String& paramName, fl
             }
         }
     }
+    // Phase：any 为 true 当且仅当至少一段被设置；applied 直接取 any。
+    // （原代码是 `res.applied = any; if (!any) res.applied = false;`——
+    //   后半句恒等于前半句的结果，是冗余，删掉。）
     res.applied = any;
-    if (! any)
-        res.applied = false;
     return res;
 }
 

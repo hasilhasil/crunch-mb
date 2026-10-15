@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第六十二轮 · R22 修复：DisplayView 访问器钳制）
+### 进度总览（更新于 2026-10-14，第六十三轮 · 固定数组入口清单扫完，无新缺陷）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -484,6 +484,7 @@ namespace Anim {
 | **R20b：同类空容器隐患清零**（`4f8d823`） | R20 只修了暴露出来的那一处空 vector UB，同文件里还有 **8 处同形态**（`check()` 不中断 + 紧接着无条件 `.front()/.back()`）。全部改为判空后显式报失败。T71 顺带发现三个 API 的"0 点"行为不一致（两个返回端点、一个返回空），按实际行为记录 | — （测试健壮性；T71 的边界点数验证对标 Pro-MB 曲线 API 的端点行为） |
 | **R21 修复：popover 读取入口钳制不一致**（`1e37a68`） | `sliderValue(k)` 无 `jlimit` 而同义的 `sliderValueForTest(k)` 有；`popoverValueForTest(k)` 同样无。当前调用点都传已验证索引所以今天不出事，但属于"下一个调用方只会看那个恰好安全的入口"。已统一加钳制。**无可感知变化**——纯属消隐患 | — （工程修复） |
 | **R22 修复：DisplayView 访问器钳制**（`4b06e05`） | 按教训 28 的"按读什么归类"继续扫，`rangeEdgePath_` 的三个入口里只有 `bandLevelDbForTest` 有钳制，`getRangeEdgeRect`/`getRangeEdgeLenForTest` 无；`getRangeDisplay` 对 `rangeDisplay_` 同样无。已统一补齐。**无可感知变化**——三个入口当前都无调用点 | — （工程修复） |
+| **固定数组入口清单扫完（S1，无缺陷）** | 按教训 29 列清全部按段索引的固定数组并逐个查入口钳制，余下部分（API 按值返回的 array、DSP 音频线程内联索引、DisplayView 其余段数组）**均无越界风险**。顺手删掉 `setBandGroupDelta` 的恒等冗余 | — （工程清理；无可感知变化） |
 
 ### Phase D 待做
 
@@ -511,6 +512,7 @@ namespace Anim {
 
 > 这些是重构与迁移引入的真 bug，记录在此以免未来重犯。**多数是测试没抓到的**。
 > （P 开头的是性能类，不是缺陷——记在这里是因为它们和 R 系列是同一种思维盲区。）
+> （S 开头的是"已扫完、无缺陷"的记录——记它是为了让人知道这一类已经查过，见教训 30。）
 
 | # | 回归 | 为什么测试没抓到 | 怎么修的 |
 |---|---|---|---|
@@ -552,7 +554,8 @@ namespace Anim {
 | **R20b ✅ 已修复**（第五十八轮，`4f8d823`） | **R20 的同族隐患还有 9 处**：`check()` 只记录失败**不中断执行**，所以"前一条 size 断言存疑 + 后一条无条件 `.front()/.back()`"这个组合在 T52 里重复了 9 次。`getTransferCurve` 的 xValues/yValues、`getFrequencyResponse` 的 xValues/yValues 都有这个形态，其中 T52.25/26 的 `fr.yValues.front()/back()` 连 size 断言都没有 | 与 R20 同根：**写测试时只考虑了"正常路径"，没考虑"上一条断言失败后还会往下走"**。`check()` 的语义（记录而不 abort）放大了这一点——它让失败传播到了不该执行到的代码 | 9 处全部改为 `if (!empty()) ... else check(false, ...)`：空则显式报失败，不触发 UB。T71 顺带钉住边界行为——发现三个 API 的 0 点行为**并不一致**（`getTransferCurve`/`getFrequencyResponse` 返回两个端点，`readMultibandHistory` 返回空），按实际行为记录而未强行统一（改 API 语义超出本轮范围） |
 | **R21 ✅ 已修复**（第六十轮， `1e37a68`） | **同一个读取的两个入口，一个钳制一个不钳**：`BandPopover::sliderValue(k)` 是 `return sliders_[(size_t) k];`（无钳制），而同义的 `sliderValueForTest(k)` 有 `jlimit(0,4,k)`。`popoverValueForTest(k)` 对 `values_` 同样无钳制。当前所有调用点都传的是已验证索引（`hitTestSlider` 保证 0..4），所以今天不出事——但"下一个调用方只会去看那个恰好安全的入口" | 与 R19b/R19c 同根：**两份实现必然一份漏**。这次连"两份"都算不上——是同一语义的两个入口，一个细心一个不细心 | `sliderValue()` 与 `popoverValueForTest()` 都加 `jlimit`；越界返回端点值而非越界读。T72 六条断言：越界返回有限值、−1 钳到索引 0、99 钳到索引 4（用端点值反证）、`popoverValueForTest` 同样钳制、合法索引不受影响 |
 | **R22 ✅ 已修复**（第六十二轮，`4b06e05`） | **按"读什么"归类继续扫，发现 `rangeEdgePath_` 的三个入口里只有一个有钳制**：`bandLevelDbForTest` 有范围检查，而 `getRangeEdgeRect` / `getRangeEdgeLenForTest` 直接 `rangeEdgePath_[(size_t) band]` 无钳制；`getRangeDisplay` 对 `rangeDisplay_` 同样无。三个当前都无调用点，但都是公开/测试入口 | 教训 28 的**直接延续**：上轮按"读什么"归类找到了 BandPopover 的 `sliders_`/`values_`，这轮找到 DisplayView 的 `rangeEdgePath_`/`rangeDisplay_`。**这个扫法确实有效，但要按数组逐个过，不能只扫一个文件** | 三个访问器统一加 `0..kNumBands-1` 钳制，与 `bandLevelDbForTest` 一致。附带清掉一个**永远不可能失败的守卫**：`curveDb_` 是 `std::array<float,241>`，`empty()` 恒为 false，原代码却写着 `if (! curveDb_.empty())`——看起来在防空，实际从来没防过（三个容器始终等长所以索引本就安全），改为按真实不变量直写并注明 |
-> **教训（第六十二轮补充，共 29 条）**：
+| **S1 ✅ 已扫完，无缺陷**（第六十三轮） | 按教训 29 的清单扫完**余下全部固定数组**，未发现新缺陷。清单与结论：① `IPluginBackend::gainReductionDb` / `IMBBackend::actualValues` / `MBGroupSetResult` —— 均为**按值返回**的 `std::array<float,4>`，调用方索引越界属调用方责任，与"访问器内部越界"不同类；② `setBandGroupDelta` 内 `res.actualValues[b]` 的 `b` 由 `b < Param::kNumBands` 固定循环保证；③ DSP 侧 `laBuf_`/`gStore_`/`bandStore_`/`scStore_`/`gateT_`/`deltaT_`/`gateSm_`/`deltaSm_`/`makeupLin_`/`mixLin_`/`mixSmooth_`/`extEnabled_` —— 全是音频线程内联索引，无公开入口；④ `DisplayView` 其余 `bandPeakDb_`/`bandPeakHoldMs_`/`bandGainTotalDb_`/`bandRawDb_`/`bandLiveDb_`/`bandDisplayDb_`/`bandRangeDb_`/`lastDrawnGainDb_`/`lastDrawnRange_`/`bandWeights_`/`bypassMemo_`/`selT_`/`hoverT_`/`bypT_`/`bandBypassed_` —— 索引全部来自固定循环或已校验的 `selectedBand_` | — | 顺手删掉 `setBandGroupDelta` 里的恒等冗余（`res.applied = any; if (!any) res.applied = false;` 后半句恒等于前半句结果）。**记这条是为了让后人知道这一类已经查过**（教训 30） |
+> **教训（第六十三轮补充，共 30 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -581,6 +584,7 @@ namespace Anim {
 > 28. **"同一个语义的两个入口"比"同一个逻辑的两份实现"更隐蔽**。R21：`sliderValue()` 与 `sliderValueForTest()` 读的是同一个数组、语义完全相同，只是一个有 `jlimit` 一个没有。扫"两份实现"时不会发现它——名字不同、看起来是两个函数。**扫重复的正确问法不是"哪两段代码一样"，而是"哪两个入口语义一样"**：按"读什么/写什么"归类，而不是按代码文本相似度。
 ---
 > 29. **按数组扫，不要按文件扫**。R22：教训 28 的扫法有效，但上轮只扫了 `BandPopover`（因为缺陷是在那儿发现的），`DisplayView` 里的 `rangeEdgePath_` 同样有三个入口、同样只有一个钳制。**正确做法是列出所有"按段索引的固定数组"，然后逐个数组看它有几个入口、每个入口有没有钳制**——按文件扫会漏掉同名模式的其它实例。本次清单：`sliders_`/`values_`（BandPopover，已修）、`rangeEdgePath_`/`rangeDisplay_`（DisplayView，已修）、`bandLevelDb_`（DisplayView，本就有钳制）、`laBuf_`/`gStore_`/`bandStore_`（MultibandDSP，音频线程内联索引、无公开入口）。
+> 30. **扫完一类要明确记下"已扫完"，否则下一轮会重复扫**。第六十三轮按教训 29 的清单扫完了余下全部固定数组（含 `IPluginBackend::gainReductionDb`、`IMBBackend::actualValues`、`MBGroupSetResult`、DSP 侧 `laBuf_`/`gStore_`/`bandStore_`/`gateT_`/`deltaT_`/`makeupLin_` 等），**未发现新缺陷**。结论本身要记录：`setBandGroupDelta` 里 `res.actualValues[b]` 的索引由 `b < Param::kNumBands` 的固定循环保证；API 侧数组都是**按值返回**的 `std::array<float,4>`，调用方索引越界属调用方责任，与"访问器内部越界"不同类。**"扫完无事可记"和"没扫"在文档上必须区分开**，否则后人无法判断这一类是否已经查过。
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -830,6 +834,9 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
+
 
 
 
