@@ -61,6 +61,11 @@ public:
     // 编辑器开关（懒启动频谱分析）
     void setActive (bool active) noexcept;
 
+    /** R32：参数变化时由 processor 在消息线程调用（经 setUiWakeCallback 注册）。
+     *  Phase E-2 空闲时定时器降到 4Hz 巡检；没有这个回调，宿主自动化改参数后
+     *  最多要等 250ms 才反映到画面。这里立即提回满帧并重绘一帧。 */
+    void uiWakeFromParam();
+
     // 测试钩子：离屏渲染（无窗口），供像素级视觉回归断言使用
     // ⚠️ 只有**覆盖层**子组件需要在这里补画：抽屉 / Popover / 频率输入框。
     //    频谱（SpectrumView）不是子组件，已由上面的 paint() 在第 4 位绘制。
@@ -84,6 +89,18 @@ public:
     // （真实时间在紧凑循环里几乎不前进，Tween 会永远停在起点）。
     void tickForTest (double advanceMs = 16.0);
     double nowMsForTest() const { return testClockMs_; }
+
+    /** R32 测试钩子：以真实时钟模式跑一帧（绕开 useTestClock_ 守卫），
+     *  用于验证 Phase E-2 的空闲降频与参数变化恢复。 */
+    void tickRealClockForTest (double advanceMs = 16.0);
+
+    /** R32 测试钩子：定时器当前频率（Hz）。0 = 已停表。
+     *  用于验证"空闲降频而非停表"以及"参数变化后恢复满帧"。 */
+    int timerHzForTest() const { return getTimerInterval() > 0
+                                        ? (int) juce::roundToInt (1000.0 / getTimerInterval())
+                                        : 0; }
+    /** R32 测试钩子：是否有"参数已变但未绘制"的挂起状态。 */
+    bool uiStatePendingForTest() const { return uiStatePending_; }
     // 测试钩子：直接派发鼠标事件（mouseXxx 为 protected；内部经 Desktop 取 MouseInputSource）
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);
@@ -696,11 +713,29 @@ private:
     // timerCallback 里记录本帧是否收到新频谱帧；无动效且无新帧时停表。
     // 任何交互/动画开始时会经 ensureTimerRunning() 重启。
     bool spectrumHadNewFrame_ = false;
+    /** R32：确保定时器在跑；若只在巡检频率（kIdleHz）则提回满帧。
+     *  任何用户交互（鼠标/键盘/滚轮）都应调用它。 */
     void ensureTimerRunning()
     {
         if (! isTimerRunning())
             startTimerHz (60);
+        else if (getTimerInterval() > 1000 / 55)      // 当前 ≤ ~50Hz → 提回满帧
+            startTimerHz (60);
     }
+
+    // ---- R32：停表前的"参数已绘制"判定 ----
+    // Phase E-2 停表只判断了动效/频谱帧/拖拽，漏了"参数已变但还没画"。
+    // 宿主自动化改参数时定时器可能刚停 → 唯一的检测点（timerCallback）
+    // 不再运行 → 画面永久停在旧值（用户实测"UI 卡住完全不刷新"）。
+    // snapshotDrawnParams() 记下本帧画出去的参数值；timerCallback 比对新值，
+    // 不一致就置 uiStatePending_ 并继续跑。
+    bool uiStatePending_ = false;
+    int  idleFrames_ = 0;               // R32：连续空闲帧计数（降频滞后用）
+    std::array<float, Param::kNumBands> lastDrawnBandRangeParam_ {};
+    std::array<float, Param::kNumBands> lastDrawnThreshold_ {};
+    std::array<float, Param::kNumBands> lastDrawnMakeup_ {};
+    std::array<float, Param::kNumBands> lastDrawnMix_ {};
+    void snapshotDrawnParams() noexcept;
     // 实时值由音频线程写、UI 线程读；这里各存一份平滑后的显示值，
     // 让环的转动有弹道感而不是每帧跳。
     // ⚠️ 初值必须是静音底 −100dB，不能是 0：0 会被弹道逻辑当成"当前电平 0dB"，

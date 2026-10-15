@@ -100,6 +100,41 @@ namespace Param
     inline juce::String bandExt       (int i) { return "band" + juce::String (i) + "Ext"; }
     inline juce::String bandDelta     (int i) { return "band" + juce::String (i) + "Delta"; }
 
+    /** R32：全部参数 id（含每段的 13 个）。用于给 APVTS 注册监听器——
+     *  原先只注册 8 个结构参数，导致 parameterChanged 对其余参数永不触发，
+     *  UI 的"参数变化唤醒"收不到通知。 */
+    inline std::vector<juce::String> allIds()
+    {
+        std::vector<juce::String> ids {
+            ID::enabled, ID::phaseMode, ID::linearQuality, ID::xoverSlope,
+            ID::xover1, ID::xover2, ID::xover3, ID::inputGain, ID::outputGain,
+            ID::lookahead, ID::oversampling, ID::globalMix,
+            ID::autoGain, ID::monitorMode
+        };
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            ids.push_back (bandThreshold (i));
+            ids.push_back (bandRange     (i));
+            ids.push_back (bandRatio     (i));
+            ids.push_back (bandAttack    (i));
+            ids.push_back (bandRelease   (i));
+            ids.push_back (bandMakeup    (i));
+            ids.push_back (bandMix       (i));
+            ids.push_back (bandKnee      (i));
+            ids.push_back (bandDetector  (i));
+            ids.push_back (bandDynamics  (i));
+            ids.push_back (bandSCFilter  (i));
+            ids.push_back (bandSCLow     (i));
+            ids.push_back (bandSCHigh    (i));
+            ids.push_back (bandStereoLink(i));
+            ids.push_back (bandSolo      (i));
+            ids.push_back (bandMute      (i));
+            ids.push_back (bandExt       (i));
+            ids.push_back (bandDelta     (i));
+        }
+        return ids;
+    }
+
     // 宿主显示名映射（TECH_SPEC §5.3）
     inline const juce::String& bandName (int i)
     {

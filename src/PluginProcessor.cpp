@@ -39,19 +39,17 @@ CrunchMBAudioProcessor::CrunchMBAudioProcessor()
       apvts (*this, nullptr, "PARAMS", Param::createLayout())
 {
     // 结构/延迟参数监听（消息线程）——FIR 设计禁上音频线程（PLAN L5）
-    for (const char* id : { Param::ID::xover1, Param::ID::xover2, Param::ID::xover3,
-                            Param::ID::xoverSlope, Param::ID::phaseMode,
-                            Param::ID::linearQuality, Param::ID::lookahead,
-                            Param::ID::oversampling })
+    // R32：给**全部**参数注册监听器，而不是只注册结构参数。
+    // 原先只注册 8 个结构参数 → parameterChanged 对 Threshold/Makeup/Mix 等
+    // 永不触发 → UI 唤醒回调收不到 → Phase E-2 空闲降频后宿主自动化改这些
+    // 参数时画面不更新（用户实测"UI 卡住完全不刷新"）。
+    for (const auto& id : Param::allIds())
         apvts.addParameterListener (id, this);
 }
 
 CrunchMBAudioProcessor::~CrunchMBAudioProcessor()
 {
-    for (const char* id : { Param::ID::xover1, Param::ID::xover2, Param::ID::xover3,
-                            Param::ID::xoverSlope, Param::ID::phaseMode,
-                            Param::ID::linearQuality, Param::ID::lookahead,
-                            Param::ID::oversampling })
+    for (const auto& id : Param::allIds())
         apvts.removeParameterListener (id, this);
 }
 
@@ -235,6 +233,14 @@ void CrunchMBAudioProcessor::parameterChanged (const juce::String& parameterID, 
 {
     if (isStructuralParam (parameterID))
         triggerAsyncUpdate();          // 合并到下一消息循环
+
+    // R32：任何参数变化都通知 UI"该醒了"。
+    // Phase E-2 空闲停表后，timerCallback（唯一的参数检测点）不再运行，
+    // 宿主自动化改参数时画面会永久停在旧值。这里既置原子标志（paint 消费），
+    // 也直接触发重绘回调——不必等下一个巡检周期。
+    uiWakeFlag_.store (true, std::memory_order_release);
+    if (uiWakeCallback_)
+        uiWakeCallback_();
 }
 
 void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const noexcept

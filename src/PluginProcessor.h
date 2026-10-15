@@ -55,6 +55,18 @@ public:
     // ---------- APVTS::Listener（消息线程） ----------
     void parameterChanged (const juce::String& parameterID, float newValue) override;
 
+    // ---------- R32：UI 唤醒标志 ----------
+    // Phase E-2 空闲停表后，UI 唯一的参数检测点（timerCallback）不再运行，
+    // 宿主自动化改参数时画面永久停在旧值。parameterChanged 置位、
+    // DisplayView::paint() 消费（唤醒定时器 + 重绘）。
+    bool consumeUiWakeFlag() noexcept
+    {
+        return uiWakeFlag_.exchange (false, std::memory_order_acq_rel);
+    }
+    /** R32：参数变化时由编辑器注册的回调（消息线程），用于立即重绘，
+     *  不必等下一个巡检周期。为空表示没有打开的编辑器。 */
+    void setUiWakeCallback (std::function<void()> cb) { uiWakeCallback_ = std::move (cb); }
+
     // ---------- 编辑器开关（懒启动频谱分析，Phase 4.1） ----------
     void setEditorActive (bool active) noexcept;
 
@@ -107,6 +119,10 @@ private:
     MultibandDSP dsp_;
     SpectrumEngine spectrumEngine_;           // 后台分析线程 + 无锁三缓冲
     std::unique_ptr<MBBackend> backend_;      // Phase：统一后端 facade（惰性创建）
+
+    // R32：UI 唤醒标志（parameterChanged 置位 / DisplayView::paint 消费）
+    std::atomic<bool> uiWakeFlag_ { false };
+    std::function<void()> uiWakeCallback_;
 
     // 电平表（音频线程写原子，UI 做弹道）
     std::atomic<float> inputPeak_  { 0.0f };

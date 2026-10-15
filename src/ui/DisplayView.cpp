@@ -4,11 +4,27 @@
 // DisplayView 实现 — Phase 4.2 静态结构（对照 mockup v9 逐值）
 // ============================================================
 
+// R32：空闲巡检频率（Hz）。Phase E-2 原本空闲时 stopTimer()，但停表后
+// **没有任何唤醒路径**（startTimerHz 仅在构造和 setActive(true) 时出现），
+// 用户实测"UI 卡住、完全不刷新，必须关开编辑器才好"（2026-10-15）。
+// 改为降到 4Hz 巡检而非停表：参数变化后 250ms 内即可发现并恢复满帧，
+// 空闲成本可忽略，且不存在死结。
+static constexpr int kIdleHz = 4;
+// R32：降频滞后帧数。连续这么多帧都空闲才降到 kIdleHz。
+// 不能一帧空闲就降——参数变化那一帧刚提回满帧，下一帧就被打回巡检频率，
+// 用户看到的仍是"改参数没反应"。
+static constexpr int kIdleHoldFrames = 30;   // 30 帧 @60fps ≈ 500ms
+
 DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     : proc_ (processor), pal_ (MBTheme::palette (theme_))
 {
     setOpaque (true);
     startTimerHz (60);          // 电平表弹道 + 频谱帧拾取 + 曲线刷新
+
+    // R32：向处理器注册"参数变了就重绘"的回调。
+    // Phase E-2 空闲时定时器降到 4Hz 巡检，若没有这个回调，
+    // 宿主自动化改参数后最多要等 250ms 才在画面上反映。
+    proc_.setUiWakeCallback ([this] { uiWakeFromParam(); });
 
     // 仿 EQ 曲线频率点（mockup：20Hz→20kHz 对数，241 点）
     curveFreqs_.resize ((size_t) kCurvePoints);
@@ -235,7 +251,8 @@ void DisplayView::setActive (bool active) noexcept
     }
     else
     {
-        startTimerHz (60);
+        ensureTimerRunning();
+        startTimerHz (60);         // R32：重新激活一律回满帧（巡检频率不适用于交互）
         proc_.getSpectrumEngine().setUIActive (true);
         // Phase A：抽屉重新激活时吸附到当前状态，避免停表期间动画卡在中途
         if (linkedDrawer_ != nullptr)
@@ -243,6 +260,20 @@ void DisplayView::setActive (bool active) noexcept
         if (bandPopover_ != nullptr)
             bandPopover_->snapToCurrent();
     }
+}
+
+// ---------------- R32：参数变化时的立即唤醒 ----------------
+// 由 processor 的 parameterChanged 在消息线程调用。
+// Phase E-2 空闲时定时器降到 kIdleHz(4) 巡检；没有这个回调的话，
+// 宿主自动化改参数后最多要等一个巡检周期（250ms）才在画面上反映。
+// 这里直接提回满帧并重绘一帧，让参数改动"即时可见"。
+void DisplayView::uiWakeFromParam()
+{
+    if (isTimerRunning())
+        startTimerHz (60);
+    idleFrames_     = 0;        // 重置降频滞后计数（否则下一帧就又降频）
+    uiStatePending_ = true;     // 阻止 timerCallback 立刻又降频
+    repaint();
 }
 
 // ---------------- 坐标映射（mockup v9 常量） ----------------
@@ -1182,6 +1213,28 @@ void DisplayView::timerCallback()
         bandRangeDb_[(size_t) b] =
             proc_.getBackend().getParamFast (Param::bandRange (b));
 
+    // R32：检测"用户可见参数"是否变化（宿主自动化 / 外部 setValueNotifyingHost）。
+    // 变化即置 uiStatePending_，阻止 Phase E-2 停表；直到 repaint 后才清除。
+    // ⚠️ 只列**改变画面**的参数——把它们全轮询一遍比停表后永不刷新便宜得多。
+    if (! uiStatePending_)
+    {
+        if (bandRangeDb_ != lastDrawnBandRangeParam_)
+            uiStatePending_ = true;
+        else
+        {
+            for (int b = 0; b < Param::kNumBands; ++b)
+            {
+                const float th = proc_.getBackend().getParamFast (Param::bandThreshold (b));
+                const float mk = proc_.getBackend().getParamFast (Param::bandMakeup  (b));
+                const float mx = proc_.getBackend().getParamFast (Param::bandMix     (b));
+                if (th != lastDrawnThreshold_[(size_t) b]
+                 || mk != lastDrawnMakeup_[(size_t) b]
+                 || mx != lastDrawnMix_[(size_t) b])
+                { uiStatePending_ = true; break; }
+            }
+        }
+    }
+
     // Phase A：BYP 状态轮询（Mix 可被宿主自动化改写 → bypT_ 目标要跟着走）
     for (int b = 0; b < Param::kNumBands; ++b)
     {
@@ -1240,6 +1293,8 @@ void DisplayView::timerCallback()
             refreshCurvePaths();
         }
     }
+    // R32：本帧已把当前参数画出去 → 刷新快照，允许下一帧停表。
+    snapshotDrawnParams();
     // ---- Phase 5.2 / 5.3：抽屉与 Popover 滑入/收起动画 ----
     // Phase A：两者均已拆为独立组件，这里只推进它们的 Tween。
     if (linkedDrawer_ != nullptr)
@@ -1256,25 +1311,33 @@ void DisplayView::timerCallback()
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
     const bool tweensBusy = advanceTweens (nowMs);
 
-    // ---- Phase E-2：空闲停 Timer ----
-    // 没有动效、没有新频谱帧、没有拖拽、没有光标闪烁时，停掉 60fps 定时器。
-    // 音频仍在跑（DSP 在音频线程），停的只是 UI 重绘——省 CPU/电量。
-    // ⚠️ 只在真实运行时生效：测试用的虚拟时钟下不停，否则 tickForTest 会失效。
-    if (! useTestClock_ && ! tweensBusy && ! spectrumHadNewFrame_)
+    // ---- Phase E-2：空闲降频 ----
+    // 没有动效、没有新频谱帧、没有拖拽、没有待绘参数时，把 60fps 降到
+    // kIdleHz 巡检频率。音频仍在跑（DSP 在音频线程），降的只是 UI 重绘。
+    //
+    // ⚠️ R32 修复：原先这里是 **stopTimer()**，而 startTimerHz() 只在构造和
+    // setActive(true) 时出现——停表后除"关开编辑器"外无任何唤醒路径，
+    // 用户实测"UI 卡住、完全不刷新"（2026-10-15）。
+    // 改为降频而非停表：kIdleHz 巡检仍能发现参数变化并恢复满帧。
+    //
+    // ⚠️ 降频必须有**滞后**：连续 kIdleHoldFrames 帧都空闲才降。
+    // 一帧空闲就降的话，参数变化那一帧刚提回 60Hz、下一帧就被打回 4Hz
+    // （因为 snapshotDrawnParams 在同帧末尾清了 pending），用户看到的仍是
+    // "改参数没反应"。
+    // ⚠️ 只在真实运行时生效：测试用的虚拟时钟下不动，否则 tickForTest 会失效。
+    if (! useTestClock_)
     {
-        if (linkedDrawer_ != nullptr && linkedDrawer_->advance (nowMs)) {}
-        // 再确认一次各面板/抽屉的 Tween 都已结束
-        bool anyAnim = false;
-        if (linkedDrawer_ != nullptr && linkedDrawer_->anim() > 0.0f
-            && linkedDrawer_->anim() < 1.0f) anyAnim = true;
-        if (bandPopover_  != nullptr && bandPopover_->anim()  > 0.0f
-            && bandPopover_->anim()  < 1.0f) anyAnim = true;
-        if (analyzerPanel_ != nullptr && analyzerPanel_->anim() > 0.0f
-            && analyzerPanel_->anim() < 1.0f) anyAnim = true;
-        if (outputPanel_   != nullptr && outputPanel_->anim()   > 0.0f
-            && outputPanel_->anim()   < 1.0f) anyAnim = true;
-        if (! anyAnim && drag_ == DragMode::None)
-            stopTimer();
+        const bool idleNow = ! tweensBusy && ! spectrumHadNewFrame_ && ! uiStatePending_;
+        if (idleNow)
+            ++idleFrames_;
+        else
+            idleFrames_ = 0;
+
+        if (! idleNow && isTimerRunning())
+            startTimerHz (60);                       // 有正事 → 满帧
+        else if (idleFrames_ >= kIdleHoldFrames && isTimerRunning()
+                 && drag_ == DragMode::None)
+            startTimerHz (kIdleHz);                  // 持续空闲 → 降频巡检
     }
 
     repaint();
@@ -1306,6 +1369,25 @@ void DisplayView::pollStructureParams()
         weightsDirty_ = true;
         curvePathsValid_ = false;      // → timerCallback 门控据此强制重建曲线/Range
     }
+}
+
+// ---------------- R32：参数绘制快照 ----------------
+// 记录"本帧画出去时的参数值"。timerCallback 用它判断"参数变了但还没画"，
+// 从而阻止 Phase E-2 的停表——否则宿主自动化改参数时定时器一停，
+// 唯一的参数检测点不再运行，画面永久停在旧值。
+void DisplayView::snapshotDrawnParams() noexcept
+{
+    lastDrawnBandRangeParam_ = bandRangeDb_;
+    for (int b = 0; b < Param::kNumBands; ++b)
+    {
+        lastDrawnThreshold_[(size_t) b] =
+            proc_.getBackend().getParamFast (Param::bandThreshold (b));
+        lastDrawnMakeup_[(size_t) b] =
+            proc_.getBackend().getParamFast (Param::bandMakeup (b));
+        lastDrawnMix_[(size_t) b] =
+            proc_.getBackend().getParamFast (Param::bandMix (b));
+    }
+    uiStatePending_ = false;
 }
 
 void DisplayView::updateWeights()
@@ -1730,6 +1812,18 @@ void DisplayView::tickForTest (double advanceMs)
     useTestClock_ = true;
     testClockMs_ += advanceMs;
     timerCallback();
+}
+
+// R32 测试钩子：以**真实时钟模式**跑一帧 timerCallback。
+// tickForTest 会把 useTestClock_ 置 true，而 Phase E-2 的空闲逻辑明确跳过
+// 虚拟时钟（否则 tickForTest 会失效）。要测空闲降频/恢复，必须经此入口。
+void DisplayView::tickRealClockForTest (double advanceMs)
+{
+    const bool saved = useTestClock_;
+    useTestClock_ = false;
+    testClockMs_ += advanceMs;
+    timerCallback();
+    useTestClock_ = saved;
 }
 
 double DisplayView::animNowMs() const
@@ -2227,6 +2321,7 @@ void DisplayView::openFreqEditor (int index, int band)
 
 bool DisplayView::keyPressed (const juce::KeyPress& key)
 {
+    ensureTimerRunning();      // R32：键盘操作同样要唤醒（停表后键盘无视觉反馈）
     if (freqInput_ != nullptr && freqInput_->keyPressed (key))
         return true;
 
@@ -3061,6 +3156,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
 
 void DisplayView::mouseDrag (const juce::MouseEvent& e)
 {
+    ensureTimerRunning();      // R32：拖拽中也要保持重绘（停表后拖拽会看起来卡住）
     const auto p = e.position;
 
     // Phase D-3：显示背景拖拽多选（Pro-MB multi-select）
@@ -3215,6 +3311,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 
 void DisplayView::mouseUp (const juce::MouseEvent& e)
 {
+    ensureTimerRunning();      // R32：松手后按钮/参数状态可能还要几帧才稳定
     drag_ = DragMode::None;
     dragIndex_ = -1;
     dragBand_ = -1;
@@ -3381,6 +3478,16 @@ void DisplayView::applyAnalyzerSettings()
 void DisplayView::paint (juce::Graphics& g)
 {
     pollStructureParams();      // 分割线/分区/段名跟随参数（C2）；首帧 cachedX 兜底
+
+    // R32：参数变化唤醒。Phase E-2 降频后本函数可能很久不被调用；
+    // 一旦被调用且处理器报"有参数变过"，立即提回满帧并重绘一帧，
+    // 不必等下一个巡检周期（否则用户改参数后最多要等 250ms 才见反馈）。
+    if (proc_.consumeUiWakeFlag())
+    {
+        ensureTimerRunning();
+        startTimerHz (60);
+        repaint();
+    }
 
     drawBackground (g);
     drawGrid (g);

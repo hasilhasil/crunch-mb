@@ -9342,10 +9342,90 @@ static void testHostEnvironmentAdaptation()
     }
 }
 
+// ------------------------------------------------------------
+// T85 Phase：UI 停表后必须能自行恢复（R32）
+//   用户实测"插件 UI 卡住、完全不刷新，必须关开编辑器才好"（2026-10-15）。
+//   根因：Phase E-2 空闲时 stopTimer()，而 startTimerHz() 只在**构造时**和
+//   setActive(true) 时出现——停表后没有任何唤醒路径。
+//   R32 修法：空闲时降到 kIdleHz(4) 巡检而非停表；参数变化即恢复满帧。
+//   本测试经 tickRealClockForTest（真实时钟模式）验证这条链路。
+// ------------------------------------------------------------
+static void testUiNeverGetsStuck()
+{
+    std::cout << "\n--- T85 Phase UI 停表自恢复 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T85.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ① 初始应为满帧（构造时启动）。JUCE 的 getTimerInterval 是毫秒数，
+    //    换算回 Hz 有取整误差，故用"≥55Hz 当作满帧"判定。
+    check (dv.timerHzForTest() >= 55, "T85.1 初始定时器为满帧",
+           juce::String (dv.timerHzForTest()));
+
+    // ② 空闲若干帧（真实时钟模式）→ 应降到巡检频率，但**不能停表**
+    for (int t = 0; t < 90; ++t)
+        dv.tickRealClockForTest (16.0);
+    const int idleHz = dv.timerHzForTest();
+    std::cout << "  空闲 90 帧后定时器 = " << idleHz << " Hz" << std::endl;
+    check (idleHz > 0, "T85.2 空闲后定时器仍在跑（不停表，这是 R32 的核心）",
+           juce::String (idleHz));
+    check (idleHz < 60, "T85.3 空闲后已降频（省电目的仍达成）",
+           juce::String (idleHz));
+
+    // ③ 关键回归：空闲降频后改参数 → 必须恢复满帧
+    //    （修复前：停表后唯一检测点不运行，画面永久停旧值）
+    mb->setParamPhysicalForTest (Param::bandThreshold (1), -30.0f);
+    for (int t = 0; t < 12; ++t)
+        dv.tickRealClockForTest (16.0);
+    const int afterParamHz = dv.timerHzForTest();
+    std::cout << "  改参数后定时器 = " << afterParamHz << " Hz" << std::endl;
+    check (afterParamHz >= 55,
+           "T85.4 参数变化后恢复满帧（UI 不再卡住）",
+           juce::String (afterParamHz));
+
+    // ④ 再次空闲 → 又降频（可反复，不是一次性修复）
+    for (int t = 0; t < 90; ++t)
+        dv.tickRealClockForTest (16.0);
+    const int idle2 = dv.timerHzForTest();
+    std::cout << "  再次空闲后定时器 = " << idle2 << " Hz" << std::endl;
+    check (idle2 > 0 && idle2 < 60, "T85.5 可反复降频/恢复", juce::String (idle2));
+
+    // ⑤ 再改一次参数 → 再次恢复
+    mb->setParamPhysicalForTest (Param::bandThreshold (2), -28.0f);
+    for (int t = 0; t < 12; ++t)
+        dv.tickRealClockForTest (16.0);
+    check (dv.timerHzForTest() >= 55, "T85.6 第二次参数变化也恢复满帧",
+           juce::String (dv.timerHzForTest()));
+
+    // ⑥ 鼠标移动（最常用的唤醒途径）也要能恢复
+    for (int t = 0; t < 90; ++t)
+        dv.tickRealClockForTest (16.0);
+    check (dv.timerHzForTest() < 60, "T85.7 前置：已降频", juce::String (dv.timerHzForTest()));
+    dv.mouseMoveForTest (400.0f, 300.0f);
+    check (dv.timerHzForTest() >= 55, "T85.8 鼠标移动唤醒到满帧",
+           juce::String (dv.timerHzForTest()));
+
+    // ⑦ 挂起状态标志：改参数后一帧内应被置位并随后清除
+    mb->setParamPhysicalForTest (Param::bandThreshold (3), -26.0f);
+    const bool pendingSeen = dv.uiStatePendingForTest();
+    for (int t = 0; t < 6; ++t)
+        dv.tickRealClockForTest (16.0);
+    std::cout << "  改参数后 pending=" << pendingSeen
+              << "  数帧后 pending=" << (int) dv.uiStatePendingForTest() << std::endl;
+    check (! dv.uiStatePendingForTest(),
+           "T85.9 参数绘制完成后挂起标志清除（不会永久占用满帧）", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
-
     std::cout << "Crunch MB — Phase 3 DSP 离线断言（含 Phase 2 全量 + DAW 链路回归）\n";
 
     testParamSystem();
@@ -9433,6 +9513,7 @@ int main()
     testMonitorModes();               // T82 Phase Monitor 内部信号试听
     testMonitorWithAllFeatures();     // T83 Phase Monitor × 全功能组合
     testHostEnvironmentAdaptation();  // T84 Phase 宿主环境适配
+    testUiNeverGetsStuck();           // T85 Phase UI 停表自恢复
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -9440,6 +9521,7 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
 
 
 
