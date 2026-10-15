@@ -7808,6 +7808,93 @@ static void testDisplayViewIndexClamp()
            juce::String (blNeg));
 }
 
+// ------------------------------------------------------------
+// T74 Phase：Expand 模式的端到端音频效果（对齐 Pro-MB Expand 的声音表现）
+//   T47 只验了 BandCompressor 的静态传输曲线——没喂音频、没走整条链。
+//   按 Phase C 立的规矩（"数据驱动图层必须喂音频"），这里补端到端：
+//   同一声压输入下，Expand 的输出幅度应**大于** Compress，
+//   即动态范围被扩大而非压缩。
+// ------------------------------------------------------------
+static void testExpandEndToEndAudio()
+{
+    std::cout << "\n--- T74 Phase Expand 端到端音频效果 ---\n";
+
+    auto runOnce = [] (bool expand, float inAmp) -> float
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+
+        // 只留 band0，关其余段（隔离变量）
+        for (int i = 1; i < 4; ++i)
+            mb->setParamPhysicalForTest ("band" + juce::String (i) + "Mix", 0.0f);
+        mb->setParamPhysicalForTest ("band0Threshold", -30.0f);
+        mb->setParamPhysicalForTest ("band0Ratio", 4.0f);
+        mb->setParamPhysicalForTest ("band0Attack", 1.0f);
+        mb->setParamPhysicalForTest ("band0Release", 20.0f);
+        mb->setParamPhysicalForTest ("band0Range", -30.0f);
+        mb->setParamPhysicalForTest ("band0Makeup", 0.0f);
+        mb->setParamPhysicalForTest ("band0Dynamics", expand ? 1.0f : 0.0f);
+        mb->setParamPhysicalForTest ("globalMix", 100.0f);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        float peak = 0.0f;
+        const int blocks = 8;                     // 4096 样本 ≈ 85ms
+        for (int t = 0; t < blocks; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = inAmp * (float) std::sin (6.283185 * 150.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < 512; ++i)
+                peak = juce::jmax (peak, std::abs (buf.getSample (0, i)));
+        }
+        return peak;
+    };
+
+    // ① 高声压输入（0.9 幅值正弦，远超 −30 dB 阈值）：
+    //    Compress 应明显衰减；Expand 应抬升
+    const float ampCompress = runOnce (false, 0.9f);
+    const float ampExpand   = runOnce (true,  0.9f);
+    std::cout << "  高声压 Compress peak=" << ampCompress
+              << "  Expand peak=" << ampExpand << std::endl;
+    check (ampCompress < 0.9f * 0.85f, "T74.1 高声压下 Compress 明显衰减",
+           juce::String (ampCompress));
+    check (ampExpand > ampCompress * 1.15f,
+           "T74.2 同输入下 Expand 输出大于 Compress（动态范围被扩大）",
+           juce::String (ampExpand) + " vs " + juce::String (ampCompress));
+
+    // ② 低声压输入（低于阈值）：两者都应基本不动
+    const float lowCompress = runOnce (false, 0.05f);
+    const float lowExpand   = runOnce (true,  0.05f);
+    std::cout << "  低声压 Compress peak=" << lowCompress
+              << "  Expand peak=" << lowExpand << std::endl;
+    check (std::abs (lowCompress - 0.05f) < 0.05f * 0.35f,
+           "T74.3 低声压下 Compress 基本不动", juce::String (lowCompress));
+    check (std::abs (lowExpand - 0.05f) < 0.05f * 0.35f,
+           "T74.4 低声压下 Expand 也基本不动（不抬噪声底）",
+           juce::String (lowExpand));
+
+    // ③ 峰谷比：Expand 应大于 Compress（声音表现上动态范围确实扩大）
+    const float rangeC = (lowCompress > 1.0e-6f) ? (ampCompress / lowCompress) : 0.0f;
+    const float rangeE = (lowExpand   > 1.0e-6f) ? (ampExpand   / lowExpand)   : 0.0f;
+    std::cout << "  峰谷比 Compress=" << rangeC << "  Expand=" << rangeE << std::endl;
+    check (rangeE > rangeC,
+           "T74.5 Expand 峰谷比大于 Compress（动态范围确实扩大）",
+           juce::String (rangeE) + " vs " + juce::String (rangeC));
+
+    // ④ 输出必须有限
+    check (std::isfinite (ampCompress) && std::isfinite (ampExpand)
+        && std::isfinite (lowCompress) && std::isfinite (lowExpand),
+           "T74.6 两种模式输出均有限（无 NaN/爆音）", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7888,6 +7975,7 @@ int main()
     testEmptyContainerGuards();      // T71 Phase 空容器防护
     testPopoverIndexClamp();         // T72 Phase popover 读取入口索引钳制
     testDisplayViewIndexClamp();     // T73 Phase DisplayView 访问器索引钳制
+    testExpandEndToEndAudio();       // T74 Phase Expand 端到端音频效果
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
