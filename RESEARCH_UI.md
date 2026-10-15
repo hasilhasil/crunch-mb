@@ -120,12 +120,13 @@
 | **P2 Phase 5** | Undo/Redo、A/B 对比 | 顶栏图标占位。**DESIGN §9 已声明不做**（与 EQ / Compressor 一致，靠宿主会话） |
 | ~~**P2**~~ | ~~Freeze（频谱峰值冻结）、Analyzer 设置面板（Speed/Tilt/Resolution）~~ | ✅ 已做（`e2e8784`，AnalyzerPanel 含 Pre/Post、Resolution、Speed、Tilt、Freeze） |
 | **P2** | 参数平滑（SPI）：切段/切 preset 时曲线不跳变 | ✅ 已做（`aa78e24`，曲线显示层 τ=60ms 平滑；声音路径不变） |
-| **P3** | Auto-Gain（ITU 1770 响度匹配） | 借鉴 Future MB。**未做**——会改变输出响度语义，需用户确认后再实现 |
+| ~~**P3**~~ | ~~Auto-Gain（ITU 1770 响度匹配）~~ | ✅ 已做（`ceb59c4`，**默认关闭**）。`LoudnessMeter`（BS.1770-4 K 加权 + 400ms 滑动窗）测处理前后响度，补偿 ±24dB 内、300ms 平滑，作用于 Output Gain 之前。默认关 = 现有行为逐样本不变 |
 | **P3** | snap 吸附 + Split/Unsnap hover 按钮 | Pro-MB 招牌交互（我们已用 1 八度钳制替代，见 DESIGN §9） |
 | **P3** | 预设浏览器（标签过滤/收藏） | 产品化。DESIGN §9 已声明无预设系统 |
 
 > **核对记录（2026-10-14 第二十一轮 / 第二十三轮更新）**：本清单原有 10 项。
 > 已交付 **6 项**（含 P1 的两项核心缺口 + SPI）；被 DESIGN §9 明确划为"已知边界"
 > 的 **3 项**（Undo/Redo、A/B、预设浏览器，均非缺陷）；
-> **真正未交付的只剩 Auto-Gain（ITU 1770）1 项**，为 P3，且它会改变输出响度语义
+> **Auto-Gain（ITU 1770）已交付**（`ceb59c4`，第六十五轮）。为不改变现有语义，实现为**默认关闭**的参数——关闭时行为与实现前逐样本一致，用户可选用。这正是 Pro-MB / Future MB 的暴露方式（开关），也解决了本表第 81 行记的痛点"用户调参时音量跳变"。
 > —— 这是"听起来不一样"的功能，不应由开发方 silent 决定，留待用户确认。
+
