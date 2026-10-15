@@ -1964,6 +1964,47 @@ bool DisplayView::hitTestGlobalBypass (juce::Point<float> p) const
     return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 }
 
+void DisplayView::applyBandToggle (int band, int btn, bool exclusive, bool /*cmd*/)
+{
+    // Phase（R26）：Solo(0) / Mute(1) / Delta(3) 的三语义开关。
+    //
+    //   · 普通点击   → latching 切换（原行为）
+    //   · Ctrl/Cmd+点击 → exclusive：设它的同时把**其他段的同类按钮**清掉。
+    //                     Pro-MB 语义：solo 一段时其他段自动 unsolo。
+    //   · 按住        → 临时：由 mouseDown 记原状态、mouseUp 还原
+    //                     （holdBand_/holdBtn_/holdWasOn_）。
+    //
+    // ⚠️ Delta 不参与 exclusive：TECH_SPEC §3.7 规定 Delta 可多段同时开
+    //    （"Delta 监听"本来就是对比多段用的），独占会破坏这个用法。
+    const juce::String suffix = (btn == 0) ? "Solo"
+                             : (btn == 1) ? "Mute" : "Delta";
+    const juce::String id = "band" + juce::String (band) + suffix;
+
+    if (exclusive && btn != 3)
+    {
+        const bool turnOn = ! getParamBool (id);
+        for (int i = 0; i < Param::kNumBands; ++i)
+            setParamNorm ("band" + juce::String (i) + suffix,
+                          (i == band && turnOn) ? 1.0f : 0.0f);
+    }
+    else
+    {
+        setParamNorm (id, getParamBool (id) ? 0.0f : 1.0f);
+    }
+}
+
+void DisplayView::endBandHold()
+{
+    // Phase（R26）：松开 → 还原按住前的状态（"按住 = 临时"语义）。
+    if (holdBand_ < 0 || holdBtn_ < 0)
+        return;
+    const juce::String id = "band" + juce::String (holdBand_)
+                          + ((holdBtn_ == 0) ? "Solo" : (holdBtn_ == 1) ? "Mute" : "Delta");
+    setParamNorm (id, holdWasOn_ ? 1.0f : 0.0f);
+    holdBand_ = -1;
+    holdBtn_  = -1;
+}
+
 bool DisplayView::isPluginEnabled() const
 {
     // Phase（R25）：插件总开关（enabled）。Bool 参数实际值 0/1。
@@ -2874,19 +2915,34 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     // 1) 按钮列（S/M/BYP/Δ）
+    // Phase（R26）：Solo/Mute/Delta 支持 Pro-MB 三语义——
+    //   点击 = 切换；按住 = 临时（mouseUp 还原）；Ctrl+点击 = 独占。
     int b = -1, j = -1;
     if (hitTestButton (p, b, j) != 0)
     {
         if (selectedBand_ != b) { selectedBand_ = b; onSelectedBandChanged (b); }   // Phase A
         const juce::String bp = "band" + juce::String (b);
-        if (j == 0) setParamNorm (bp + "Solo",  getParamBool (bp + "Solo")  ? 0.0f : 1.0f);
-        if (j == 1) setParamNorm (bp + "Mute",  getParamBool (bp + "Mute")  ? 0.0f : 1.0f);
-        if (j == 2) { toggleBypass (b); onBandBypassChanged (b, isBandBypassed (b)); }  // Phase A
-        if (j == 3) setParamNorm (bp + "Delta", getParamBool (bp + "Delta") ? 0.0f : 1.0f);
+        if (j == 2)
+        {
+            toggleBypass (b);
+            onBandBypassChanged (b, isBandBypassed (b));
+        }
+        else if (j == 0 || j == 1 || j == 3)
+        {
+            // Phase（R26）：三语义开关。
+            //   · mouseDown 立即切换（保留原行为——有些调用方只发 mouseDown）
+            //   · 若按住 ≥ kHoldMs 才松手，则还原成按下前的状态（"按住=临时"）
+            //   · Ctrl/Cmd 按下时改为独占语义
+            holdBand_  = b;
+            holdBtn_   = j;
+            holdWasOn_ = getParamBool (bp + ((j == 0) ? "Solo"
+                                                     : (j == 1) ? "Mute" : "Delta"));
+            holdCtrl_    = e.mods.isCtrlDown() || e.mods.isCommandDown();
+            applyBandToggle (b, j, holdCtrl_, false);
+        }
         repaint();
         return;
     }
-
     // 2) 频点（C4+P2）：选中该段；纵拖=Makeup、横拖=中心频率
     //    #3：优先按"距离最近的目标"判定，避免 Range 缘抢占频点邻域
     int dotBand = -1;
@@ -3154,7 +3210,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
-void DisplayView::mouseUp (const juce::MouseEvent&)
+void DisplayView::mouseUp (const juce::MouseEvent& e)
 {
     drag_ = DragMode::None;
     dragIndex_ = -1;
@@ -3165,6 +3221,36 @@ void DisplayView::mouseUp (const juce::MouseEvent&)
     bandSweepActive_ = false;     // Phase D-3：多选拖拽结束
     if (bandPopover_ != nullptr)
         bandPopover_->endSliderDrag();   // ⚠️ 必须复位：否则滑杆拖拽状态会吞掉后续所有拖拽
+
+    // Phase（R26）：松开"按住"的 Solo/Mute/Delta → 还原原状态。
+    // 时长 ≥ kHoldMs 的算"按住"（临时）；更短的算"点击"，
+    // 而点击的 latching 切换已经在 mouseDown 里做掉了。
+    if (holdBand_ >= 0 && holdBtn_ >= 0)
+    {
+        // Phase（R26）：短按/长按分流。
+        //   · 真实运行：用时差 = eventTime − mouseDownTime
+        //   · 测试：mouseUpForTest 无法控制真实时差，故用 holdElapsedMsForTest_
+        //     （≥0 时生效）；默认 −1 = 用时差。
+        int heldMs;
+        if (holdElapsedMsForTest_ >= 0)
+        {
+            heldMs = holdElapsedMsForTest_;
+            holdElapsedMsForTest_ = -1;      // 一次性，避免影响后续交互
+        }
+        else
+        {
+            heldMs = (int) (e.eventTime.toMilliseconds() - e.mouseDownTime.toMilliseconds());
+        }
+
+        if (heldMs >= kHoldMs)
+            endBandHold();                       // 长按 → 还原成按下前（临时语义）
+        else
+        {
+            // 短按 → 保留 mouseDown 已做的切换/独占结果
+            holdBand_ = -1;
+            holdBtn_  = -1;
+        }
+    }
 }
 void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 {

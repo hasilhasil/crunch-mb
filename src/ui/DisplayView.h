@@ -311,6 +311,17 @@ public:
     {
         return juce::Rectangle<float> (sx (196.0f), sy (3.0f), sx (78.0f), sy (24.0f));
     }
+    /** T79 测试钩子：设置 mouseUp 时认定的"按住时长"（一次性）。 */
+    void setHoldElapsedForTest (int ms) { holdElapsedMsForTest_ = ms; }
+    /** T79 测试钩子：直接设某段 Solo / Delta 参数（造前置状态）。 */
+    void setBandSoloForTest  (int band, bool on)
+    {
+        setParamNorm (Param::bandSolo (band), on ? 1.0f : 0.0f);
+    }
+    void setBandDeltaForTest (int band, bool on)
+    {
+        setParamNorm (Param::bandDelta (band), on ? 1.0f : 0.0f);
+    }
     /** T76 测试钩子：等价于点击 OUT 按钮（含"打开前从参数同步副本"）。 */
     void openOutputPanelForTest()
     {
@@ -591,6 +602,20 @@ private:
     std::array<Tween, 3>                divT_;      // 分割线 hover 变色 0 ↔ 1
     std::array<bool,   Param::kNumBands> bandBypassed_ {};   // BYP 状态缓存（检测变化才驱动动画）
 
+    // ---- Phase（R26）：Solo/Mute 三语义（Pro-MB 手册明载的磨过设计）----
+    //   点击        = 切换（latching）
+    //   按住        = 临时（mouseDown 置位，mouseUp 还原）
+    //   Ctrl+点击  = 独占（exclusive：设它的同时清掉其他段的同类状态）
+    // holdBand_/holdBtn_ 记录"当前哪个段的哪个按钮正被按住"（-1 = 无）。
+    int  holdBand_ = -1;
+    int  holdBtn_  = -1;          // 0=Solo 1=Mute 3=Delta
+    bool holdWasOn_ = false;      // 按住前的原状态（mouseUp 时还原）
+    bool holdCtrl_ = false;       // 按下时是否按着 Ctrl/Cmd（决定短按是否独占）
+    /** 测试钩子：≥0 时 mouseUp 用它当"按住了多久"（一次性）。−1 = 用时差。 */
+    int  holdElapsedMsForTest_ = -1;
+    /** 按住超过这个时长算"按住=临时"，否则算"点击=切换"。 */
+    static constexpr int kHoldMs = 250;
+
     // ---- Phase D-7：MIDI Learn（Pro-MB MIDI learn 流程对标）----
     // 流程：点 MIDI Learn 按钮进入学习模式 -> 可学控件高亮
     //   -> 点某个控件 -> 显示关联的 MIDI 控制器号（未关联显示 "-"）-> 再点退出
@@ -728,6 +753,11 @@ private:
     bool hitTestPowerButton (juce::Point<float> p) const;
     /** Phase（R25）：切换总开关（写 enabled 参数）。 */
     void togglePluginEnabled();
+    /** Phase（R26）：Solo/Mute/Delta 的三语义开关。
+     *   exclusive=true 时只留这一段（Ctrl/Cmd+点击）；Delta 不参与独占。 */
+    void applyBandToggle (int band, int btn, bool exclusive, bool cmd);
+    /** Phase（R26）：松开"按住"的 Solo/Mute/Delta → 还原原状态（临时语义）。 */
+    void endBandHold();
     /** Phase D-4：底栏 OUT 按钮（可点，悬停打开 Output 面板）。 */
     bool hitTestOutputButton (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;

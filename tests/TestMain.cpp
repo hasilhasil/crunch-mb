@@ -8298,6 +8298,109 @@ static void testPluginPowerSwitch()
     }
 }
 
+// ------------------------------------------------------------
+// T79 Phase：Solo/Mute/Delta 三语义（R26，Pro-MB 手册明载的磨过设计）
+//   逆向报告 50_COMPARISON.md 第 2 条："按住 = 临时，Ctrl-点击 = 独占"。
+//   我们此前只有"点击 = 切换"一种语义。
+//   ⚠️ Delta 不参与独占：TECH_SPEC §3.7 允许多段同时 Delta（对比用）。
+// ------------------------------------------------------------
+static void testBandToggleThreeStates()
+{
+    std::cout << "\n--- T79 Phase Solo/Mute/Delta 三语义 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T79.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 找到 band0 的 Solo 按钮（btn=0）屏幕坐标——用与 T21 相同的几何：
+    //   按钮列中心 = freqToX(xover1) − 28，Solo 在 y = 118..142
+    const float x1f = freqToXforTest (mb->apvts.getRawParameterValue (Param::ID::xover1)->load());
+    const float sx0 = x1f - 28.0f;
+    const float sy0 = 130.0f;
+    int fb = -1, fj = -1;
+    dv.hitTestButtonForTest (sx0, sy0, fb, fj);
+    std::cout << "  band0 Solo 按钮 @ (" << sx0 << ", " << sy0 << ")" << std::endl;
+    check (fb == 0 && fj == 0, "T79.1 找到 band0 Solo 按钮",
+           juce::String (fb) + "/" + juce::String (fj));
+
+    const auto soloOf = [&] (int band) {
+        return mb->apvts.getRawParameterValue (
+            Param::bandSolo (band))->load() >= 0.5f;
+    };
+
+    // ① 短按（< 250ms）→ latching 切换：关 → 开
+    check (! soloOf (0), "T79.2 初始 band0 Solo 关", "");
+    dv.mouseDownForTest (sx0, sy0);
+    dv.mouseUpForTest (sx0, sy0);
+    check (soloOf (0), "T79.3 短按 Solo → 切换为开", "");
+
+    // ② 再短按 → 关
+    dv.mouseDownForTest (sx0, sy0);
+    dv.mouseUpForTest (sx0, sy0);
+    check (! soloOf (0), "T79.4 再短按 → 切换为关", "");
+
+    // ③ 长按（≥ 250ms）→ 临时：mouseDown 即置开，松开后还原为按下前的关
+    check (! soloOf (0), "T79.4b 前置：band0 Solo 关", "");
+    dv.mouseDownForTest (sx0, sy0);
+    check (soloOf (0), "T79.5 按下即置开（与短按相同的即时反馈）", "");
+    dv.setHoldElapsedForTest (400);
+    dv.mouseUpForTest (sx0, sy0);
+    check (! soloOf (0), "T79.6 长按松开 → 还原为关（临时语义）", "");
+
+    // ④ 长按前原本是开 → 松开后应还原为开（不是被切成关）
+    dv.mouseDownForTest (sx0, sy0);      // 短按开
+    dv.mouseUpForTest (sx0, sy0);
+    check (soloOf (0), "T79.7 前置：band0 Solo 开", "");
+    dv.mouseDownForTest (sx0, sy0);      // 再按（即时切成关）
+    dv.setHoldElapsedForTest (400);
+    dv.mouseUpForTest (sx0, sy0);
+    check (soloOf (0), "T79.8 长按前是开 → 松手后还原为开", "");
+
+    // ⑤ Ctrl+短按 → 独占：设 band0 Solo 同时清掉其他段
+    //    先把 band1 也设为开，再 Ctrl+点 band0
+    dv.setBandSoloForTest (0, false);
+    dv.setBandSoloForTest (1, true);
+    check (soloOf (1), "T79.9 前置：band1 Solo 开", "");
+    dv.mouseDownForTestMods (sx0, sy0, juce::ModifierKeys (juce::ModifierKeys::ctrlModifier));
+    dv.mouseUpForTestMods (sx0, sy0, juce::ModifierKeys (juce::ModifierKeys::ctrlModifier));
+    check (soloOf (0) && ! soloOf (1),
+           "T79.10 Ctrl+点 band0 Solo → 独占（band1 自动清掉）",
+           juce::String ((int) soloOf (0)) + "/" + juce::String ((int) soloOf (1)));
+
+    // ⑥ Delta 不参与独占：Ctrl+点不应清掉其他段的 Delta
+    //    （TECH_SPEC §3.7：Delta 可多段同开，用于对比）
+    dv.setBandDeltaForTest (1, true);
+    dv.setBandDeltaForTest (0, false);
+    {
+        // 找 band0 的 Delta 按钮（btn=3）——同样用 T21 的几何
+        const float dx = x1f - 28.0f;
+        const float dy = 118.0f + 3.0f * 30.0f + 12.0f;
+        int db = -1, dj = -1;
+        dv.hitTestButtonForTest (dx, dy, db, dj);
+        check (db == 0 && dj == 3, "T79.12 找到 band0 Delta 按钮",
+               juce::String (db) + "/" + juce::String (dj));
+        if (db == 0 && dj == 3)
+        {
+            dv.mouseDownForTestMods (dx, dy, juce::ModifierKeys (juce::ModifierKeys::ctrlModifier));
+            dv.mouseUpForTestMods (dx, dy, juce::ModifierKeys (juce::ModifierKeys::ctrlModifier));
+            const bool d0 = mb->apvts.getRawParameterValue (
+                Param::bandDelta (0))->load() >= 0.5f;
+            const bool d1 = mb->apvts.getRawParameterValue (
+                Param::bandDelta (1))->load() >= 0.5f;
+            std::cout << "  Ctrl+点 Delta 后: band0=" << d0 << " band1=" << d1 << std::endl;
+            check (d0 && d1,
+                   "T79.13 Ctrl+点 Delta 不清其他段（Delta 不参与独占）",
+                   juce::String ((int) d0) + "/" + juce::String ((int) d1));
+        }
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -8383,6 +8486,7 @@ int main()
     testAutoGainUiRow();             // T76 Phase Output 面板 Auto-Gain 行
     testInputGainAndOversamplingUi(); // T77 Phase InputGain / Oversampling UI 暴露
     testPluginPowerSwitch();          // T78 Phase 插件总开关 enabled UI
+    testBandToggleThreeStates();      // T79 Phase Solo/Mute/Delta 三语义
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
