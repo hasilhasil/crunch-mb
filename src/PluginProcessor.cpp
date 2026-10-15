@@ -60,6 +60,14 @@ void CrunchMBAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     sampleRate_ = sampleRate > 8000.0 ? sampleRate : 48000.0;
     dsp_.prepare (sampleRate_, samplesPerBlock, 2);
 
+    // R31 修复：宿主切工程采样率/缓冲区时只调 prepareToPlay，**不调**
+    // setStateInformation。此前结构与延迟只在 applyStructure() 里重应用，
+    // 于是切采样率后 dsp_ 的分频器/过采样器还按旧采样率跑、延迟上报
+    // 停留在旧值（实测切到 96k 后再切回，getLatencySamples() 返回 0）。
+    // 这里显式补一次：按当前参数重建结构并刷新延迟上报。
+    applyStructure();
+    updateLatency();
+
     // ---- Phase 4.1 频谱引擎 ----
     // ⚠️ 不要在这里 setUIActive(false)：宿主每次开始播放/切设备都会调 prepareToPlay，
     // 会把分析线程停掉 → 用户看到的"频谱消失且不动，必须关开编辑器才好"（2026-09-23）。
@@ -317,23 +325,12 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // ---- Phase 4.1：采集 pre 抽头（单声道，经延迟环对齐 post） ----
     // 2026-10-14：块大于抽头缓冲时按容量截断（而非整块跳过）——此前超大块会让
     // 频谱与电平表静默冻结。截断只影响显示精度，不影响音频输出。
+    // R31 修复：宿主（或 setPlayConfigDetails）报告的 mainInCh 可能与 buffer
+    // 实际通道数不一致——实测 mono 场景 mainInCh=2 而 buffer 只有 1 通道，
+    // 于是下方 chans>1 分支调 buffer.getSample(1,i) 越界 → 0xC0000005。
+    // 这里以 **buffer 实际通道数**为准收敛 safeCh，两个抽头循环同理。
+    const int safeCh = juce::jmin (2, buffer.getNumChannels());
     const int tapN = juce::jmin (numSamples, (int) monoPre_.size());
-    if (tapN > 0)
-    {
-        const int chans = juce::jmin (2, mainInCh);
-        for (int i = 0; i < tapN; ++i)
-        {
-            const float m = chans > 1
-                ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))
-                : buffer.getSample (0, i);
-            // 写入延迟环，读出 L 样本前的值 → pre/post 两层时间对齐
-            preTapRing_[(size_t) preTapPos_] = m;
-            int rp = preTapPos_ - preTapLatency_;
-            if (rp < 0) rp += (int) preTapRing_.size();
-            monoPre_[(size_t) i] = preTapRing_[(size_t) rp];
-            if (++preTapPos_ >= (int) preTapRing_.size()) preTapPos_ = 0;
-        }
-    }
 
     // ---- 侧链总线（输入 bus 1；禁用/无信号时 fallback INT） ----
     // ⚠️ 2026-09-23 修复：此前误用 getBusCount(false)/getBus(false,1)（输出总线），
@@ -355,10 +352,30 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         }
     }
 
-    // ---- 主通道（单声道输入 → 双通同源） ----
+    // ---- Phase 4.1：采集 pre 抽头（单声道，经延迟环对齐 post） ----
+    if (tapN > 0)
+    {
+        const int chans = safeCh;   // R31：以 buffer 实际通道数为准
+        for (int i = 0; i < tapN; ++i)
+        {
+            const float m = chans > 1
+                ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))
+                : buffer.getSample (0, i);
+            // 写入延迟环，读出 L 样本前的值 → pre/post 两层时间对齐
+            preTapRing_[(size_t) preTapPos_] = m;
+            int rp = preTapPos_ - preTapLatency_;
+            if (rp < 0) rp += (int) preTapRing_.size();
+            monoPre_[(size_t) i] = preTapRing_[(size_t) rp];
+            if (++preTapPos_ >= (int) preTapRing_.size()) preTapPos_ = 0;
+        }
+    }
+
+    // ---- 主通道（单声道输入 → 双通同源）----
+    // R31：以 buffer 实际通道数为准。宿主报的 mainInCh 可能与 buffer 不一致
+    //   （实测 mainInCh=2 而 buffer 只有 1 通道 → getWritePointer(1) 越界）。
     float* chPtr[2] = { nullptr, nullptr };
     chPtr[0] = buffer.getWritePointer (0);
-    chPtr[1] = mainInCh > 1 ? buffer.getWritePointer (1) : buffer.getWritePointer (0);
+    chPtr[1] = safeCh > 1 ? buffer.getWritePointer (1) : buffer.getWritePointer (0);
 
     // ---- 标量参数（APVTS 原子读，TECH_SPEC §4.2）→ DSP ----
     // ⚠️ 2026-09-23 修复：此前只 readScalars 而未 updateScalars，导致全部
@@ -366,7 +383,7 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     MultibandDSP::ScalarParams sp;
     readScalars (sp);
     dsp_.updateScalars (sp);
-    dsp_.process (chPtr, numSamples, scCh > 0 ? scPtr : nullptr, scCh);
+    dsp_.process (chPtr, numSamples, scCh > 0 ? scPtr : nullptr, scCh, safeCh);
 
     // ---- 清理非主通道残留（输入侧多余通道，防陈旧数据） ----
     for (int ch = juce::jmax (mainInCh, mainOutCh); ch < buffer.getNumChannels(); ++ch)
@@ -375,7 +392,7 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     // ---- Phase 4.1：采集 post 抽头并推送频谱/电平 ----
     if (tapN > 0)
     {
-        const int chans = juce::jmin (2, mainInCh);
+        const int chans = safeCh;   // R31：以 buffer 实际通道数为准
         for (int i = 0; i < tapN; ++i)
             monoPost_[(size_t) i] = chans > 1
                 ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))

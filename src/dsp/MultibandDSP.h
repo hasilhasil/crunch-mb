@@ -80,9 +80,19 @@ public:
     void setStructure (const StructureParams& s);                 // 消息线程
     void updateScalars (const ScalarParams& p) noexcept;          // 音频线程
 
+    /**
+     * @param channels     主通道指针数组（至少 2 项；mono 时 [1] 可为 [0] 的别名）
+     * @param numSamples   本块样本数
+     * @param sidechain    侧链通道指针（可为 nullptr）
+     * @param sidechainChannels 侧链通道数
+     * @param numChannels  本次处理实际要用的通道数（1 = mono，2 = stereo）。
+     *                      R31：宿主报的 mainInCh 可能与 buffer 实际通道数
+     *                      不一致，故由调用方按 buffer 实况传入，不再信任 numCh_。
+     */
     void process (float* const* channels, int numSamples,
                   const float* const* sidechain = nullptr,
-                  int sidechainChannels = 0) noexcept;
+                  int sidechainChannels = 0,
+                  int numChannels = 2) noexcept;
 
     int   getLatencySamples() const noexcept;                     // 分频 + lookahead + 过采样（音频线程视图）
     int   getCrossoverLatencySamples() const noexcept;            // 仅分频（消息线程延迟上报用）
@@ -170,7 +180,8 @@ private:
     // 2026-10-14：过采样。整条链（分频 + 压缩 + 求和）在 procRate_ = sampleRate_ × osFactor_
     // 下运行；process() 只负责上/下采样，processChain() 是原来的处理体。
     void processChain (float* const* channels, int numSamples,
-                       const float* const* sidechain, int sidechainChannels) noexcept;
+                       const float* const* sidechain, int sidechainChannels,
+                       int useChannels = 2) noexcept;
     void rebuildOversampler (int factor) noexcept;
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler_;

@@ -259,8 +259,13 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
 }
 
 void MultibandDSP::process (float* const* channels, int numSamples,
-                            const float* const* sidechain, int sidechainChannels) noexcept
+                            const float* const* sidechain, int sidechainChannels,
+                            int numChannels) noexcept
 {
+    // R31：本次实际使用的通道数。调用方按 buffer 实况传入（宿主报的 mainInCh
+    // 可能与 buffer 不一致——实测 mono 场景 mainInCh=2 而 buffer 只有 1 通道）。
+    const int useCh = juce::jlimit (1, 2, numChannels);
+
     // 2026-10-14：过采样包装。整条链跑在 procRate_ 下，这里只负责上/下采样。
     //
     // ⚠️ 这里的 `numSamples <= maxBlock_` 守卫**不能**改成音频线程分块循环。
@@ -272,7 +277,7 @@ void MultibandDSP::process (float* const* channels, int numSamples,
     // prepareToPlay 里把 maxBlock_ 一开始就设得足够大，而不是在音频线程分片。
     if (osFactor_ > 1 && oversampler_ != nullptr && numSamples <= maxBlock_)
     {
-        const int chans = juce::jmin (numCh_, 2);
+        const int chans = useCh;
 
         for (int ch = 0; ch < chans; ++ch)
             juce::FloatVectorOperations::copy (osIn_.getWritePointer (ch), channels[ch], numSamples);
@@ -326,13 +331,14 @@ void MultibandDSP::process (float* const* channels, int numSamples,
         return;
     }
 
-    processChain (channels, numSamples, sidechain, sidechainChannels);
+    processChain (channels, numSamples, sidechain, sidechainChannels, useCh);
 }
 
 void MultibandDSP::processChain (float* const* channels, int numSamples,
-                                 const float* const* sidechain, int sidechainChannels) noexcept
+                                 const float* const* sidechain, int sidechainChannels,
+                                 int useChannels) noexcept
 {
-    const int chans = juce::jmin (numCh_, 2);
+    const int chans = juce::jlimit (1, 2, useChannels);
 
     for (int done = 0; done < numSamples; done += procBlock_)
     {
@@ -341,6 +347,11 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         float* chPtr[2] = { nullptr, nullptr };
         for (int ch = 0; ch < chans; ++ch)
             chPtr[ch] = channels[ch] + done;
+        // R31：mono 时把 chPtr[1] 回退到 ch0（而非留 nullptr）。
+        //     下游（分频器、段求和、Auto-Gain）都按 2 通道寻址，
+        //     nullptr 会被解引用 → 0xC0000005。
+        if (chPtr[1] == nullptr)
+            chPtr[1] = chPtr[0];
 
         // 1) 输入增益
         for (int ch = 0; ch < chans; ++ch)
@@ -359,7 +370,13 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         }
 
         // 2) 主分频
-        const float* inC[2]  = { chPtr[0], chans > 1 ? chPtr[1] : nullptr };
+        // ⚠️ R31 修复：mono（numCh_==1）时 inC[1] 原先传 nullptr，
+        //    而 CrossoverBank::process 用 jmin(numChannels, numCh_) 定 chans
+        //    （CrossoverBank 自己的 numCh_ 由 prepare 时的通道数决定 = 2），
+        //    于是它解引用 input[1] == nullptr → 0xC0000005。
+        //    宿主把单轨人声/吉他放到 mono 总线时第一块就崩。
+        //    修法与 process() 第 309 行的 upPtr 一致：mono 时回退到 ch0。
+        const float* inC[2]  = { chPtr[0], chPtr[1] != nullptr ? chPtr[1] : chPtr[0] };
         float* bL[2]  = { bandStore_[0][0].data(), bandStore_[0][1].data() };
         float* bLM[2] = { bandStore_[1][0].data(), bandStore_[1][1].data() };
         float* bHM[2] = { bandStore_[2][0].data(), bandStore_[2][1].data() };

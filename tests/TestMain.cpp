@@ -9053,6 +9053,295 @@ static void testMonitorWithAllFeatures()
            juce::String (peakGr) + " vs " + juce::String (peakOut));
 }
 
+// ------------------------------------------------------------
+// T84 Phase：宿主环境适配（R31）
+//   全部既有测试都写死 48000 Hz + 512 块 + 立体声。而真实宿主会：
+//     · 切工程采样率（44.1k / 48k / 88.2k / 96k / 192k）
+//     · 变块长（64 ~ 8192，且可能每块不同）
+//     · 用 mono 输入（单轨人声/吉他）
+//     · 中途改采样率或块长（IoChanged）
+//   这是宿主测试的经典崩溃源，此前完全没覆盖。
+// ------------------------------------------------------------
+static void testHostEnvironmentAdaptation()
+{
+    std::cout << "\n--- T84 Phase 宿主环境适配 ---\n";
+
+    const double rates[] = { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 };
+
+    // ---- ① 各采样率下都能 prepare + 处理 + 出合理输出 ----
+    for (double sr : rates)
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (sr, 512, 2, 2);
+        proc->prepareToPlay (sr, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        if (mb == nullptr) { check (false, "T84 处理器实例", ""); return; }
+
+        // 打开全部特性（不同采样率下系数都要重算）
+        mb->setParamPhysicalForTest ("oversampling", 2.0f);
+        mb->setParamPhysicalForTest ("lookahead", 2.0f);
+        mb->setParamPhysicalForTest ("autoGain", 1.0f);
+        for (int b = 0; b < 4; ++b)
+        {
+            const juce::String bn = "band" + juce::String (b);
+            mb->setParamPhysicalForTest (bn + "Threshold", -25.0f);
+            mb->setParamPhysicalForTest (bn + "Ratio", 6.0f);
+            mb->setParamPhysicalForTest (bn + "Range", -24.0f);
+            mb->setParamPhysicalForTest (bn + "Makeup", 3.0f);
+        }
+        mb->handleUpdateNowIfNeeded();
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        bool finite = true;
+        float peak = 0.0f;
+        for (int t = 0; t < 40; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.3f * (float) std::sin (6.283185 * 220.0 * kk / sr);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < 512; ++i)
+            {
+                const float s = buf.getSample (0, i);
+                if (! std::isfinite (s)) { finite = false; break; }
+                peak = juce::jmax (peak, std::abs (s));
+            }
+            if (! finite) break;
+        }
+        std::cout << "  SR=" << sr << " finite=" << finite << " peak=" << peak
+                  << " latency=" << mb->getLatencySamples() << std::endl;
+        check (finite, juce::String ("T84.1 SR=") + juce::String ((int) sr) + " 输出有限", "");
+        check (peak > 0.02f, juce::String ("T84.2 SR=") + juce::String ((int) sr) + " 非静音",
+               juce::String (peak));
+        // 延迟应随采样率缩放（3ms lookahead @ 4x 过采样）
+        const int expectLa = (int) std::lround (0.003 * sr * 4.0);
+        check (mb->getLatencySamples() >= expectLa,
+               juce::String ("T84.3 SR=") + juce::String ((int) sr) + " 延迟随采样率缩放",
+               juce::String (mb->getLatencySamples()) + " >= " + juce::String (expectLa));
+    }
+
+    // ---- ② 不同块长（含奇数块长）都能处理 ----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        const int blocks[] = { 32, 64, 128, 333, 512, 1024, 4096 };
+        bool allOk = true;
+        for (int n : blocks)
+        {
+            proc->setPlayConfigDetails (48000.0, n, 2, 2);
+            proc->prepareToPlay (48000.0, n);
+            juce::AudioBuffer<float> buf (2, n);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < n; ++i)
+            {
+                const float v = 0.3f * (float) std::sin (6.283185 * 300.0 * i / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < n; ++i)
+                if (! std::isfinite (buf.getSample (0, i))) { allOk = false; break; }
+            if (! allOk) break;
+        }
+        std::cout << "  块长 32/64/128/333/512/1024/4096 全部有限 = " << allOk << std::endl;
+        check (allOk, "T84.4 各种块长（含非 2 幂的 333）都能处理", "");
+    }
+
+    // ---- ③ mono 输入（单轨人声/吉他的常见情形）----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 1, 1);   // mono in / mono out
+        proc->prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> buf (1, 512);
+        juce::MidiBuffer midi;
+        bool finite = true;
+        float peak = 0.0f;
+        for (int t = 0; t < 30; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                buf.setSample (0, i, 0.3f * (float) std::sin (6.283185 * 400.0 * kk / 48000.0));
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < 512; ++i)
+            {
+                const float s = buf.getSample (0, i);
+                if (! std::isfinite (s)) { finite = false; break; }
+                peak = juce::jmax (peak, std::abs (s));
+            }
+            if (! finite) break;
+        }
+        std::cout << "  mono in/out: finite=" << finite << " peak=" << peak << std::endl;
+        check (finite, "T84.5 mono 输入输出有限", "");
+        check (peak > 0.02f, "T84.6 mono 输入非静音", juce::String (peak));
+    }
+
+    // ---- ④ mono 进 / stereo 出（宿主把单轨放到立体声总线）----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 1, 2);   // mono in / stereo out
+        proc->prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        bool finite = true;
+        for (int t = 0; t < 30; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.3f * (float) std::sin (6.283185 * 400.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, 0.0f);
+            }
+            mb->processBlock (buf, midi);
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < 512; ++i)
+                    if (! std::isfinite (buf.getSample (c, i))) { finite = false; break; }
+            if (! finite) break;
+        }
+        std::cout << "  mono in / stereo out: finite=" << finite << std::endl;
+        check (finite, "T84.7 mono 进 / 立体声出 双通道都有限", "");
+    }
+
+    // ---- ⑤ 中途改采样率（宿主切工程采样率，IoChanged）----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        bool stable = true;
+        double cur = 48000.0;
+        const double seq[] = { 44100.0, 96000.0, 48000.0 };
+        for (double nsr : seq)
+        {
+            cur = nsr;
+            proc->releaseResources();
+            proc->setPlayConfigDetails (nsr, 512, 2, 2);
+            proc->prepareToPlay (nsr, 512);
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            for (int t = 0; t < 20; ++t)
+            {
+                for (int i = 0; i < 512; ++i)
+                {
+                    const long kk = (long) (t * 512 + i);
+                    const float v = 0.3f * (float) std::sin (6.283185 * 300.0 * kk / nsr);
+                    buf.setSample (0, i, v);
+                    buf.setSample (1, i, v);
+                }
+                mb->processBlock (buf, midi);
+                for (int i = 0; i < 512; ++i)
+                    if (! std::isfinite (buf.getSample (0, i))) { stable = false; break; }
+                if (! stable) break;
+            }
+            if (! stable) break;
+        }
+        std::cout << "  采样率 48k->44.1k->96k->48k 中途切换后 stable=" << stable
+                  << " latency=" << mb->getLatencySamples() << std::endl;
+        check (stable, "T84.8 中途切换采样率后仍稳定", "");
+        // R31：默认参数（lookahead Off + oversampling Off + Natural 相位）下
+        //   延迟应为 0。切采样率后必须仍是 0——若 prepareToPlay 不重应用结构，
+        //   延迟上报会停留在旧值或变成不可预期的数。
+        check (mb->getLatencySamples() == 0,
+               "T84.8b 切采样率后延迟上报仍为 0（结构已按新采样率重建）",
+               juce::String (mb->getLatencySamples()));
+    }
+
+    // ---- ⑤b 开着 lookahead + 过采样切采样率，延迟必须跟着缩放 ----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        mb->setParamPhysicalForTest ("lookahead", 2.0f);       // 3ms
+        mb->setParamPhysicalForTest ("oversampling", 2.0f);    // 4x
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        const int lat48 = mb->getLatencySamples();
+        proc->releaseResources();
+        proc->setPlayConfigDetails (96000.0, 512, 2, 2);
+        proc->prepareToPlay (96000.0, 512);
+        const int lat96 = mb->getLatencySamples();
+        std::cout << "  延迟: 48k=" << lat48 << "  96k=" << lat96 << std::endl;
+        // 3ms@4x = 576@48k → 1152@96k，加过采样余量
+        check (lat48 > 0 && lat96 > lat48 * 1.8,
+               "T84.8c 切 96k 后延迟按采样率翻倍（结构已重建）",
+               juce::String (lat48) + " -> " + juce::String (lat96));
+    }
+
+    // ---- ⑥ 中途改块长（宿主缓冲大小变化）----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        bool stable = true;
+        const int seq[] = { 64, 1024, 128, 4096 };
+        for (int n : seq)
+        {
+            proc->releaseResources();
+            proc->setPlayConfigDetails (48000.0, n, 2, 2);
+            proc->prepareToPlay (48000.0, n);
+            juce::AudioBuffer<float> buf (2, n);
+            juce::MidiBuffer midi;
+            for (int t = 0; t < 12; ++t)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    const float v = 0.3f * (float) std::sin (6.283185 * 300.0 * i / 48000.0);
+                    buf.setSample (0, i, v);
+                    buf.setSample (1, i, v);
+                }
+                mb->processBlock (buf, midi);
+                for (int i = 0; i < n; ++i)
+                    if (! std::isfinite (buf.getSample (0, i))) { stable = false; break; }
+                if (! stable) break;
+            }
+            if (! stable) break;
+        }
+        std::cout << "  块长 512->64->1024->128->4096 中途切换后 stable=" << stable << std::endl;
+        check (stable, "T84.9 中途切换块长后仍稳定", "");
+    }
+
+    // ---- ⑦ releaseResources 后重新 prepare（宿主停播/再播）----
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        proc->releaseResources();
+        bool okAfter = true;
+        for (int rep = 0; rep < 3; ++rep)
+        {
+            proc->prepareToPlay (48000.0, 512);
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            for (int t = 0; t < 10; ++t)
+            {
+                for (int i = 0; i < 512; ++i)
+                {
+                    const float v = 0.3f * (float) std::sin (6.283185 * 300.0 * i / 48000.0);
+                    buf.setSample (0, i, v);
+                    buf.setSample (1, i, v);
+                }
+                mb->processBlock (buf, midi);
+                for (int i = 0; i < 512; ++i)
+                    if (! std::isfinite (buf.getSample (0, i))) { okAfter = false; break; }
+            }
+            proc->releaseResources();
+            if (! okAfter) break;
+        }
+        std::cout << "  release/prepare 反复 3 次后 ok=" << okAfter << std::endl;
+        check (okAfter, "T84.10 releaseResources + prepareToPlay 反复后仍正常", "");
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -9143,6 +9432,7 @@ int main()
     testAllFeaturesCombined();        // T81 Phase 全功能组合压力测试
     testMonitorModes();               // T82 Phase Monitor 内部信号试听
     testMonitorWithAllFeatures();     // T83 Phase Monitor × 全功能组合
+    testHostEnvironmentAdaptation();  // T84 Phase 宿主环境适配
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -9150,6 +9440,7 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
 
 
 
