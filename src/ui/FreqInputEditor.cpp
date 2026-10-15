@@ -31,6 +31,20 @@ void FreqInputEditor::close (bool apply)
             mult = 1000.0f;
             t = t.replaceCharacter ('k', ' ').replaceCharacter ('K', ' ');
         }
+        t = t.trim();
+
+        // Phase（R16 修复）：空输入/纯空白时**放弃应用**，不要当成 0。
+        // 此前空文本经 getFloatValue() 得 0，再被 jlimit(20,20000,0) 钳成
+        // 20 Hz——用户双击输入框后直接按回车（本意是取消），频率被静默
+        // 改到最低值。空输入应视为"无输入"，保持原值不变。
+        if (t.isEmpty())
+        {
+            active_ = false;
+            text_.clear();
+            repaint();
+            return;
+        }
+
         const float f = juce::jlimit (20.0f, 20000.0f, t.getFloatValue() * mult);
         onApply (divider_, band_, f);
     }
@@ -53,9 +67,13 @@ bool FreqInputEditor::keyPressed (const juce::KeyPress& key)
         return true;
     }
     const juce::juce_wchar ch = key.getTextCharacter();
-    if ((ch >= '0' && ch <= '9') || ch == '.' || ch == 'k' || ch == 'K')
+    // 程序化构造的 KeyPress 可能不带 textCharacter，回退 keyCode（同 Knob R15）
+    const juce::juce_wchar c = (ch != 0) ? ch : (juce::juce_wchar) key.getKeyCode();
+    if ((c >= '0' && c <= '9') || c == '.' || c == 'k' || c == 'K')
     {
-        text_ += juce::String::charToString (ch);
+        // 限制长度：与 Knob 一致，防无限键入
+        if (text_.length() < 8)
+            text_ += juce::String::charToString (c);
         repaint();
         return true;
     }

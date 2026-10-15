@@ -6876,6 +6876,129 @@ static void testKnobWheelModifiers()
     }
 }
 
+// ------------------------------------------------------------
+// T64 Phase：频率输入框空输入不得改成 20Hz + 输入长度上限
+//   原缺陷：text_ 为空时 getFloatValue() 返回 0，再被
+//   jlimit(20,20000,0) 钳成 **20 Hz**——用户双击输入框后直接按回车
+//   （本意是取消），频率被静默改到最低值。
+// ------------------------------------------------------------
+static void testFreqInputEmptyApply()
+{
+    std::cout << "\n--- T64 Phase 频率输入框空输入 + 长度上限 ---\n";
+
+    FreqInputEditor ed;
+    int applyCount = 0;
+    float lastHz = -1.0f;
+    int  lastDivider = -99;
+    ed.onApply = [&] (int divider, int /*band*/, float hz)
+    {
+        ++applyCount;
+        lastDivider = divider;
+        lastHz = hz;
+    };
+
+    // ① 空输入 + 回车：不得应用（修前会设成 20Hz）
+    {
+        ed.open (1, -1, 100.0f, 50.0f);
+        check (ed.isActive(), "T64.0 输入框可打开", "");
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+        std::cout << "  空输入回车: applyCount=" << applyCount
+                  << " hz=" << lastHz << std::endl;
+        check (applyCount == 0,
+               "T64.1 空输入回车不应用（修前会设成 20Hz）",
+               juce::String (applyCount));
+        check (! ed.isActive(), "T64.2 空输入回车后输入框关闭", "");
+    }
+
+    // ② 纯空白（来自 'k' 被替换成空格）+ 回车：也不得应用
+    {
+        applyCount = 0; lastHz = -1.0f;
+        ed.open (1, -1, 100.0f, 50.0f);
+        ed.keyPressedCharForTest ('k');
+        std::cout << "  输入 'k' 后文本 = [" << ed.textForTest() << "]" << std::endl;
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+        std::cout << "  仅 'k' 回车: applyCount=" << applyCount << std::endl;
+        check (applyCount == 0,
+               "T64.3 仅 'k'（替换后为空白）回车不应用", juce::String (applyCount));
+    }
+
+    // ③ 正常输入 "440" → 应用 440Hz
+    {
+        applyCount = 0; lastHz = -1.0f;
+        ed.open (1, -1, 100.0f, 50.0f);
+        ed.keyPressedCharForTest ('4');
+        ed.keyPressedCharForTest ('4');
+        ed.keyPressedCharForTest ('0');
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+        std::cout << "  输入 440 回车: hz=" << lastHz << " divider=" << lastDivider << std::endl;
+        check (applyCount == 1 && std::abs (lastHz - 440.0f) < 1.0e-3f,
+               "T64.4 输入 440 回车后应用 440Hz", juce::String (lastHz));
+        check (lastDivider == 1, "T64.5 divider 索引正确传递",
+               juce::String (lastDivider));
+    }
+
+    // ④ 简写 "2k" → 2000Hz
+    {
+        applyCount = 0; lastHz = -1.0f;
+        ed.open (0, -1, 100.0f, 50.0f);
+        ed.keyPressedCharForTest ('2');
+        ed.keyPressedCharForTest ('k');
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+        std::cout << "  输入 2k 回车: hz=" << lastHz << std::endl;
+        check (applyCount == 1 && std::abs (lastHz - 2000.0f) < 1.0e-3f,
+               "T64.6 简写 2k → 2000Hz", juce::String (lastHz));
+    }
+
+    // ⑤ 越界输入 "99999" → 钳到 20000
+    {
+        applyCount = 0; lastHz = -1.0f;
+        ed.open (0, -1, 100.0f, 50.0f);
+        ed.keyPressedCharForTest ('9');
+        ed.keyPressedCharForTest ('9');
+        ed.keyPressedCharForTest ('9');
+        ed.keyPressedCharForTest ('9');
+        ed.keyPressedCharForTest ('9');
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+        std::cout << "  输入 99999 回车: hz=" << lastHz << std::endl;
+        check (applyCount == 1 && std::abs (lastHz - 20000.0f) < 1.0e-3f,
+               "T64.7 越界输入钳到 20000Hz", juce::String (lastHz));
+    }
+
+    // ⑥ Esc 取消：不得应用
+    {
+        applyCount = 0; lastHz = -1.0f;
+        ed.open (0, -1, 100.0f, 50.0f);
+        ed.keyPressedCharForTest ('5');
+        ed.keyPressedCharForTest ('0');
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
+        std::cout << "  输入 50 后 Esc: applyCount=" << applyCount << std::endl;
+        check (applyCount == 0, "T64.8 Esc 取消不应用", juce::String (applyCount));
+    }
+
+    // ⑦ 长度上限：连续键入 20 个字符应截断到 8
+    {
+        ed.open (0, -1, 100.0f, 50.0f);
+        for (int i = 0; i < 20; ++i)
+            ed.keyPressedCharForTest ('7');
+        const juce::String t = ed.textForTest();
+        std::cout << "  键入 20 个字符后长度 = " << t.length() << std::endl;
+        check (t.length() == 8, "T64.9 输入截断到 8 字符",
+               juce::String (t.length()));
+    }
+
+    // ⑧ Backspace 删除
+    {
+        ed.open (0, -1, 100.0f, 50.0f);
+        ed.keyPressedCharForTest ('1');
+        ed.keyPressedCharForTest ('2');
+        ed.keyPressedCharForTest ('3');
+        ed.keyPressedForTest (juce::KeyPress (juce::KeyPress::backspaceKey, 0, 0));
+        std::cout << "  输入 123 后退格: 文本 = [" << ed.textForTest() << "]" << std::endl;
+        check (ed.textForTest() == "12", "T64.10 Backspace 删除末字符",
+               ed.textForTest());
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6946,6 +7069,7 @@ int main()
     testOversamplingLargeBlock();  // T61 Phase 过采样大块不失效
     testStateLoadReappliesLatency(); // T62 Phase setStateInformation 重应用延迟
     testKnobWheelModifiers();        // T63 Phase 旋钮滚轮修饰键 + 输入上限
+    testFreqInputEmptyApply();       // T64 Phase 频率输入框空输入 + 长度上限
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

@@ -48,6 +48,14 @@ public:
 
     void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); repaint(); }
 
+    // ---- T64 测试钩子 ----
+    juce::String textForTest() const noexcept { return text_; }
+    void keyPressedForTest (const juce::KeyPress& k) { keyPressed (k); }
+    void keyPressedCharForTest (juce::juce_wchar ch)
+    {
+        keyPressed (juce::KeyPress (ch));
+    }
+
 private:
     bool  active_ = false;
     int   divider_ = -1;
