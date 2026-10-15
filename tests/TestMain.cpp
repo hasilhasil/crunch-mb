@@ -5550,9 +5550,14 @@ static void testBackendFacade()
         check ((int) tc.xValues.size() == 33 && (int) tc.yValues.size() == 33,
                "T52.20 getTransferCurve 点数正确",
                juce::String ((int) tc.xValues.size()));
-        check (std::abs (tc.xValues.front() - (-60.0f)) < 0.01f
-               && std::abs (tc.xValues.back() - 0.0f) < 0.01f,
-               "T52.21 传输曲线 x 轴覆盖 [minDb, maxDb]", "");
+        // ⚠️ 判空后再取 front()/back()：check() 只记录失败不中断，
+        //    size 不符时仍会往下走——空 vector 上的 UB（R20 同型）。
+        if (! tc.xValues.empty())
+            check (std::abs (tc.xValues.front() - (-60.0f)) < 0.01f
+                   && std::abs (tc.xValues.back() - 0.0f) < 0.01f,
+                   "T52.21 传输曲线 x 轴覆盖 [minDb, maxDb]", "");
+        else
+            check (false, "T52.21 传输曲线 x 轴覆盖 [minDb, maxDb]（xValues 为空）", "");
 
         // 压缩特性：阈值以上应有负增益（当前 band2 threshold = -33，ratio 7.5）
         float maxGain = -999.0f, minGain = 999.0f;
@@ -5564,17 +5569,29 @@ static void testBackendFacade()
         const auto fr = api.getFrequencyResponse (0, 20.0f, 20000.0f, 65);
         check ((int) fr.xValues.size() == 65, "T52.23 getFrequencyResponse 点数正确",
                juce::String ((int) fr.xValues.size()));
-        check (std::abs (fr.xValues.front() - 20.0f) < 1.0f
-               && std::abs (fr.xValues.back() - 20000.0f) < 200.0f,
-               "T52.24 频率轴对数覆盖 20Hz..20kHz",
-               juce::String (fr.xValues.front()) + ".." + juce::String (fr.xValues.back()));
+        if (! fr.xValues.empty())
+            check (std::abs (fr.xValues.front() - 20.0f) < 1.0f
+                   && std::abs (fr.xValues.back() - 20000.0f) < 200.0f,
+                   "T52.24 频率轴对数覆盖 20Hz..20kHz",
+                   juce::String (fr.xValues.front()) + ".." + juce::String (fr.xValues.back()));
+        else
+            check (false, "T52.24 频率轴对数覆盖 20Hz..20kHz（xValues 为空）", "");
 
         // band0 = LOW：低频应接近 0dB，高频应深度衰减
-        const float lowMag  = fr.yValues.front();
-        const float highMag = fr.yValues.back();
-        std::cout << "  band0 响应: 20Hz=" << lowMag << " dB  20kHz=" << highMag << " dB" << std::endl;
-        check (lowMag > -1.0f, "T52.25 band0 低频通带 ≈ 0dB", juce::String (lowMag));
-        check (highMag < -12.0f, "T52.26 band0 高频阻带深度衰减", juce::String (highMag));
+        // ⚠️ 同样判空（R20 同型）
+        if (! fr.yValues.empty())
+        {
+            const float lowMag  = fr.yValues.front();
+            const float highMag = fr.yValues.back();
+            std::cout << "  band0 响应: 20Hz=" << lowMag << " dB  20kHz=" << highMag << " dB" << std::endl;
+            check (lowMag > -1.0f, "T52.25 band0 低频通带 ≈ 0dB", juce::String (lowMag));
+            check (highMag < -12.0f, "T52.26 band0 高频阻带深度衰减", juce::String (highMag));
+        }
+        else
+        {
+            check (false, "T52.25 band0 低频通带 ≈ 0dB（yValues 为空）", "");
+            check (false, "T52.26 band0 高频阻带深度衰减（yValues 为空）", "");
+        }
     }
 
     // ===== ⑤ 插件面 =====
@@ -7607,6 +7624,64 @@ static void testSpectrumSlotRace()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T71 Phase：空容器防护（R20 同型隐患的锁定测试）
+//   R20：T52.39 对空 vector 调 front() 导致进程偶发 0xC0000005。
+//   本轮把 T52 里其余 9 处 .front()/.back() 也加了判空。
+//   本测试验证：请求 0 点时 API 返回空容器，且测试代码不再触发 UB
+//   （表现为：进程不崩 + 相关断言显式失败而非静默 UB）。
+// ------------------------------------------------------------
+static void testEmptyContainerGuards()
+{
+    std::cout << "\n--- T71 Phase 空容器防护 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T71.0 处理器实例可访问", "");
+
+    MBBackend api (*mb);
+
+    // ① 请求 0 点：实际行为是返回**两个端点**（min/max），不是空容器。
+    //    这与 readMultibandHistory(0) 返回空不同——两者是不同 API 的历史
+    //    行为，此处按实际行为记录，不强行统一（改 API 语义超出本轮范围）。
+    const auto tc0 = api.getTransferCurve (2, -60.0f, 0.0f, 0);
+    std::cout << "  0 点传输曲线: xValues.size()=" << tc0.xValues.size()
+              << " yValues.size()=" << tc0.yValues.size() << std::endl;
+    check ((int) tc0.xValues.size() == 2 && (int) tc0.yValues.size() == 2,
+           "T71.1 请求 0 点传输曲线返回两个端点（实际 API 行为）",
+           juce::String ((int) tc0.xValues.size()));
+
+    // ② 正常点数仍应填充
+    const auto tc1 = api.getTransferCurve (2, -60.0f, 0.0f, 33);
+    check ((int) tc1.xValues.size() == 33, "T71.2 正常点数仍填充",
+           juce::String ((int) tc1.xValues.size()));
+
+    // ③ 频率响应 0 点同样返回端点
+    const auto fr0 = api.getFrequencyResponse (0, 20.0f, 20000.0f, 0);
+    std::cout << "  0 点频率响应: xValues.size()=" << fr0.xValues.size() << std::endl;
+    check ((int) fr0.xValues.size() == 2 && (int) fr0.yValues.size() == 2,
+           "T71.3 请求 0 点频率响应返回两个端点（实际 API 行为）",
+           juce::String ((int) fr0.xValues.size()));
+
+    // ④ 正常点数仍填充
+    const auto fr1 = api.getFrequencyResponse (0, 20.0f, 20000.0f, 65);
+    check ((int) fr1.xValues.size() == 65, "T71.4 正常点数频率响应仍填充",
+           juce::String ((int) fr1.xValues.size()));
+
+    // ⑤ 历史 0 点返回空（与 ①/③ 不同：历史没有"端点"概念）
+    const auto mh0 = api.readMultibandHistory (0);
+    std::cout << "  0 点历史: inputDb.size()=" << mh0.inputDb.size()
+              << " pointsWritten=" << mh0.pointsWritten << std::endl;
+    check (mh0.inputDb.empty(),
+           "T71.5 请求 0 点历史返回空容器",
+           juce::String ((int) mh0.inputDb.size()));
+
+    // ⑥ 本测试自身不索引任何空容器 —— 能执行到这里说明进程未崩
+    check (true, "T71.6 全部边界点数检查完成，进程未崩溃", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7684,6 +7759,7 @@ int main()
     testGetParamNormScale();         // T68 Phase getParamNorm 量纲锁定
     testChoiceIndexUnified();        // T69 Phase choiceIndexFromValue 统一换算
     testSpectrumSlotRace();          // T70 Phase 频谱 slot 轮转追读竞争
+    testEmptyContainerGuards();      // T71 Phase 空容器防护
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
