@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第五十五轮 · R19c：Choice 索引换算单一来源）
+### 进度总览（更新于 2026-10-14，第五十六轮 · R20 修复：测试空 vector UB）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -480,6 +480,7 @@ namespace Anim {
 | **R19 修复：popover 滑块键盘/滚轮 + Knee 量纲**（`4ea45c3`） | ① Ratio/Knee/Ext/Detector/Lookahead 五个自绘滑轨此前**只有鼠标拖动**，现补键盘与滚轮（Shift = 细调）。② 更关键：`getParamNorm()` 一直返回实际值而非归一化值，**Knee 滑轨的视觉位置与实际膝宽长期不一致**，每次拖动后握柄还会"跳"回。修后滑轨位置与参数值严格对应。**操作表现上**：拖动 Knee 不再跳，滚轮悬停在滑轨上不再误改频段宽度 | **Pro-MB / Future MB**：两者滑轨控件均支持键盘与滚轮；Pro-MB 的 Knee 滑轨位置与膝宽严格对应 |
 | **R19b：量纲换算收归 facade**（`52ac15a`） | `DisplayView::getParamNorm()` 是 R19 修掉的那个函数的同名同错副本（注释写着陷阱、函数体照旧踩进去），零调用点所以今天无害。结构性根因：facade 有 normalized 写却没有 normalized 读，UI 层只能各自造。现由 `MBBackend::getParamNorm()` 统一提供，`BandPopover` 改为委托、`DisplayView` 的死副本删除。**无可感知变化**——这是消除"将来会踩"的隐患，不是修当前行为 | — （工程重构；对齐 PLAN Phase 6 的去重论证） |
 | **R19c：Choice 索引换算单一来源**（`026129c`） | Choice 参数的"实际值→选项索引"换算在 processor 与 DisplayView 各有一份（外加 R9 修掉的历史坏副本 `getParamNorm*(N-1)`）。两份当前都对，但属于 R19b 刚立为教训 24 的同型风险。现统一为 `Param::choiceIndexFromValue()`。**无可感知变化**——纯属在漂移之前消掉第二份 | — （工程重构） |
+| **R20 修复：测试空 vector UB**（`8d41ba8`） | T52 拉频谱前不喂音频，引擎无帧可发，`getLatest` 60 次全失败，随后 T52.39 对空 vector 调 `front()` → 进程偶发 `0xC0000005`。**这是测试代码缺陷而非产品缺陷**，但危害真实（整条链中断 + 给出完全错误的排查方向，我为此白追了一整轮线程竞争）。修后 T52.38 从"靠时序运气通过"变为真验证 | — （测试修复；但 T70 新增的"高频读 vs 持续发布"压力测试是对 **Pro-MB 频谱无锁交付**的对标验证） |
 
 ### Phase D 待做
 
@@ -543,8 +544,9 @@ namespace Anim {
 | **R19 ✅ 已修复**（第五十一轮，`4ea45c3`） | **两处**：① **popover 内 5 个自绘滑轨无键盘/滚轮**（Ratio/Knee/Ext/Detector/Lookahead 只有 `beginSliderDrag`/`dragSlider` 鼠标拖动）——R17/R18 清点清单漏掉的**第三例**。② **`getParamNorm()` 返回的是实际值而非归一化值**（`return proc_.getBackend().getParamFast(id)`）——facade 迁移起就存在，与 R7/R9 同族。后果：`sliders_[1]`（Knee）存 0..1 读回变 0..48，**滑轨视觉位置与实际膝宽长期不一致**，且 `applySlider` 总紧跟 `syncFromParams()`，每次拖动后握柄都会"跳" | ① 同 R17/R18：自绘控件只做了鼠标。② 同 R7/R9：**函数名承诺 normalized，交付的却是 actual**——`getRawParameterValue` 是出名的陷阱，`getParamFast` 同样是 | ① 新增 `stepSlider(k, notches, fine)`：Ratio/Knee 连续步进、Ext/Detector 翻转、Lookahead 三档循环；`DisplayView` 的滚轮与键盘在 popover 内转给它（含 `sliderFocus_` 回退）。Lookahead 必须显式写全局参数——`applySlider` 对 k=4 故意不写，否则会被 `syncFromParams()` 覆盖回"看起来没反应"。② `getParamNorm` 改为真实 physical→normalized 换算；**所有想要实际值的调用点改调 `getParamPhysical`**（Lookahead 行、`syncFromParams` 初始化）——不改这些调用点，Lookahead 循环立刻错乱（T55.4 当场抓住） |
 | **R19b ✅ 已修复**（第五十三轮，`52ac15a`） | **同一个 physical→normalized 换算在 UI 层写了两遍，其中一遍是错的**：`DisplayView::getParamNorm()` 与 R19 修掉的 `BandPopover::getParamNorm()` 是同名同错的副本——注释甚至写着"getParamFast 返回实际值，不是 normalized"，函数体照样 `return getParamFast(id)`。它**零调用点**，所以今天无害、明天是上了膛的枪。根因是结构性的：facade 只提供 `getParamFast`（实际值）和 `setParamNormFast`（normalized 写），**没有 normalized 读**，于是每个需要它的 UI 类自己造一个 | 与 PLAN Phase 6 消灭 `paramMap_` 的理由完全同构：**同一份逻辑在两处各存一份，迟早漂移**。Phase 6 清掉了 id→参数的映射重复，却没清掉"量纲换算"的重复 | facade 新增 `MBBackend::getParamNorm()`（与 `getParamFast` 同查找路径，直接返回 `p->getValue()` 即 normalized）；`BandPopover::getParamNorm()` 改为委托，本地副本删除；`DisplayView::getParamNorm()` 直接删除（死代码 + 错语义） |
 | **R19c ✅ 已修复**（第五十五轮，`026129c`） | **Choice 索引换算同样有两份活副本**（+ 一份历史的坏副本）：① `PluginProcessor` 匿名命名空间的 `choiceIndex(atomic<float>*)`；② `DisplayView` 里内联的 `roundToInt(getParamFast(id))`（两处）；③ 历史坏副本是 R9 修掉的 `getParamNorm(...) * (N-1)`（四处）。①②当前都对，但"同一换算两份"正是 R19b 刚立为教训 24 的模式——这次两份都对，下次改一处忘另一处就对不齐 | 教训 24 的**直接延续**：上轮扫完 physical↔normalized，这轮扫 Choice 索引。说明"扫两份实现"不是一次性的动作，而是**每立一条这类教训就要立刻再扫一类** | 新增 `Param::choiceIndexFromValue(float)` 作为单一来源并写清文档；`PluginProcessor::choiceIndex()` 改为委托；`DisplayView` 两处内联副本改用它。**无行为变化**——这是在漂移之前消掉第二份 |
+| **R20 ✅ 已修复**（第五十六轮，`8d41ba8`） | **T52.39 对空 vector 调 `front()`**：T52 激活了频谱引擎却**从未喂音频**——引擎 ring 排空后走 starved 分支，而 starved 只在"曾发布过帧"时才衰减，所以 `publishedSlot_` 恒为 −1，`getLatest()` 60 次 attempt 全部返回 false。随后 T52.39 **无条件** `freqs.front()` / `freqs.back()`——空 vector 上的 UB，进程 `0xC0000005`。**表现为偶发**：帧能否在 60 次 attempt 内到达取决于调度，所以空 vector 路径时走时不走 | 见教训 26。另注意：这条缺陷**不在产品代码里，在测试代码里**——但它的危害一样真实（整条测试链中断，且给出完全错误的方向） | ① T52 拉频谱前先喂音频（引擎有东西可发布，T52.38 也从"靠时序运气通过"变成真验证）；② T52.39 判空后再取 `front()/back()`，空则显式报失败而非触发 UB。附带保留了排查过程中加的 4 slot + 写侧避开 `uiSlot_`（"轮转追读"理论缺陷成立，虽非本次真因），并在头注释写明真因以免后人重查 |
 
-> **教训（第五十五轮补充，共 25 条）**：
+> **教训（第五十六轮补充，共 26 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -567,6 +569,7 @@ namespace Anim {
 > 24. **"清掉重复"要清到底：不只是映射，还有换算**。R19b：Phase 6 把 `paramMap_`（id→参数映射）从 UI 收进 facade，论证是"同一份逻辑存两处必然漂移"——论证完全正确，但**只执行了一半**。量纲换算（physical↔normalized）同样是"一份逻辑"，UI 层又各自存了一份，于是 BandPopover 一份对的、DisplayView 一份错的。**每次以"去重复"为理由做重构，收尾时都要再问一句：还有什么是两份的？** 特别是那些不在显眼位置的基础换算。
 > 25. **"扫两份实现"不是一次性动作，是每立一条这类教训就立刻再扫一类**。R19c：教训 24 说完"去重要去到底"，我扫了 physical↔normalized（R19b）。但**同一份代码库里还有别的两份实现**——Choice 索引换算就是。这次两份都对，所以没有任何症状提示我它存在，是**主动按模式找**才找到的。**凡是"同一逻辑多处实现"的清理，都要列一张清单逐类扫**（量纲换算 / 索引换算 / 频率↔像素 / dB↔像素 / 钳制规则…），而不是扫到一类就收工。
 > 9. **"平滑"类改动要枚举所有跳变来源，不只是参数变化**。R8：SPI 平滑了参数变化，却漏了 BYP 状态切换——后者同样是瞬时跳变。**并且，测平滑的测试必须制造出真实差值**：不喂音频时 `getBandGainDb()` 返回 0，目标和当前值相等，平滑是空转，断言会假通过。
+> 26. **先确认"它真的崩在那"再动手修**。R20：进程偶发 `0xC0000005`，崩溃点附近是频谱 slot 的無锁拷贝，我据此断定是"三缓冲轮转追读"，改了 4 slot、加了 seqlock——**越改越糟**（6 次崩 5 次），因为压根没碰到真因。真因是**下一条断言**对空 vector 调 `front()`，而它之所以时走时不走，是上一条断言（60 次 attempt 拿不到帧）本身不稳定。**加一行打印确认执行到哪，比改十行代码值钱**：我加打印后发现"60 次 attempt 全失败"，立刻把方向从"读侧竞争"扭转到"为什么拿不到帧"，两条断言内定位。**崩溃点和缺陷点往往不在同一处**——尤其是 UB，它的爆点由堆布局决定，看起来毫无关系。
 
 ---
 
@@ -767,12 +770,12 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **606**（+319） |
+| `CrunchMBTests` 断言数 | 287 | **611**（+324） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
-| 重构/迁移引入的真 bug | **22 个，全部修复**（R1-R19c，均有测试锁定） | 见 §8.2 |
+| 重构/迁移引入的真 bug | **23 个，全部修复**（R1-R20，均有测试锁定） | 见 §8.2 |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
 
@@ -818,6 +821,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
 
 
 
