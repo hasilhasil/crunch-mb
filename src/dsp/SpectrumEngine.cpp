@@ -181,7 +181,22 @@ void SpectrumEngine::analyseTick()
 
     publishedSlot_.store (writeSlot_, std::memory_order_release);
     publishVersion_.fetch_add (1, std::memory_order_release);
-    writeSlot_ = (writeSlot_ + 1) % 3;
+    advanceWriteSlot();
+}
+
+void SpectrumEngine::advanceWriteSlot() noexcept
+{
+    // Phase（R20）：推进写侧 slot，**显式避开 UI 正在读的 slot**。
+    // 只做 `(writeSlot_ + 1) % N` 是不够的——那只能保证不写"刚发布的"，
+    // 而 UI 此刻读的可能是几轮以前的 slot，轮转一圈就会覆盖它（撕裂）。
+    const int ui = uiSlot_.load (std::memory_order_acquire);
+    for (int attempt = 0; attempt < (int) slots_.size(); ++attempt)
+    {
+        writeSlot_ = (writeSlot_ + 1) % (int) slots_.size();
+        if (writeSlot_ != ui)
+            return;
+    }
+    // 4 个 slot 时不可能全部等于 ui；走到这里说明 slots_.size() <= 1
 }
 
 void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
@@ -216,7 +231,7 @@ void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
 
     publishedSlot_.store (writeSlot_, std::memory_order_release);
     publishVersion_.fetch_add (1, std::memory_order_release);
-    writeSlot_ = (writeSlot_ + 1) % 3;
+    advanceWriteSlot();
 
     if (! stillMoving)
         starvedSinceMs_ = 0;      // 已到底：恢复"保持"语义（等下一次音频再保持新帧）

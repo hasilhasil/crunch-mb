@@ -62,6 +62,8 @@ private:
     void run() override;
     void analyseTick();
     void publishDecayFrame (double dtSec, double tauSec);   // #8：无信号保持+衰减帧
+    /** R20：推进写侧 slot 并避开 UI 正在读的 slot（防撕裂）。 */
+    void advanceWriteSlot() noexcept;
     static void drain (juce::AbstractFifo& fifo, std::vector<float>& ring, SpectrumAnalyzer& analyzer);
 
     std::atomic<double> sampleRate_ { 48000.0 };
@@ -86,7 +88,19 @@ private:
     juce::uint32 lastFrameMs_ = 0;
 
     struct Snapshot { std::array<float, kDisplayPoints> pre {}, post {}; };
-    std::array<Snapshot, 3> slots_;
+    /**
+     * Phase（R20）：4 个 slot，不是 3 个。
+     *
+     * 三缓冲的经典用法是"写侧写未发布 slot → 发布 → 轮转"，它保证的是
+     * **不写当前已发布的 slot**。但那不够：UI 线程此刻正在读的可能是
+     * 上一轮甚至上两轮发布的 slot，而 writeSlot_ 轮转一圈（3 个 slot 时
+     * 只需 3 帧，约 48ms）就会回来覆盖它——理论上会读到撕裂帧。
+     *
+     * 说明：第 56 轮排查进程偶发崩溃时，**真因是测试代码对空 vector 调
+     * front()**（T52.39），不是这里的竞争。但"轮转追读"这个理论缺陷本身
+     * 仍然成立，故保留 4 slot + 写侧避开 uiSlot_ 作为加固。
+     */
+    std::array<Snapshot, 4> slots_;
     std::atomic<int> publishedSlot_ { -1 };
     std::atomic<juce::uint32> publishVersion_ { 0 };   // #8：同 slot 内容更新也可见
     int writeSlot_ = 0;

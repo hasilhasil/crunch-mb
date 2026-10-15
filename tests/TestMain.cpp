@@ -5376,6 +5376,26 @@ static void testBackendFacade()
     // 频谱引擎是懒启动的（编辑器开关），API 拉频谱前要先激活
     mb->setEditorActive (true);
 
+    // ⚠️ 必须先喂音频：引擎的 ring 排空后走 starved 分支，而 starved 只在
+    //    "曾经发布过帧"时才衰减。从未有音频时 publishedSlot_ 恒为 -1，
+    //    getLatest 永远返回 false（T52.38 曾因此失败 60 次 attempt）。
+    {
+        juce::AudioBuffer<float> sb (2, 512);
+        juce::MidiBuffer midi;
+        for (int t = 0; t < 40; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.7f * (float) std::sin (6.283185 * 440.0 * kk / 48000.0);
+                sb.setSample (0, i, v);
+                sb.setSample (1, i, v);
+            }
+            mb->processBlock (sb, midi);
+            juce::Thread::sleep (8);
+        }
+    }
+
     // ===== ① 参数面 =====
     {
         const auto params = api.listParams();
@@ -5643,9 +5663,15 @@ static void testBackendFacade()
         check (got && (int) freqs.size() == 512,
                "T52.38 getLatestSpectrum 返回双层频谱 + 频率轴",
                juce::String ((int) freqs.size()));
-        check (freqs.front() < 100.0f && freqs.back() > 10000.0f,
-               "T52.39 频率轴对数跨度 20Hz..20kHz",
-               juce::String (freqs.front()) + ".." + juce::String (freqs.back()));
+        // ⚠️ 必须判空：T52.38 失败时 freqs 为空，juce::String(freqs.front())
+        //    在空 vector 上是 UB（实测导致进程 0xC0000005 崩溃，
+        //    一度被误判为 SpectrumEngine 的线程竞争）。
+        if (! freqs.empty())
+            check (freqs.front() < 100.0f && freqs.back() > 10000.0f,
+                   "T52.39 频率轴对数跨度 20Hz..20kHz",
+                   juce::String (freqs.front()) + ".." + juce::String (freqs.back()));
+        else
+            check (false, "T52.39 频率轴对数跨度 20Hz..20kHz（freqs 为空）", "");
 
         // readMultibandHistory
         const auto mh = api.readMultibandHistory (32);
@@ -7471,6 +7497,116 @@ static void testChoiceIndexUnified()
            "T69.13 越界索引被钳到最高档（9 → 2 → 4x）", "");
 }
 
+// ------------------------------------------------------------
+// T70 Phase：三缓冲轮转追读竞争（R20 修复）
+//   原缺陷：3 个 slot 时，writeSlot_ 轮转一圈只需 3 帧（约 48ms）就会回到
+//   UI 正在读的 slot 并覆盖它 → UI 读到撕裂帧。
+//   实测：反复读频谱 + 后台线程持续发布，进程偶发 0xC0000005（T52.38）。
+//   修法：4 个 slot + 写侧显式避开 uiSlot_。
+// ------------------------------------------------------------
+static void testSpectrumSlotRace()
+{
+    std::cout << "\n--- T70 Phase 频谱 slot 轮转追读竞争 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T70.0 处理器实例可访问", "");
+
+    mb->setEditorActive (true);
+    auto& eng = mb->getSpectrumEngine();
+
+    // ① 持续喂音频让后台线程持续发布（喂满 2 秒的量）
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int t = 0; t < 120; ++t)
+    {
+        for (int i = 0; i < 512; ++i)
+        {
+            const long kk = (long) (t * 512 + i);
+            const float v = 0.7f * (float) std::sin (6.283185 * (200.0 + 40.0 * (t % 8)) * kk / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        mb->processBlock (buf, midi);
+        juce::Thread::sleep (8);
+    }
+
+    // ② 高频读：连续 4000 次。
+    //    注意 getLatest() 有去重（同 slot 同 version 直接返回 false），
+    //    所以这里断言的是"不崩 + 拿到的帧都有限"，不是读取次数。
+    int reads = 0, finiteOk = 0;
+    for (int r = 0; r < 4000; ++r)
+    {
+        std::array<float, 512> pre {}, post {};
+        if (eng.getLatest (pre, post))
+        {
+            ++reads;
+            bool allFinite = true;
+            for (int i = 0; i < 512; ++i)
+                if (! std::isfinite (pre[(size_t) i]) || ! std::isfinite (post[(size_t) i]))
+                { allFinite = false; break; }
+            if (allFinite) ++finiteOk;
+        }
+    }
+    std::cout << "  成功读取 " << reads << " 次，其中数值全有限 " << finiteOk << " 次" << std::endl;
+    check (reads > 0, "T70.1 高频读取能拿到帧", juce::String (reads));
+    check (finiteOk == reads, "T70.2 所有帧数值全有限（无撕裂/未初始化数据）",
+           juce::String (finiteOk) + "/" + juce::String (reads));
+
+    // ③ 边读边喂：读与发布交错（最容易触发轮转追读）
+    //    这里 sleep(1) 而非 sleep(8)，让读侧与 16ms 发布节奏真正交叠
+    int reads2 = 0, finite2 = 0;
+    for (int r = 0; r < 800; ++r)
+    {
+        for (int i = 0; i < 512; ++i)
+        {
+            const long kk = (long) (r * 512 + i);
+            const float v = 0.6f * (float) std::sin (6.283185 * 300.0 * kk / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        mb->processBlock (buf, midi);
+
+        std::array<float, 512> pre {}, post {};
+        if (eng.getLatest (pre, post))
+        {
+            ++reads2;
+            bool allFinite = true;
+            for (int i = 0; i < 512; ++i)
+                if (! std::isfinite (pre[(size_t) i]) || ! std::isfinite (post[(size_t) i]))
+                { allFinite = false; break; }
+            if (allFinite) ++finite2;
+        }
+    }
+    std::cout << "  交错读取 " << reads2 << " 次，数值全有限 " << finite2 << " 次" << std::endl;
+    check (finite2 == reads2, "T70.3 边读边喂时帧仍全部有限",
+           juce::String (finite2) + "/" + juce::String (reads2));
+
+    // ④ 停喂后走衰减路径，同样高频读（衰减帧也写 slot）
+    int reads3 = 0, finite3 = 0;
+    for (int r = 0; r < 400; ++r)
+    {
+        std::array<float, 512> pre {}, post {};
+        if (eng.getLatest (pre, post))
+        {
+            ++reads3;
+            bool allFinite = true;
+            for (int i = 0; i < 512; ++i)
+                if (! std::isfinite (pre[(size_t) i]) || ! std::isfinite (post[(size_t) i]))
+                { allFinite = false; break; }
+            if (allFinite) ++finite3;
+        }
+        juce::Thread::sleep (2);
+    }
+    std::cout << "  衰减期读取 " << reads3 << " 次，数值全有限 " << finite3 << " 次" << std::endl;
+    check (finite3 == reads3, "T70.4 衰减路径高频读也全部有限",
+           juce::String (finite3) + "/" + juce::String (reads3));
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7547,6 +7683,7 @@ int main()
     testPopoverSliderKeyboard();     // T67 Phase popover 滑块键盘/滚轮
     testGetParamNormScale();         // T68 Phase getParamNorm 量纲锁定
     testChoiceIndexUnified();        // T69 Phase choiceIndexFromValue 统一换算
+    testSpectrumSlotRace();          // T70 Phase 频谱 slot 轮转追读竞争
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
