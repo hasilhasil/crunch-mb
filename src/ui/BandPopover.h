@@ -102,12 +102,22 @@ public:
     void syncFromParams();
 
     /** 供 DisplayView 读取的滑杆值（绘制 hover 态等）。 */
-    double sliderValue (int k) const { return sliders_[(size_t) k]; }
+    /**
+     * Phase（R21）：k 钳到 0..4 后再索引。
+     * 此前 sliderValue() 无钳制而 sliderValueForTest() 有——同一个读取的
+     * 两个入口语义不一致（R19b 的同型问题：两份实现必然一份漏）。
+     * 现在统一钳制；越界时返回端点值而非 UB。
+     */
+    double sliderValue (int k) const { return sliders_[(size_t) juce::jlimit (0, 4, k)]; }
 
     // ---- 测试钩子 ----
     /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
     juce::Rectangle<float> dynamicsSegRectForTest() const { return dynamicsSegRect(); }
-    double popoverValueForTest (int k) const { return values_[(size_t) k]; }
+    /** 测试钩子：第 k 个旋钮的当前值（k 钳到 0..kPopKnobs-1）。 */
+    double popoverValueForTest (int k) const
+    {
+        return values_[(size_t) juce::jlimit (0, kPopKnobs - 1, k)];
+    }
     juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
     /** 测试钩子：直接施加一次滑杆值（applySlider 为 private）。 */
     void applySliderForTest (int k, double v) { applySlider (k, v); }

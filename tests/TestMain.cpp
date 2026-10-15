@@ -7682,6 +7682,64 @@ static void testEmptyContainerGuards()
     check (true, "T71.6 全部边界点数检查完成，进程未崩溃", "");
 }
 
+// ------------------------------------------------------------
+// T72 Phase：popover 读取入口的索引钳制（R21 修复）
+//   原缺陷：sliderValue(k) 无钳制，而同义的 sliderValueForTest(k) 有
+//   jlimit(0,4,k)——同一个读取的两个入口语义不一致（R19b 同型）。
+//   popoverValueForTest(k) 同样无钳制。
+// ------------------------------------------------------------
+static void testPopoverIndexClamp()
+{
+    std::cout << "\n--- T72 Phase popover 读取入口索引钳制 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T72.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 打开 popover
+    dv.mouseDownForTest (230.0f, 120.0f);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (dv.isPopoverOpenForTest(), "T72.1 popover 可打开", "");
+
+    // ① 越界索引不得崩溃（修前 sliderValue 无钳制，sliders_[99] 是 UB）
+    //    经 DisplayView 的转发钩子（内部走 BandPopover::sliderValue）
+    const double vNeg = dv.popoverSliderValueForTest (-1);
+    const double vBig = dv.popoverSliderValueForTest (99);
+    std::cout << "  sliderValue(-1)=" << vNeg << "  sliderValue(99)=" << vBig << std::endl;
+    check (std::isfinite (vNeg) && std::isfinite (vBig),
+           "T72.2 越界索引被钳制而非 UB（返回有限值）",
+           juce::String (vNeg) + " / " + juce::String (vBig));
+
+    // ② 钳制方向：-1 应落到索引 0，99 应落到索引 4
+    const double v0 = dv.popoverSliderValueForTest (0);
+    const double v4 = dv.popoverSliderValueForTest (4);
+    std::cout << "  sliderValue(0)=" << v0 << "  sliderValue(4)=" << v4 << std::endl;
+    check (std::abs (vNeg - v0) < 1.0e-9,
+           "T72.3 sliderValue(-1) 钳到索引 0", juce::String (vNeg) + " vs " + juce::String (v0));
+    check (std::abs (vBig - v4) < 1.0e-9,
+           "T72.4 sliderValue(99) 钳到索引 4", juce::String (vBig) + " vs " + juce::String (v4));
+
+    // ③ popoverValueForTest 同样钳制
+    const double pvNeg = dv.getPopoverValueForTest (-5);
+    const double pvBig = dv.getPopoverValueForTest (50);
+    std::cout << "  popoverValue(-5)=" << pvNeg << "  popoverValue(50)=" << pvBig << std::endl;
+    check (std::isfinite (pvNeg) && std::isfinite (pvBig),
+           "T72.5 popoverValueForTest 越界也返回有限值",
+           juce::String (pvNeg) + " / " + juce::String (pvBig));
+
+    // ④ 合法索引仍正确（不被钳制影响）
+    const double v2a = dv.popoverSliderValueForTest (2);
+    const double v2b = dv.popoverSliderValueForTest (2);
+    check (std::abs (v2a - v2b) < 1.0e-12, "T72.6 合法索引读取稳定",
+           juce::String (v2a));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7760,6 +7818,7 @@ int main()
     testChoiceIndexUnified();        // T69 Phase choiceIndexFromValue 统一换算
     testSpectrumSlotRace();          // T70 Phase 频谱 slot 轮转追读竞争
     testEmptyContainerGuards();      // T71 Phase 空容器防护
+    testPopoverIndexClamp();         // T72 Phase popover 读取入口索引钳制
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
