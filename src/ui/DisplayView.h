@@ -102,8 +102,11 @@ public:
     {
         const float fcen = bandCenterFreq (band);
         x = freqToX (fcen);
+        // ⚠️ curveDb_ 是 std::array<float, kCurvePoints>——empty() 恒为 false，
+        //    原来的 `if (! curveDb_.empty())` 是永远成立的死条件（看起来在防空）。
+        //    curveFreqs_ 在构造时 resize 到 kCurvePoints，baseDb_ 是同尺寸 array，
+        //    三者始终等长，所以索引安全；这里按实际不变量直写。
         float db = 0.0f;
-        if (! curveDb_.empty())
         {
             int best = 0; float bd = 1.0e9f;
             for (int i = 0; i < kCurvePoints; ++i)
@@ -118,7 +121,12 @@ public:
     // 测试钩子：曲线上某频率处的 y（供鼠标模拟用）
     float getCurveYAtFreq (float f) const { return gainToY (curveDbAtFreq (f)); }
     // 测试钩子：读 range 显示值与 Range 层几何（T26）
-    float getRangeDisplay (int band) const { return rangeDisplay_[(size_t) band]; }
+    /** R22：band 钳制（与 bandLevelDbForTest 同型入口，钳制必须一致）。 */
+    float getRangeDisplay (int band) const
+    {
+        const int b = (band >= 0 && band < Param::kNumBands) ? band : 0;
+        return rangeDisplay_[(size_t) b];
+    }
     float getCurveRangeForTest() const { return curveRangeDisplay_; }
     int   getDisplayRangeModeForTest() const { return displayRangeMode_; }
     /** Phase D-5 测试钩子：设置 Display Range 模式（0=Auto，1..4=固定档）。 */
@@ -163,9 +171,11 @@ public:
     }
     // 测试钩子：各层 Path 是否有内容（T29 闪烁回归）
     std::string getCurvePathLenForTest() const { return curvePath_.isEmpty() ? "" : "x"; }
+    /** R22：b 钳制（与 getRangeEdgeRect 同一数组，钳制必须一致）。 */
     std::string getRangeEdgeLenForTest (int b) const
     {
-        return rangeEdgePath_[(size_t) b].isEmpty() ? "" : "x";
+        const int bb = (b >= 0 && b < Param::kNumBands) ? b : 0;
+        return rangeEdgePath_[(size_t) bb].isEmpty() ? "" : "x";
     }
     // 测试钩子（T35）——Phase A：抽屉已拆为 LinkedDrawer，经它转发
     bool isLinkedOpenForTest() const { return linkedDrawer_ != nullptr && linkedDrawer_->isOpen(); }
@@ -306,6 +316,13 @@ public:
         // Range 层底边的 y（取该段几何中心处）
         return getRangeEdgeRect ((size_t) b).getBottom();
     }
+    /** R22 测试钩子：getRangeEdgeRect 的钳制后透传。 */
+    juce::Rectangle<float> getRangeEdgeRectForTest (int band) const
+    {
+        return getRangeEdgeRect (band);
+    }
+    /** R22 测试钩子：getRangeDisplay 的钳制后透传。 */
+    float getRangeDisplayForTest (int band) const { return getRangeDisplay (band); }
     // T36：在段内扫描一个真实命中 Range 缘的点（排除同时命中曲线的点）
     bool findRangeEdgePointForTest (int band, float& outX, float& outY) const
     {
@@ -372,9 +389,16 @@ public:
     {
         return gainToY (curveDbAtFreqBase (bandCenterFreq (band)));
     }
+    /**
+     * Phase（R22）：band 钳到 0..kNumBands-1。
+     * 此前这里与 rangeEdgeYForTest() 都直接索引 rangeEdgePath_[(size_t) band]，
+     * 而同类入口 bandLevelDbForTest() 有范围检查——同语义入口钳制不一致
+     * （R21 同型）。两者当前都无调用点，但都是公开/测试入口。
+     */
     juce::Rectangle<float> getRangeEdgeRect (int band) const
     {
-        return rangeEdgePath_[(size_t) band].getBounds();
+        const int b = (band >= 0 && band < Param::kNumBands) ? band : 0;
+        return rangeEdgePath_[(size_t) b].getBounds();
     }
     int  getSelectedBand() const noexcept { return selectedBand_; }
     bool isCurveVisible() const noexcept { return curveVisible_; }

@@ -7740,6 +7740,74 @@ static void testPopoverIndexClamp()
            juce::String (v2a));
 }
 
+// ------------------------------------------------------------
+// T73 Phase：DisplayView 固定数组访问器的索引钳制（R22 修复）
+//   按教训 28（"同语义入口"）继续扫，发现 rangeEdgePath_ / rangeDisplay_
+//   的三个入口里，只有 bandLevelDbForTest 有钳制，另外两个没有：
+//     · getRangeEdgeRect(band)      → rangeEdgePath_[band]（无钳制）
+//     · getRangeEdgeLenForTest(b)   → rangeEdgePath_[b]（无钳制）
+//     · getRangeDisplay(band)       → rangeDisplay_[band]（无钳制）
+//   三个当前都无产品调用点，但都是公开/测试入口。
+// ------------------------------------------------------------
+static void testDisplayViewIndexClamp()
+{
+    std::cout << "\n--- T73 Phase DisplayView 访问器索引钳制 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T73.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ① getRangeEdgeRect 越界不得 UB，且钳到索引 0
+    const auto rNeg = dv.getRangeEdgeRectForTest (-1);
+    const auto rBig = dv.getRangeEdgeRectForTest (99);
+    const auto r0   = dv.getRangeEdgeRectForTest (0);
+    std::cout << "  rangeEdgeRect(-1).bottom=" << rNeg.getBottom()
+              << "  (99).bottom=" << rBig.getBottom()
+              << "  (0).bottom=" << r0.getBottom() << std::endl;
+    check (std::abs (rNeg.getBottom() - r0.getBottom()) < 1.0e-6f,
+           "T73.1 getRangeEdgeRect(-1) 钳到索引 0",
+           juce::String (rNeg.getBottom()) + " vs " + juce::String (r0.getBottom()));
+    check (rBig.isFinite() || rBig.isEmpty(),
+           "T73.2 getRangeEdgeRect(99) 不产生 NaN 矩形", "");
+
+    // ② getRangeDisplay 越界钳到索引 0
+    const float gNeg = dv.getRangeDisplayForTest (-7);
+    const float gBig = dv.getRangeDisplayForTest (77);
+    const float g0   = dv.getRangeDisplayForTest (0);
+    std::cout << "  rangeDisplay(-7)=" << gNeg << "  (77)=" << gBig
+              << "  (0)=" << g0 << std::endl;
+    check (std::abs (gNeg - g0) < 1.0e-6f,
+           "T73.3 getRangeDisplay(-7) 钳到索引 0",
+           juce::String (gNeg) + " vs " + juce::String (g0));
+    check (std::isfinite (gBig), "T73.4 getRangeDisplay(77) 返回有限值",
+           juce::String (gBig));
+
+    // ③ 合法索引不受影响
+    const float g3 = dv.getRangeDisplayForTest (3);
+    check (std::isfinite (g3), "T73.5 合法索引 rangeDisplay(3) 正常",
+           juce::String (g3));
+
+    // ④ getRangeEdgeLenForTest 越界不 UB
+    const std::string lNeg = dv.getRangeEdgeLenForTest (-1);
+    const std::string lBig = dv.getRangeEdgeLenForTest (42);
+    check (lNeg == "" || lNeg == "x", "T73.6 getRangeEdgeLenForTest(-1) 返回有效标记",
+           lNeg);
+    check (lBig == "" || lBig == "x", "T73.7 getRangeEdgeLenForTest(42) 返回有效标记",
+           lBig);
+
+    // ⑤ bandLevelDbForTest 原本就有钳制，确认未被破坏
+    const float blNeg = dv.bandLevelDbForTest (-1);
+    check (std::abs (blNeg - (-100.0f)) < 0.01f,
+           "T73.8 bandLevelDbForTest(-1) 仍返回 -100（原有钳制未破坏）",
+           juce::String (blNeg));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7819,6 +7887,7 @@ int main()
     testSpectrumSlotRace();          // T70 Phase 频谱 slot 轮转追读竞争
     testEmptyContainerGuards();      // T71 Phase 空容器防护
     testPopoverIndexClamp();         // T72 Phase popover 读取入口索引钳制
+    testDisplayViewIndexClamp();     // T73 Phase DisplayView 访问器索引钳制
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
