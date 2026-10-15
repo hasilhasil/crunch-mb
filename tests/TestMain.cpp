@@ -8401,6 +8401,129 @@ static void testBandToggleThreeStates()
     }
 }
 
+// ------------------------------------------------------------
+// T80 Phase：LINKED 抽屉的端到端声音验证（R27，教训 31）
+//   T35 只验证了"旋钮 → 四段参数联动"（查返回值），**从未喂音频**。
+//   本测试按教训 31 补端到端：经整条链喂音频，验证一个旋钮真的
+//   同时改变了**四段**的增益衰减（GR）——即"一次改所有段"在声音上成立。
+//
+//   对照逆向报告 50_COMPARISON.md 第 10 条"全局 Time / Scale 统调"：
+//     · Attack / Release 旋钮 = 全局 Time
+//     · Threshold 旋钮      = 全局 Scale（深度）
+// ------------------------------------------------------------
+static void testLinkedDrawerEndToEndAudio()
+{
+    std::cout << "\n--- T80 Phase LINKED 抽屉端到端声音验证 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T80.0 处理器实例可访问", "");
+
+    // 四段都设为可压缩状态：低阈值 + 高比率 + 快 attack + 短 release
+    for (int b = 0; b < 4; ++b)
+    {
+        const juce::String bn = "band" + juce::String (b);
+        mb->setParamPhysicalForTest (bn + "Threshold", -30.0f);
+        mb->setParamPhysicalForTest (bn + "Ratio", 10.0f);
+        mb->setParamPhysicalForTest (bn + "Attack", 1.0f);
+        mb->setParamPhysicalForTest (bn + "Release", 20.0f);
+        mb->setParamPhysicalForTest (bn + "Range", -30.0f);
+        mb->setParamPhysicalForTest (bn + "Makeup", 0.0f);
+        mb->setParamPhysicalForTest (bn + "Mix", 100.0f);
+    }
+    mb->setParamPhysicalForTest ("globalMix", 100.0f);
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 喂一段宽带噪声（四段都有能量），测四段 GR 之和
+    auto feedAndSumGr = [&] (int blocks) -> std::array<float, 4>
+    {
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        juce::Random rng (12345);
+        std::array<float, 4> sumGr { 0.0f, 0.0f, 0.0f, 0.0f };
+        int counted = 0;
+        for (int t = 0; t < blocks; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const float v = 0.4f * (rng.nextFloat() * 2.0f - 1.0f);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            if (t >= blocks / 2)              // 后一半取平均，避开起振
+            {
+                const auto gr = mb->getDSP().getBandGainReductionDb();
+                for (int b = 0; b < 4; ++b) sumGr[(size_t) b] += gr[(size_t) b];
+                ++counted;
+            }
+        }
+        if (counted > 0)
+            for (int b = 0; b < 4; ++b) sumGr[(size_t) b] /= (float) counted;
+        return sumGr;
+    };
+
+    // ① 基准：四段都在压缩
+    const auto grBase = feedAndSumGr (60);
+    std::cout << "  基准 GR: " << grBase[0] << " " << grBase[1] << " "
+              << grBase[2] << " " << grBase[3] << " dB" << std::endl;
+    float baseSum = 0.0f;
+    for (float g : grBase) baseSum += g;
+    check (baseSum > 8.0f, "T80.1 基准：四段合计有明显压缩", juce::String (baseSum));
+
+    // ② 经 LINKED 抽屉把 Threshold 整体降 10dB（k=0，Δ 偏移）→ 四段都应**更**压缩
+    dv.openLinkedDrawerForTest();
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+    check (dv.isLinkedOpenForTest(), "T80.2 LINKED 抽屉可打开", "");
+    dv.applyLinkedOffsetForTest (0, -10.0);       // Threshold 偏移 −10dB
+
+    const auto grLow = feedAndSumGr (60);
+    std::cout << "  阈值−10 后 GR: " << grLow[0] << " " << grLow[1] << " "
+              << grLow[2] << " " << grLow[3] << " dB" << std::endl;
+    float lowSum = 0.0f;
+    for (float g : grLow) lowSum += g;
+    check (lowSum > baseSum * 1.15f,
+           "T80.3 全局 Threshold 偏移 → 四段合计压缩明显增加",
+           juce::String (baseSum) + " -> " + juce::String (lowSum));
+
+    // ③ 关键：**四段每一段**都变深（不是只动了某一段）
+    int deepened = 0;
+    for (int b = 0; b < 4; ++b)
+        if (grLow[(size_t) b] > grBase[(size_t) b] + 0.5f) ++deepened;
+    std::cout << "  四段中变深的段数 = " << deepened << "/4" << std::endl;
+    check (deepened == 4,
+           "T80.4 四段每一段都变深（一次操作影响全部四段）",
+           juce::String (deepened) + "/4");
+
+    // ④ 反向：把 Threshold 整体升 15dB → 四段都应**变浅**
+    dv.applyLinkedOffsetForTest (0, 5.0);          // 相对当前（−10）回到 −5
+    const auto grHigh = feedAndSumGr (60);
+    std::cout << "  阈值回升后 GR: " << grHigh[0] << " " << grHigh[1] << " "
+              << grHigh[2] << " " << grHigh[3] << " dB" << std::endl;
+    float highSum = 0.0f;
+    for (float g : grHigh) highSum += g;
+    check (highSum < lowSum,
+           "T80.5 阈值回升 → 四段合计压缩减少（可反向操作）",
+           juce::String (lowSum) + " -> " + juce::String (highSum));
+
+    // ⑤ Makeup 偏移（k=3）→ 输出电平应整体改变（但 GR 不变，因为 Makeup 在 GR 之后）
+    //    这里验证的是"参数确实写进了四段"
+    dv.applyLinkedOffsetForTest (3, 6.0);           // Makeup +6dB
+    bool allMakeup = true;
+    for (int b = 0; b < 4; ++b)
+    {
+        const float mk = mb->apvts.getRawParameterValue (
+            Param::bandMakeup (b))->load();
+        if (std::abs (mk - 6.0f) > 0.15f) allMakeup = false;
+    }
+    check (allMakeup, "T80.6 Makeup 偏移 +6dB → 四段 Makeup 同为 6", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -8487,6 +8610,7 @@ int main()
     testInputGainAndOversamplingUi(); // T77 Phase InputGain / Oversampling UI 暴露
     testPluginPowerSwitch();          // T78 Phase 插件总开关 enabled UI
     testBandToggleThreeStates();      // T79 Phase Solo/Mute/Delta 三语义
+    testLinkedDrawerEndToEndAudio();  // T80 Phase LINKED 抽屉端到端声音验证
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
