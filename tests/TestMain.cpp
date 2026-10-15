@@ -7432,6 +7432,45 @@ static void testGetParamNormScale()
            juce::String (api.getParam ("band0Ratio").value));
 }
 
+// ------------------------------------------------------------
+// T69 Phase：choiceIndexFromValue 统一换算（R19c 锁定）
+//   R19b 之后按教训 24 继续扫"两份实现"，发现 Choice 索引换算历史上曾有三份：
+//   processor 的 choiceIndex()、DisplayView 的 roundToInt(getParamFast())、
+//   以及 R9 修掉的 getParamNorm()*(N-1)。现统一为
+//   Param::choiceIndexFromValue()。
+// ------------------------------------------------------------
+static void testChoiceIndexUnified()
+{
+    std::cout << "\n--- T69 Phase choiceIndexFromValue 统一换算 ---\n";
+
+    // ① 基本换算：实际值即索引，四舍五入到最近整数
+    check (Param::choiceIndexFromValue (0.0f) == 0, "T69.1 0.0 → 索引 0", "");
+    check (Param::choiceIndexFromValue (1.0f) == 1, "T69.2 1.0 → 索引 1", "");
+    check (Param::choiceIndexFromValue (2.0f) == 2, "T69.3 2.0 → 索引 2", "");
+    check (Param::choiceIndexFromValue (2.4f) == 2, "T69.4 2.4 → 2（四舍五入）", "");
+    check (Param::choiceIndexFromValue (2.6f) == 3, "T69.5 2.6 → 3（四舍五入）", "");
+
+    // ② 与 slopeIndexToDb 组合：索引 0..3 → 12/24/36/48 dB
+    check (Param::slopeIndexToDb (Param::choiceIndexFromValue (0.0f)) == 12,
+           "T69.7 索引 0 → 12 dB/oct", "");
+    check (Param::slopeIndexToDb (Param::choiceIndexFromValue (1.0f)) == 24,
+           "T69.8 索引 1 → 24 dB/oct", "");
+    check (Param::slopeIndexToDb (Param::choiceIndexFromValue (3.0f)) == 48,
+           "T69.9 索引 3 → 48 dB/oct", "");
+
+    // ③ 与 oversamplingIndexToFactor 组合：0/1/2 → 1/2/4
+    check (Param::oversamplingIndexToFactor (Param::choiceIndexFromValue (0.0f)) == 1,
+           "T69.10 索引 0 → 1x", "");
+    check (Param::oversamplingIndexToFactor (Param::choiceIndexFromValue (1.0f)) == 2,
+           "T69.11 索引 1 → 2x", "");
+    check (Param::oversamplingIndexToFactor (Param::choiceIndexFromValue (2.0f)) == 4,
+           "T69.12 索引 2 → 4x", "");
+
+    // ④ 越界索引被 jlimit 钳到合法范围（9 → 2 → 4x）
+    check (Param::oversamplingIndexToFactor (Param::choiceIndexFromValue (9.0f)) == 4,
+           "T69.13 越界索引被钳到最高档（9 → 2 → 4x）", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7507,6 +7546,7 @@ int main()
     testKnobKeyboardStep();          // T66 Phase 旋钮常态键盘步进
     testPopoverSliderKeyboard();     // T67 Phase popover 滑块键盘/滚轮
     testGetParamNormScale();         // T68 Phase getParamNorm 量纲锁定
+    testChoiceIndexUnified();        // T69 Phase choiceIndexFromValue 统一换算
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

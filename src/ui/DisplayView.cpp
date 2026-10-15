@@ -859,7 +859,9 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
             if (pi.id != paramId || ! pi.isChoice) continue;
             // ⚠️ getParamFast 返回的实际值就是选项索引，不是 normalized，
             //    不能再乘 (choices.size()-1)。
-            const int idx = juce::roundToInt (proc_.getBackend().getParamFast (paramId));
+            // Phase（R19c）：换算委托给 Param::choiceIndexFromValue（单一来源）。
+            const int idx = Param::choiceIndexFromValue (
+                proc_.getBackend().getParamFast (paramId));
             if (idx >= 0 && idx < pi.choices.size())
                 value = pi.choices[idx];
             break;
@@ -1256,8 +1258,8 @@ void DisplayView::pollStructureParams()
     //    （slope 0..3 → 0..9，mode 0..2 → 0..4）——结构与相位模式的缓存比对
     //    会永久失配，导致每帧都判定"结构变了"。
     const int slope = Param::slopeIndexToDb (
-        (int) juce::roundToInt (proc_.getBackend().getParamFast (Param::ID::xoverSlope)));
-    const int mode = (int) juce::roundToInt (
+        Param::choiceIndexFromValue (proc_.getBackend().getParamFast (Param::ID::xoverSlope)));
+    const int mode = Param::choiceIndexFromValue (
         proc_.getBackend().getParamFast (Param::ID::phaseMode));
 
     if (x1 != cachedX1_ || x2 != cachedX2_ || x3 != cachedX3_

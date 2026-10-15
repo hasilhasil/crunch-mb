@@ -21,6 +21,22 @@ namespace Param
     enum class Oversampling  { Off = 0, X2 = 1, X4 = 2 };          // 2026-10-14
 
     inline int   slopeIndexToDb (int idx) { return 12 * (juce::jlimit (0, 3, idx) + 1); }
+
+    /**
+     * Phase（R19c）：Choice 参数的**实际值 → 选项索引**。
+     *
+     * 为什么必须收在这里：此前这个换算有三份——
+     *   ① PluginProcessor 的匿名命名空间 helper `choiceIndex(atomic<float>*)`
+     *   ② DisplayView 里的 `roundToInt (getParamFast (id))`
+     *   ③ （曾经）`getParamNorm(...) * (N-1)`，即 R9 修掉的四处
+     * ①②目前是对的，但"同一逻辑两份"正是 R19b 刚立为教训的模式：
+     * 这次两份都对，下次改一处忘另一处就对不齐了。
+     * 现在统一由此提供，且**只接受实际值**（Choice 的实际值就是索引）。
+     */
+    inline int choiceIndexFromValue (float actualValue)
+    {
+        return juce::roundToInt (actualValue);
+    }
     inline int   oversamplingIndexToFactor (int idx)               // 2026-10-14
     {
         switch (juce::jlimit (0, 2, idx))

@@ -12,9 +12,11 @@ namespace
     // 对 Bool 为 0/1，对 Float 为物理值——都不是 0..1 归一化值。
     // （2026-09-23 修复：此前误按归一化值 ×(n−1) 换算，导致默认 Medium→High、
     //   Slope24→Slope48，Linear 延迟翻倍 3072→6144。）
+    // Phase（R19c）：本体委托给 Param::choiceIndexFromValue——该换算原先在
+    // processor 与 DisplayView 各有一份（见 §8.2 R19b 的同型问题）。
     inline int choiceIndex (const std::atomic<float>* raw) noexcept
     {
-        return (int) juce::roundToInt (raw->load());
+        return Param::choiceIndexFromValue (raw->load());
     }
     inline bool boolParam (const std::atomic<float>* raw) noexcept
     {
