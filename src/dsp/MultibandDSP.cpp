@@ -280,9 +280,20 @@ void MultibandDSP::process (float* const* channels, int numSamples,
                             chans > 1 ? up.getChannelPointer (1) : up.getChannelPointer (0) };
         processChain (upPtr, (int) up.getNumSamples(), scUpCh > 0 ? scUp : nullptr, scUpCh);
 
-        oversampler_->processSamplesDown (up);                // 就地：up 变回 1× 块长
+        // Phase（R13 修复）：processSamplesDown 的参数必须是 **1× 块大小**的输出块，
+        // 不是过采样后的 up。JUCE 用它反推内部缓冲需求：
+        //     currentNumSamples = outputBlock.getNumSamples()
+        //     for (n = 0; n < stages.size() - 1; ++n) currentNumSamples *= factor;
+        // 传过采样后的 up（2048）时，4x（2 级）会算出 2048×2 = 4096，
+        // 而第一级内部缓冲只按 initProcessing(512) → 1024 分配 → **越界写**。
+        // 2x 只有 1 级，循环不执行，碰巧不出错——这正是它一直没被发现的原因。
+        // 现在用 osIn_ 的前 numSamples 样本作输出目标（osIn_ 容量 = maxBlock_ ≥ numSamples）。
+        juce::dsp::AudioBlock<float> downFull (osIn_);
+        auto downBlock = downFull.getSubBlock (0, (size_t) numSamples);
+        oversampler_->processSamplesDown (downBlock);           // 降采样回 1× 块长
         for (int ch = 0; ch < chans; ++ch)
-            juce::FloatVectorOperations::copy (channels[ch], up.getChannelPointer (ch), numSamples);
+            juce::FloatVectorOperations::copy (channels[ch],
+                                               downBlock.getChannelPointer (ch), numSamples);
         return;
     }
 

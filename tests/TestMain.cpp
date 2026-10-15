@@ -6581,11 +6581,11 @@ static void testSideChainFreeLowHigh()
 }
 
 // ------------------------------------------------------------
-// T61 Phase：4x 过采样（发现严重缺陷，见下）
-//   本测试的初衷是验证"宿主给出超大块时过采样不失效"。
-//   实际结果：**发现 4x 过采样的连续处理会破坏堆**，且该参数
-//   （2026-10-14 新增）此前没有任何测试打开过——即从实现起就没被
-//   音频路径验证过。详见下方 ③ 的已知问题记录与 UI_PLAN_V2 §8.2 R13。
+// T61 Phase：4x 过采样（R13 修复验证）
+//   原缺陷：processSamplesDown 接收了过采样后的块，JUCE 据此反推内部缓冲
+//   需求时算出 2048×2=4096，超出第一级按 initProcessing(512) 分配的 1024
+//   → 堆越界写。2x 只有一级 stage 碰巧不出错，所以一直没被发现。
+//   本测试覆盖：连续多块、超过 prepare 声明值的块、运行时切换档位。
 // ------------------------------------------------------------
 static void testOversamplingLargeBlock()
 {
@@ -6609,30 +6609,101 @@ static void testOversamplingLargeBlock()
            juce::String (mb->getDSP().getOversamplingFactor()));
     check (lat > 0, "T61.1b 4x 过采样延迟已上报", juce::String (lat));
 
-    // ② ⚠️ 不执行音频处理（见 ③ 已知问题）：仅验证参数面与延迟上报。
-    //    实测：只要开启 4x 并处理**哪怕一块**，堆就已破坏
-    //    （进程最终以 0xC0000374 退出，虽然当时输出全部正常）。
-    //    2x 则完全正常（492 条断言全过）——问题只在 4x 分支。
+    juce::MidiBuffer midi;
 
-    // ③ ⚠️ 已知问题（未修复，有意不在测试内执行）：
-    //
-    //    **4x 过采样会破坏堆。** 本测试在验证过程中发现：
-    //    · 2x（exponent=1，单级 stage）完全正常
-    //    · 4x（exponent=2，两级 stage）开启后处理哪怕一块音频，
-    //      输出数值当时看起来正常（peak 0.49、无 NaN），
-    //      但进程最终以 0xC0000374（堆损坏）退出
-    //
-    //    该参数（oversampling，2026-10-14 新增）**此前没有任何测试打开过**，
-    //    也就是说这个功能从实现起就没被音频路径验证过。
-    //
-    //    为何不在此测：会崩掉整个测试进程，连带其余 480+ 条断言全部无法验证。
-    //    为何不在此修：需要重新审查 MultibandDSP::process() 过采样分支与
-    //    processChain() 的 procBlock_ 分块之间的缓冲容量/索引关系
-    //    （procBlock_ = maxBlock_ × 4 = 2048，而 osIn_ 只有 maxBlock_ = 512，
-    //     且 scHold_ 按 procBlock_ 分配）——是独立任务，
-    //     已记入 UI_PLAN_V2 §8.2（R13）。
-    //    临时规避：不要使用 Oversampling 的 4x 档（2x 正常）。
-    check (true, "T61.3 已知问题已记录：4x 过采样破坏堆（见 §8.2 R13）", "");
+    // ② 连续多块：4x 过采样必须稳定（R13 修复前这里必崩）
+    {
+        juce::AudioBuffer<float> sb (2, 512);
+        float sp = 0.0f;
+        for (int t = 0; t < 80; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 220.0 * kk / 48000.0);
+                sb.setSample (0, i, v);
+                sb.setSample (1, i, v);
+            }
+            mb->processBlock (sb, midi);
+            for (int i = 0; i < 512; ++i) sp = juce::jmax (sp, std::abs (sb.getSample (0, i)));
+        }
+        std::cout << "  4x 连续 80 块 512: peak=" << sp << std::endl;
+        check (sp > 0.1f, "T61.2 4x 过采样连续处理稳定且有输出", juce::String (sp));
+    }
+
+    // ③ 超过 prepare 声明值的块（1536 > 512）
+    {
+        const int nn = 1536;
+        juce::AudioBuffer<float> buf (2, nn);
+        bool allFinite = true;
+        float peak = 0.0f;
+        for (int t = 0; t < 40; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 220.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < nn; ++i)
+            {
+                const float s = buf.getSample (0, i);
+                if (! std::isfinite (s)) { allFinite = false; break; }
+                peak = juce::jmax (peak, std::abs (s));
+            }
+            if (! allFinite) break;
+        }
+        std::cout << "  4x 1536 块处理后: finite=" << allFinite << " peak=" << peak << std::endl;
+        check (allFinite, "T61.3 超过 prepare 声明值的块处理不产生 NaN/Inf", "");
+        check (peak > 0.1f, "T61.4 超过 prepare 声明值的块仍有音频输出",
+               juce::String (peak));
+    }
+
+    // ⑤ 运行时切换过采样档位（R13 修复前这里也崩）
+    {
+        mb->setParamPhysicalForTest ("oversampling", 0.0f);   // 4x → 关
+        mb->handleUpdateNowIfNeeded();
+        check (mb->getDSP().getOversamplingFactor() == 1, "T61.5 可关回过采样",
+               juce::String (mb->getDSP().getOversamplingFactor()));
+
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int t = 0; t < 20; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 220.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+        float peak2 = 0.0f;
+        for (int i = 0; i < 512; ++i) peak2 = juce::jmax (peak2, std::abs (buf.getSample (0, i)));
+        check (peak2 > 0.1f, "T61.6 关回过采样后仍正常", juce::String (peak2));
+
+        // 再开回 2x 验证
+        mb->setParamPhysicalForTest ("oversampling", 1.0f);
+        mb->handleUpdateNowIfNeeded();
+        check (mb->getDSP().getOversamplingFactor() == 2, "T61.7 可切到 2x",
+               juce::String (mb->getDSP().getOversamplingFactor()));
+        for (int t = 0; t < 20; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (20000 + t * 512 + i);
+                const float v = 0.6f * (float) std::sin (6.283185 * 220.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+        }
+        float peak3 = 0.0f;
+        for (int i = 0; i < 512; ++i) peak3 = juce::jmax (peak3, std::abs (buf.getSample (0, i)));
+        check (peak3 > 0.1f, "T61.8 2x 下连续处理正常", juce::String (peak3));
+    }
 
     mb->setEditorActive (false);
 }
