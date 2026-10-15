@@ -185,8 +185,69 @@ void Knob::closeEditor (bool apply)
 
 bool Knob::keyPressed (const juce::KeyPress& key)
 {
-    if (! editing_) return false;
+    if (editing_) return keyPressedEditing (key);
 
+    // Phase（R18 修复）：非编辑态的方向键步进。
+    // 此前 keyPressed 开头就是 `if (! editing_) return false;`——
+    // 旋钮在正常态下**完全无键盘入口**，只能鼠标拖动/滚轮。
+    // Pro-MB / Future MB 的旋钮均支持 ↑/↓ 步进与 PgUp/PgDn 大步进。
+    const auto kc = key.getKeyCode();
+    const double span = max_ - min_;
+    const double coarse = (interval_ > 0.0) ? interval_ * 10.0 : span * 0.10;
+    const double fine   = (interval_ > 0.0) ? interval_        : span * 0.01;
+
+    if (kc == juce::KeyPress::upKey || kc == juce::KeyPress::rightKey)
+    {
+        const double step = key.getModifiers().isShiftDown() ? fine : coarse;
+        setValue (juce::jlimit (min_, max_, value_ + step), true);
+        return true;
+    }
+    if (kc == juce::KeyPress::downKey || kc == juce::KeyPress::leftKey)
+    {
+        const double step = key.getModifiers().isShiftDown() ? fine : coarse;
+        setValue (juce::jlimit (min_, max_, value_ - step), true);
+        return true;
+    }
+    if (kc == juce::KeyPress::pageUpKey)
+    {
+        setValue (juce::jlimit (min_, max_, value_ + coarse * 2.0), true);
+        return true;
+    }
+    if (kc == juce::KeyPress::pageDownKey)
+    {
+        setValue (juce::jlimit (min_, max_, value_ - coarse * 2.0), true);
+        return true;
+    }
+    if (kc == juce::KeyPress::homeKey)
+    {
+        setValue (min_, true);
+        return true;
+    }
+    if (kc == juce::KeyPress::endKey)
+    {
+        setValue (max_, true);
+        return true;
+    }
+
+    // Enter / 空格 / 双击同等语义：进入文本编辑（精确输入）
+    if (key == juce::KeyPress::returnKey || key == juce::KeyPress::spaceKey)
+    {
+        openEditor();
+        return true;
+    }
+
+    // Backspace / Delete = 复位到默认值（与 Ctrl+click 同义）
+    if (key == juce::KeyPress::backspaceKey || key == juce::KeyPress::deleteKey)
+    {
+        setValue (default_, true);
+        return true;
+    }
+
+    return false;
+}
+
+bool Knob::keyPressedEditing (const juce::KeyPress& key)
+{
     if (key == juce::KeyPress::escapeKey)  { closeEditor (false); return true; }
     if (key == juce::KeyPress::returnKey)  { closeEditor (true);  return true; }
     if (key == juce::KeyPress::backspaceKey)

@@ -7103,6 +7103,116 @@ static void testDropDownKeyboardNav()
            "T65.17 下拉关闭时键盘不被消费", "");
 }
 
+// ------------------------------------------------------------
+// T66 Phase：旋钮常态键盘步进（R18 修复）
+//   原缺陷：Knob::keyPressed 开头是 `if (! editing_) return false;`，
+//   旋钮在正常态下**完全无键盘入口**——只能鼠标拖动/滚轮。
+//   Pro-MB / Future MB 的旋钮均支持 ↑/↓ 步进与 PgUp/PgDn 大步进。
+// ------------------------------------------------------------
+static void testKnobKeyboardStep()
+{
+    std::cout << "\n--- T66 Phase 旋钮常态键盘步进 ---\n";
+
+    Knob k;
+    k.setRange (0.0, 100.0, 1.0);
+    k.setSize (60, 76);
+    k.setValue (50.0, false);
+
+    const auto key = [] (int kc, juce::ModifierKeys mods = juce::ModifierKeys())
+    {
+        return juce::KeyPress (kc, mods.getRawFlags(), 0);
+    };
+    const auto shift = [] { return juce::ModifierKeys (juce::ModifierKeys::shiftModifier); };
+
+    // ① 非编辑态：↑ 应步进（修前 return false，值不变）
+    check (k.keyPressed (key (juce::KeyPress::upKey)),
+           "T66.1 非编辑态 ↑ 被消费", "");
+    check (std::abs (k.getValueForTest() - 60.0) < 1.0e-6,
+           "T66.2 ↑ 步进一个 coarse（interval×10 = 10）",
+           juce::String (k.getValueForTest()));
+
+    // ② ↓ 反向
+    k.keyPressed (key (juce::KeyPress::downKey));
+    check (std::abs (k.getValueForTest() - 50.0) < 1.0e-6,
+           "T66.3 ↓ 反向步进", juce::String (k.getValueForTest()));
+
+    // ③ Shift + ↑ = 细调（一个 interval = 1）
+    k.keyPressed (key (juce::KeyPress::upKey, shift()));
+    check (std::abs (k.getValueForTest() - 51.0) < 1.0e-6,
+           "T66.4 Shift+↑ 细调一个 interval",
+           juce::String (k.getValueForTest()));
+
+    // ④ ← / → 等同 ↓ / ↑
+    k.setValue (50.0, false);
+    k.keyPressed (key (juce::KeyPress::rightKey));
+    check (std::abs (k.getValueForTest() - 60.0) < 1.0e-6,
+           "T66.5 → 等同 ↑", juce::String (k.getValueForTest()));
+    k.keyPressed (key (juce::KeyPress::leftKey));
+    check (std::abs (k.getValueForTest() - 50.0) < 1.0e-6,
+           "T66.6 ← 等同 ↓", juce::String (k.getValueForTest()));
+
+    // ⑤ PgUp / PgDn = 双倍 coarse
+    k.keyPressed (key (juce::KeyPress::pageUpKey));
+    check (std::abs (k.getValueForTest() - 70.0) < 1.0e-6,
+           "T66.7 PgUp 双倍步进", juce::String (k.getValueForTest()));
+    k.keyPressed (key (juce::KeyPress::pageDownKey));
+    check (std::abs (k.getValueForTest() - 50.0) < 1.0e-6,
+           "T66.8 PgDn 反向双倍", juce::String (k.getValueForTest()));
+
+    // ⑥ Home / End = min / max
+    k.keyPressed (key (juce::KeyPress::homeKey));
+    check (std::abs (k.getValueForTest() - 0.0) < 1.0e-6,
+           "T66.9 Home → min", juce::String (k.getValueForTest()));
+    k.keyPressed (key (juce::KeyPress::endKey));
+    check (std::abs (k.getValueForTest() - 100.0) < 1.0e-6,
+           "T66.10 End → max", juce::String (k.getValueForTest()));
+
+    // ⑦ 边界钳制：max 处按 ↑ 不越界
+    k.keyPressed (key (juce::KeyPress::upKey));
+    check (std::abs (k.getValueForTest() - 100.0) < 1.0e-6,
+           "T66.11 max 处 ↑ 不越界", juce::String (k.getValueForTest()));
+    k.keyPressed (key (juce::KeyPress::pageUpKey));
+    check (std::abs (k.getValueForTest() - 100.0) < 1.0e-6,
+           "T66.12 max 处 PgUp 不越界", juce::String (k.getValueForTest()));
+
+    // ⑧ Backspace / Delete = 复位到默认值
+    k.setDefaultValueForTest (30.0);
+    k.setValue (80.0, false);
+    k.keyPressed (key (juce::KeyPress::backspaceKey));
+    check (std::abs (k.getValueForTest() - 30.0) < 1.0e-6,
+           "T66.13 Backspace 复位到默认值", juce::String (k.getValueForTest()));
+    k.setValue (80.0, false);
+    k.keyPressed (key (juce::KeyPress::deleteKey));
+    check (std::abs (k.getValueForTest() - 30.0) < 1.0e-6,
+           "T66.14 Delete 复位到默认值", juce::String (k.getValueForTest()));
+
+    // ⑨ Enter 进入文本编辑（非编辑态）
+    check (! k.isEditingForTest(), "T66.15 初始非编辑态", "");
+    k.keyPressed (key (juce::KeyPress::returnKey));
+    check (k.isEditingForTest(), "T66.16 Enter 进入文本编辑", "");
+
+    // ⑩ 编辑态下 Enter 提交并退出（原有行为不被破坏）
+    k.keyPressedCharForTest ('4');
+    k.keyPressedCharForTest ('2');
+    k.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+    check (! k.isEditingForTest(), "T66.17 编辑态 Enter 提交后退出", "");
+    check (std::abs (k.getValueForTest() - 42.0) < 1.0e-6,
+           "T66.18 编辑态 Enter 提交值 42", juce::String (k.getValueForTest()));
+
+    // ⑪ 编辑态下 Esc 取消（原有行为）
+    k.setValue (50.0, false);
+    k.keyPressed (key (juce::KeyPress::returnKey));   // 进编辑
+    k.keyPressedCharForTest ('9');
+    k.keyPressedForTest (juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
+    check (! k.isEditingForTest(), "T66.19 编辑态 Esc 取消", "");
+    check (std::abs (k.getValueForTest() - 50.0) < 1.0e-6,
+           "T66.20 Esc 不改变值", juce::String (k.getValueForTest()));
+
+    // ⑫ 无关键不被消费
+    check (! k.keyPressed (key (juce::KeyPress::F1Key)),
+           "T66.21 无关键不被消费", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7175,6 +7285,7 @@ int main()
     testKnobWheelModifiers();        // T63 Phase 旋钮滚轮修饰键 + 输入上限
     testFreqInputEmptyApply();       // T64 Phase 频率输入框空输入 + 长度上限
     testDropDownKeyboardNav();       // T65 Phase 下拉键盘导航
+    testKnobKeyboardStep();          // T66 Phase 旋钮常态键盘步进
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

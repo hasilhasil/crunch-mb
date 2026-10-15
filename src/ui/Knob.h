@@ -16,7 +16,12 @@
 class Knob : public juce::Component
 {
 public:
-    Knob() = default;
+    Knob()
+    {
+        // Phase（R18）：常态下就要能收键盘，否则方向键步进收不到事件。
+        // 此前只在 openEditor() 里夺焦——非编辑态等于没有键盘入口。
+        setWantsKeyboardFocus (true);
+    }
 
     // ---- 配置 ----
     void setRange (double minValue, double maxValue, double interval = 0.0);
@@ -92,12 +97,17 @@ public:
         keyPressed (juce::KeyPress (ch));
     }
     juce::String editTextForTest() const { return editText_; }
+    /** T66：常态键盘步进测试钩子 */
+    bool   isEditingForTest() const { return editing_; }
+    void   setDefaultValueForTest (double v) { default_ = v; }
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
+    /** 文本编辑态的键盘处理（R18 从 keyPressed 拆出）。 */
+    bool keyPressedEditing (const juce::KeyPress&);
 
     // ---- Phase C-2：四态（Pro-MB Overlay{NORMAL,ACTIVE,DOWN,ROTATE}）----
     void mouseEnter (const juce::MouseEvent&) override;
