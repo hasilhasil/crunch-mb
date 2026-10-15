@@ -47,6 +47,8 @@ target_sources(CrunchMB PRIVATE
     src/dsp/BandCompressor.cpp
     src/dsp/CrossoverBank.cpp
     src/dsp/LinearPhaseCrossover.cpp
+    src/dsp/LoudnessMeter.cpp
+    src/dsp/LoudnessMeter.h
     src/dsp/MultibandDSP.cpp
     src/dsp/SideChainFilter.h
     src/dsp/SpectrumAnalyzer.cpp
@@ -104,6 +106,8 @@ target_sources(CrunchMBTests PRIVATE
     src/dsp/BandCompressor.cpp
     src/dsp/CrossoverBank.cpp
     src/dsp/LinearPhaseCrossover.cpp
+    src/dsp/LoudnessMeter.cpp
+    src/dsp/LoudnessMeter.h
     src/dsp/MultibandDSP.cpp
     src/dsp/SideChainFilter.h
     src/dsp/SpectrumAnalyzer.cpp

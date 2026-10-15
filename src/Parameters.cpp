@@ -87,6 +87,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     // 100% = 纯处理声；<100% = 与干声混合（减弱效果）；>100% = 并行压缩提响。
     addFloat  (pid (ID::globalMix), "Mix", { 0.0f, 200.0f, 1.0f }, 100.0f, "%", fmtPct);
 
+    // Auto-Gain（Future MB 对标，TECH_SPEC §5.1 / RESEARCH_UI P3）。
+    // **默认关闭**：关闭时插件行为与本次改动之前完全一致；
+    // 打开后测处理前后的 ITU-R BS.1770 K 加权响度并补偿，
+    // 使"调参不改变输出音量"（Future MB 的亮点功能）。
+    addBool   (pid (ID::autoGain), "Auto-Gain", false);
+
     // ================= 每频段参数（13 × 4 = 52，TECH_SPEC §5.2） =================
     for (int i = 0; i < kNumBands; ++i)
     {

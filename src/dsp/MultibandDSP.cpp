@@ -44,6 +44,16 @@ void MultibandDSP::prepare (double sampleRate, int maxBlockSize, int numChannels
     mixSmoothCoeff_ = (float) std::exp (-1.0 / (0.010 * procRate_));   // Mix 10ms
     gateCoeff_      = (float) std::exp (-1.0 / (0.005 * procRate_));   // 门 5ms
 
+    // Auto-Gain：响度窗 400ms；补偿平滑 300ms（够快能跟上调参，又不至于
+    // 让增益本身成为可闻的抽动感）
+    loudPre_.prepare (procRate_);
+    loudPost_.prepare (procRate_);
+    loudPre_.setWindowSec (0.400);
+    loudPost_.setWindowSec (0.400);
+    autoGainCoeff_  = (float) std::exp (-1.0 / (0.300 * procRate_));
+    autoGainDb_     = 0.0f;
+    autoGainMaxDb_  = 24.0f;
+
     // 过采样器（上/下采样 staging 缓冲按 1× 块长；侧链 ZOH 缓冲按 procBlock_）
     osIn_.setSize (2, maxBlock_, false, false, false);
     scHold_.setSize (2, procBlock_, false, false, false);
@@ -84,6 +94,10 @@ void MultibandDSP::reset()
         f.reset();
     if (oversampler_ != nullptr)
         oversampler_->reset();
+
+    loudPre_.reset();
+    loudPost_.reset();
+    autoGainDb_ = 0.0f;
 
     for (int b = 0; b < Param::kNumBands; ++b)
     {
@@ -208,6 +222,18 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
     // Phase：全局 Mix 0-200% → 线性比（100% = 1.0）
     globalMixLin_ = juce::jlimit (0.0f, 2.0f, p.globalMixPct * 0.01f);
 
+    // ---- Auto-Gain（Future MB 对标，默认关闭）----
+    // 关闭 → 完全不参与处理，且把补偿量平滑归零（避免"开过再关"留下残余增益）。
+    if (! p.autoGain)
+    {
+        autoGainEnabled_ = false;
+        autoGainDb_ = 0.0f;
+    }
+    else
+    {
+        autoGainEnabled_ = true;
+    }
+
     // lookahead 以**墙钟时间**为准：过采样下换算成 procRate_ 下的样本数
     laSamples_ = (int) std::lround (p.lookaheadMs * 0.001 * procRate_);
     laSamples_ = juce::jlimit (0, laMax_, laSamples_);
@@ -316,6 +342,18 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         // 1) 输入增益
         for (int ch = 0; ch < chans; ++ch)
             juce::FloatVectorOperations::multiply (chPtr[ch], inGain_, n);
+
+        // 1b) Auto-Gain：测**干声**响度（输入增益后、分频前 = 用户听到的参考）
+        if (autoGainEnabled_)
+        {
+            for (int ch = 0; ch < chans; ++ch)
+                for (int i = 0; i < n; ++i)
+                {
+                    float s = chPtr[ch][i];
+                    loudPre_.processSample (s);
+                }
+            loudPre_.endBlock (n * chans);
+        }
 
         // 2) 主分频
         const float* inC[2]  = { chPtr[0], chans > 1 ? chPtr[1] : nullptr };
@@ -475,6 +513,36 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
                            : (wet + dryRef * (globalMixLin_ - 1.0f));
                 }
             }
+        }
+
+        // 5b) Auto-Gain：测**湿声**响度并施加补偿（全局 Mix 之后、输出增益之前）
+        if (autoGainEnabled_)
+        {
+            for (int ch = 0; ch < chans; ++ch)
+                for (int i = 0; i < n; ++i)
+                {
+                    float s = outStore_[(size_t) ch][(size_t) i];
+                    loudPost_.processSample (s);
+                }
+            loudPost_.endBlock (n * chans);
+
+            // 补偿 = 干声响度 − 湿声响度（使输出响度回到输入水平）
+            const float targetDb = loudPre_.getLoudnessDb();
+            const float wetDb    = loudPost_.getLoudnessDb();
+            float want = 0.0f;
+            if (targetDb > -90.0f && wetDb > -90.0f)
+                want = juce::jlimit (-autoGainMaxDb_, autoGainMaxDb_, targetDb - wetDb);
+
+            // dB 域平滑（300ms）。
+            // ⚠️ 系数必须按**本块样本数**推进：autoGainCoeff_ 是每样本系数，
+            //    而这里每个 processChain 迭代只调一次（块级推进）。
+            //    直接用每样本系数等于把 300ms 拖成 300ms×procBlock_（实测：
+            //    220 块只建立 0.06 dB，几乎无补偿）。
+            const float blkCoeff = std::pow (autoGainCoeff_, (float) n);
+            autoGainDb_ += (want - autoGainDb_) * (1.0f - blkCoeff);
+            const float g = juce::Decibels::decibelsToGain (autoGainDb_);
+            for (int ch = 0; ch < chans; ++ch)
+                juce::FloatVectorOperations::multiply (outStore_[(size_t) ch].data(), g, n);
         }
 
         // 6) 输出增益 + 写回

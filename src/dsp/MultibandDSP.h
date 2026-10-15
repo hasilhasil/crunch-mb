@@ -10,6 +10,7 @@
 
 #include "BandCompressor.h"
 #include "CrossoverBank.h"
+#include "LoudnessMeter.h"
 #include "SideChainFilter.h"
 #include "../Parameters.h"
 
@@ -68,6 +69,7 @@ public:
         float outputGainDb = 0.0f;
         float globalMixPct = 100.0f;   // Phase：全局 Mix 0-200%（Pro-MB 对标）
         int   lookaheadMs  = 0;                                   // 0 / 1 / 3
+        bool  autoGain     = false;   // Auto-Gain 开关（Future MB 对标；默认关）
         std::array<BandParams, Param::kNumBands> bands;
     };
 
@@ -121,6 +123,16 @@ private:
     std::array<std::vector<float>, 2> outStore_;
     std::array<std::array<std::vector<float>, 2>, Param::kNumBands> gStore_;   // 2026-10-14：L/R 独立增益
     std::array<std::vector<float>, 2> dryStore_;    // Phase：全局 Mix 的干声参考
+
+    // ---- Auto-Gain（Future MB 对标，默认关闭）----
+    // 测处理前/后的 K 加权响度，用差值补偿，使"调参不改变输出音量"。
+    // 默认关闭：autoGainEnabled_ == false 时完全不参与处理（现有行为不变）。
+    LoudnessMeter loudPre_;      // 干声（输入增益后、分频前）
+    LoudnessMeter loudPost_;     // 湿声（段求和后、全局 Mix 后）
+    bool  autoGainEnabled_ = false;
+    float autoGainDb_ = 0.0f;            // 当前补偿量（dB，平滑后）
+    float autoGainCoeff_ = 0.0f;         // 平滑系数
+    float autoGainMaxDb_ = 24.0f;        // 补偿量上限（防失控）
 
     // Lookahead：每段每通道环形延迟（容量按 3ms@maxSR 预分配，标量切换零分配）
     std::array<std::array<std::vector<float>, 2>, Param::kNumBands> laBuf_;

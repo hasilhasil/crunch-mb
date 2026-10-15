@@ -234,6 +234,8 @@ void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const 
     sp.inputGainDb  = apvts.getRawParameterValue (Param::ID::inputGain)->load();
     sp.outputGainDb = apvts.getRawParameterValue (Param::ID::outputGain)->load();
     sp.globalMixPct = apvts.getRawParameterValue (Param::ID::globalMix)->load();
+    // Auto-Gain（Future MB 对标）。Bool 参数实际值 0/1。
+    sp.autoGain = apvts.getRawParameterValue (Param::ID::autoGain)->load() >= 0.5f;
     sp.lookaheadMs  = (int) juce::roundToInt (Param::lookaheadIndexToMs (
         choiceIndex (apvts.getRawParameterValue (Param::ID::lookahead))));
 

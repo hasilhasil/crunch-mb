@@ -88,7 +88,7 @@ static void testParamSystem()
     DummyProc proc;
     juce::AudioProcessorValueTreeState apvts (proc, nullptr, "PARAMS", Param::createLayout());
 
-    check (proc.getParameters().size() == 84, "T0.1 布局参数数 = 84（2026-10-14：oversampling + 侧链滤波×3 + StereoLink + Dynamics + globalMix）",
+    check (proc.getParameters().size() == 85, "T0.1 布局参数数 = 85（2026-10-14：oversampling + 侧链滤波×3 + StereoLink + Dynamics + globalMix + autoGain）",
            "actual " + juce::String (proc.getParameters().size()));
 
     check (apvts.getParameter (Param::bandRange (2)) != nullptr
@@ -458,21 +458,21 @@ static void testLinearLatency()
 // ------------------------------------------------------------
 // 断言⑤：MultibandDSP 中性直通（ratio=1 / mix=100 / makeup=0）
 // ------------------------------------------------------------
-static MultibandDSP makeNeutral (Param::PhaseMode mode, Param::LinearQuality q, int& maxBlock,
-                                 int slopeDb = 24)
+static std::unique_ptr<MultibandDSP> makeNeutral (Param::PhaseMode mode, Param::LinearQuality q,
+                                                  int& maxBlock, int slopeDb = 24)
 {
     maxBlock = 512;
-    MultibandDSP d;
-    d.prepare (48000.0, maxBlock, 2);
+    auto d = std::make_unique<MultibandDSP>();
+    d->prepare (48000.0, maxBlock, 2);
     MultibandDSP::StructureParams sp;
     sp.mode = mode;
     sp.quality = q;
     sp.slopeDb = slopeDb;
-    d.setStructure (sp);
+    d->setStructure (sp);
     MultibandDSP::ScalarParams sc;          // 中性：ratio=1, mix=100, makeup=0
     for (int b = 0; b < 4; ++b)
         sc.bands[(size_t) b].ratio = 1.0f;
-    d.updateScalars (sc);
+    d->updateScalars (sc);
     return d;
 }
 
@@ -492,7 +492,7 @@ static void testMultibandNeutral()
         {
             std::vector<float> ref (512);
             for (int i = 0; i < 512; ++i) { ref[(size_t) i] = noise.next(); l[(size_t) i] = ref[(size_t) i]; r[(size_t) i] = ref[(size_t) i]; }
-            d.process (ch.data(), 512);
+            d->process (ch.data(), 512);
             for (int i = 0; i < 512; ++i)
                 worst = std::max (worst, std::abs ((double) l[(size_t) i] - ref[(size_t) i]));
         }
@@ -516,7 +516,7 @@ static void testMultibandNeutral()
                 for (int i = 0; i < 512; ++i)
                     l[(size_t) i] = r[(size_t) i] = 0.5f * (float) std::sin (
                         juce::MathConstants<double>::twoPi * f * (double) (phase++) / sr);
-                d.process (ch.data(), 512);
+                d->process (ch.data(), 512);
                 if (b >= 16)
                     for (int i = 0; i < 512; ++i)
                     {
@@ -535,7 +535,7 @@ static void testMultibandNeutral()
     {
         int mb = 0;
         auto d = makeNeutral (Param::PhaseMode::Linear, Param::LinearQuality::Low, mb);
-        const int lat = d.getLatencySamples();
+        const int lat = d->getLatencySamples();
         check (lat == 1536, "T6.2 Linear 延迟上报 = 1536（Low）", "lat=" + juce::String (lat));
 
         std::vector<float> l (512), r (512);
@@ -549,7 +549,7 @@ static void testMultibandNeutral()
                 refAll[(size_t) (b * 512 + i)] = v;
                 l[(size_t) i] = v; r[(size_t) i] = v;
             }
-            d.process (ch.data(), 512);
+            d->process (ch.data(), 512);
             for (int i = 0; i < 512; ++i)
                 outAll[(size_t) (b * 512 + i)] = l[(size_t) i];
         }
@@ -576,7 +576,7 @@ static void testMultibandNeutral()
                 for (int i = 0; i < 512; ++i)
                     l[(size_t) i] = r[(size_t) i] = 0.5f * (float) std::sin (
                         juce::MathConstants<double>::twoPi * f * (double) (phase++) / sr);
-                d.process (ch.data(), 512);
+                d->process (ch.data(), 512);
                 if (b >= 16)
                     for (int i = 0; i < 512; ++i)
                     {
@@ -602,10 +602,12 @@ static void testLookahead()
 
     auto makeDsp = [sr] (int lookaheadMs, float ratio)
     {
-        MultibandDSP d;
-        d.prepare (sr, 512, 2);
+        // R23：MultibandDSP 含 LoudnessMeter（内含 atomic）→ 不可拷贝，
+        // 故用 unique_ptr 返回而非按值。
+        auto d = std::make_unique<MultibandDSP>();
+        d->prepare (sr, 512, 2);
         MultibandDSP::StructureParams sp;
-        d.setStructure (sp);
+        d->setStructure (sp);
         MultibandDSP::ScalarParams sc;
         sc.lookaheadMs = lookaheadMs;
         for (int b = 0; b < 4; ++b)
@@ -615,7 +617,7 @@ static void testLookahead()
             sc.bands[(size_t) b].attackMs  = 10.0f;
             sc.bands[(size_t) b].releaseMs = 50.0f;
         }
-        d.updateScalars (sc);
+        d->updateScalars (sc);
         return d;
     };
 
@@ -624,12 +626,12 @@ static void testLookahead()
         auto d0 = makeDsp (0, 1.0f);
         auto d1 = makeDsp (1, 1.0f);
         auto d3 = makeDsp (3, 1.0f);
-        check (d0.getLatencySamples() == 0
-            && d1.getLatencySamples() == 48
-            && d3.getLatencySamples() == 144,
+        check (d0->getLatencySamples() == 0
+            && d1->getLatencySamples() == 48
+            && d3->getLatencySamples() == 144,
             "T7.1 延迟上报 = lookahead 样本数（0 / 48 / 144）",
-            juce::String (d0.getLatencySamples()) + "/" + juce::String (d1.getLatencySamples())
-            + "/" + juce::String (d3.getLatencySamples()));
+            juce::String (d0->getLatencySamples()) + "/" + juce::String (d1->getLatencySamples())
+            + "/" + juce::String (d3->getLatencySamples()));
     }
 
     // 脉冲峰位（ratio=1 中性 → 幅度 1）：1ms → 峰在 48
@@ -644,7 +646,7 @@ static void testLookahead()
             std::fill (l.begin(), l.end(), 0.0f);
             std::fill (r.begin(), r.end(), 0.0f);
             if (! fired) { l[0] = 1.0f; r[0] = 1.0f; fired = true; }
-            d.process (ch.data(), 512);
+            d->process (ch.data(), 512);
             for (int i = 0; i < 512; ++i)
                 out[(size_t) (blk * 512 + i)] = l[(size_t) i];
         }
@@ -675,7 +677,7 @@ static void testLookahead()
                         juce::MathConstants<double>::twoPi * 100.0 * (double) n / sr);
                     l[(size_t) i] = v; r[(size_t) i] = v;
                 }
-                d.process (ch.data(), 512);
+                d->process (ch.data(), 512);
                 for (int i = 0; i < 512; ++i)
                     out[(size_t) (blk * 512 + i)] = l[(size_t) i];
             }
@@ -778,10 +780,11 @@ static void testGates()
     // 场景 A/B：2.4kHz 正弦（HM 段中心），压缩活跃（ratio 4 / thr -20）
     auto makeDsp = [sr] (int soloBand, int muteBand, int deltaBand)
     {
-        MultibandDSP d;
-        d.prepare (sr, 512, 2);
+        // R23：MultibandDSP 不可拷贝（含 LoudnessMeter/atomic）→ unique_ptr 返回
+        auto d = std::make_unique<MultibandDSP>();
+        d->prepare (sr, 512, 2);
         MultibandDSP::StructureParams sp;
-        d.setStructure (sp);
+        d->setStructure (sp);
         MultibandDSP::ScalarParams sc;
         for (int b = 0; b < 4; ++b)
         {
@@ -793,7 +796,7 @@ static void testGates()
         if (soloBand  >= 0) sc.bands[(size_t) soloBand].solo  = true;
         if (muteBand  >= 0) sc.bands[(size_t) muteBand].mute  = true;
         if (deltaBand >= 0) sc.bands[(size_t) deltaBand].delta = true;
-        d.updateScalars (sc);
+        d->updateScalars (sc);
         return d;
     };
 
@@ -826,9 +829,9 @@ static void testGates()
                     sc.bands[(size_t) b].releaseMs = 50.0f;
                 }
                 sc.bands[(size_t) 2].delta = true;
-                d.updateScalars (sc);
+                d->updateScalars (sc);
             }
-            d.process (ch.data(), sub);
+            d->process (ch.data(), sub);
             for (int i = 0; i < sub; ++i)
                 out[(size_t) (s * sub + i)] = l[(size_t) i];
         }
@@ -882,10 +885,10 @@ static void testGates()
                         sc.bands[(size_t) b].releaseMs = 50.0f;
                     }
                     sc.bands[(size_t) 2].delta = true;
-                    d2.updateScalars (sc);
+                    d2->updateScalars (sc);
                 }
-                d2.process (ch2.data(), fine);
-                if (s >= 12 * 512 / fine && d2.getBandGateSmoothed (2) <= 0.37f)
+                d2->process (ch2.data(), fine);
+                if (s >= 12 * 512 / fine && d2->getBandGateSmoothed (2) <= 0.37f)
                     t63 = s * fine + fine - T;
             }
         }
@@ -918,13 +921,13 @@ static void testGates()
                 const float v = 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * 2400.0 * (double) n / sr);
                 l[(size_t) i] = v; r[(size_t) i] = v;
             }
-            d.process (ch.data(), 512);
+            d->process (ch.data(), 512);
         }
-        check (d.gatesActive()
-            && d.getBandGateSmoothed (0) < 0.01f
-            && d.getBandGateSmoothed (2) < 0.01f,
+        check (d->gatesActive()
+            && d->getBandGateSmoothed (0) < 0.01f
+            && d->getBandGateSmoothed (2) < 0.01f,
             "T9.1 优先级 Delta > Solo（非 delta 段门全闭）",
-            "g0=" + fmt (d.getBandGateSmoothed (0)) + " g2=" + fmt (d.getBandGateSmoothed (2)));
+            "g0=" + fmt (d->getBandGateSmoothed (0)) + " g2=" + fmt (d->getBandGateSmoothed (2)));
     }
 
     // 优先级：Solo(band1) + Mute(band2) → 仅 band1 输出
@@ -940,14 +943,14 @@ static void testGates()
                 const float v = 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * 2400.0 * (double) n / sr);
                 l[(size_t) i] = v; r[(size_t) i] = v;
             }
-            d.process (ch.data(), 512);
+            d->process (ch.data(), 512);
         }
-        check (d.getBandGateSmoothed (1) > 0.99f
-            && d.getBandGateSmoothed (2) < 0.01f
-            && d.getBandGateSmoothed (0) < 0.01f
-            && d.getBandGateSmoothed (3) < 0.01f,
+        check (d->getBandGateSmoothed (1) > 0.99f
+            && d->getBandGateSmoothed (2) < 0.01f
+            && d->getBandGateSmoothed (0) < 0.01f
+            && d->getBandGateSmoothed (3) < 0.01f,
             "T9.2 优先级 Solo > Mute（仅 solo 段开门）",
-            "g1=" + fmt (d.getBandGateSmoothed (1)) + " g2=" + fmt (d.getBandGateSmoothed (2)));
+            "g1=" + fmt (d->getBandGateSmoothed (1)) + " g2=" + fmt (d->getBandGateSmoothed (2)));
     }
 
     // Mute 淡出无爆音（64 样本块驱动，终态在有效窗口内验证）
@@ -977,9 +980,9 @@ static void testGates()
                     sc.bands[(size_t) b].releaseMs = 50.0f;
                 }
                 sc.bands[(size_t) 2].mute = true;
-                d.updateScalars (sc);
+                d->updateScalars (sc);
             }
-            d.process (ch.data(), sub);
+            d->process (ch.data(), sub);
             for (int i = 0; i < sub; ++i)
                 out[(size_t) (s * sub + i)] = l[(size_t) i];
         }
@@ -1385,7 +1388,7 @@ static void testParameterInventory()
     std::cout << "\n--- T0b 参数清单盘点 ---\n";
     std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
     const auto& params = proc->getParameters();
-    check ((int) params.size() == 84, "T0b.1 参数总数 = 84（2026-10-14）", juce::String (params.size()));
+    check ((int) params.size() == 85, "T0b.1 参数总数 = 85（2026-10-14 + autoGain）", juce::String (params.size()));
 
     juce::StringArray names;
     for (auto* p : params)
@@ -5399,7 +5402,7 @@ static void testBackendFacade()
     // ===== ① 参数面 =====
     {
         const auto params = api.listParams();
-        check ((int) params.size() == 84, "T52.1 listParams 覆盖全部 84 参数",
+        check ((int) params.size() == 85, "T52.1 listParams 覆盖全部 85 参数",
                juce::String ((int) params.size()));
 
         // 抽查元数据完整性：每个参数都要有 id / 范围 / 默认值
@@ -5420,7 +5423,7 @@ static void testBackendFacade()
             else if (pi.category == ParamInfo::Category::Band) ++nBand;
         }
         std::cout << "  参数类别: Global=" << nGlobal << " Band=" << nBand << std::endl;
-        check (nGlobal == 12, "T52.3 Global 参数 = 12", juce::String (nGlobal));
+        check (nGlobal == 13, "T52.3 Global 参数 = 13", juce::String (nGlobal));
         check (nBand == 72, "T52.4 Band 参数 = 72（18 × 4 段）", juce::String (nBand));
 
         // getParam / setParam 往返
@@ -5475,8 +5478,8 @@ static void testBackendFacade()
         api.setParam (Param::bandRatio (1), 7.5f);
         api.setParam (Param::ID::globalMix, 137.0f);
         const auto snap = api.getStateSnapshot();
-        check (snap.state.isValid() && snap.parameterCount == 84,
-               "T52.9 getStateSnapshot 有效（84 参数）",
+        check (snap.state.isValid() && snap.parameterCount == 85,
+               "T52.9 getStateSnapshot 有效（85 参数）",
                juce::String (snap.parameterCount));
 
         // 改掉值，再加载回快照
@@ -7895,6 +7898,112 @@ static void testExpandEndToEndAudio()
            "T74.6 两种模式输出均有限（无 NaN/爆音）", "");
 }
 
+// ------------------------------------------------------------
+// T75 Phase：Auto-Gain（Future MB 对标，RESEARCH_UI P3）
+//   默认关闭 → 与实现前行为完全一致；
+//   打开后测处理前后的 ITU-R BS.1770 K 加权响度并补偿，
+//   使"调参不改变输出音量"。
+//   按教训 31：可闻功能必须喂音频测输出，不能只查返回值。
+// ------------------------------------------------------------
+static void testAutoGain()
+{
+    std::cout << "\n--- T75 Phase Auto-Gain（ITU 1770 响度匹配）---\n";
+
+    // 测量一段音频经整条链后的 K 加权响度峰值近似（用峰值做相对比较）
+    auto measure = [] (bool autoGain, float ratio, float makeup) -> float
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+
+        for (int i = 1; i < 4; ++i)
+            mb->setParamPhysicalForTest ("band" + juce::String (i) + "Mix", 0.0f);
+        mb->setParamPhysicalForTest ("band0Threshold", -30.0f);
+        mb->setParamPhysicalForTest ("band0Ratio", ratio);
+        mb->setParamPhysicalForTest ("band0Attack", 1.0f);
+        mb->setParamPhysicalForTest ("band0Release", 20.0f);
+        mb->setParamPhysicalForTest ("band0Range", -30.0f);
+        mb->setParamPhysicalForTest ("band0Makeup", makeup);
+        mb->setParamPhysicalForTest ("globalMix", 100.0f);
+        mb->setParamPhysicalForTest ("autoGain", autoGain ? 1.0f : 0.0f);
+
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        // 喂足够长：400ms 响度窗（≈38 块）+ 300ms 补偿平滑（≈28 块），
+        // 合计约需 130 块补偿量才建立到稳态。取 220 块留余量。
+        float peak = 0.0f;
+        for (int t = 0; t < 220; ++t)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long kk = (long) (t * 512 + i);
+                const float v = 0.5f * (float) std::sin (6.283185 * 150.0 * kk / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < 512; ++i)
+                peak = juce::jmax (peak, std::abs (buf.getSample (0, i)));
+        }
+        return peak;
+    };
+
+    // ① 默认关闭：参数默认值必须是 0（现有行为不变）
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        const float def = proc->getParameters().size() > 0
+            ? 0.0f : 0.0f;   // 占位，下面用 APVTS 直接读
+        (void) def;
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        const float v = mb->apvts.getRawParameterValue (Param::ID::autoGain)->load();
+        std::cout << "  autoGain 默认值 = " << v << std::endl;
+        check (v < 0.5f, "T75.1 autoGain 默认关闭（现有行为不变）", juce::String (v));
+    }
+
+    // ② 关闭时：改 ratio/makeup 会明显改变输出（无补偿）
+    const float offLowRatio  = measure (false, 2.0f, 0.0f);
+    const float offHighRatio = measure (false, 12.0f, 0.0f);
+    std::cout << "  Auto-Gain OFF: ratio2 peak=" << offLowRatio
+              << "  ratio12 peak=" << offHighRatio << std::endl;
+    check (std::abs (offHighRatio - offLowRatio) > 0.02f,
+           "T75.2 关闭时改 ratio 明显改变输出（证明测试能察觉差异）",
+           juce::String (offLowRatio) + " vs " + juce::String (offHighRatio));
+
+    // ③ 打开时：改 ratio 的输出差异应显著小于关闭时
+    const float onLowRatio  = measure (true, 2.0f, 0.0f);
+    const float onHighRatio = measure (true, 12.0f, 0.0f);
+    std::cout << "  Auto-Gain ON:  ratio2 peak=" << onLowRatio
+              << "  ratio12 peak=" << onHighRatio << std::endl;
+    const float diffOff = std::abs (offHighRatio - offLowRatio);
+    const float diffOn  = std::abs (onHighRatio - onLowRatio);
+    std::cout << "  输出差异 OFF=" << diffOff << "  ON=" << diffOn << std::endl;
+    check (diffOn < diffOff * 0.7f,
+           "T75.3 打开后改 ratio 的输出差异显著减小（响度被补偿）",
+           juce::String (diffOn) + " vs " + juce::String (diffOff));
+
+    // ④ 打开时加 Makeup 也不应显著改变输出（这正是"调参不跳音量"）
+    const float onNoMakeup = measure (true, 6.0f, 0.0f);
+    const float onMakeup12 = measure (true, 6.0f, 12.0f);
+    std::cout << "  Auto-Gain ON: makeup0 peak=" << onNoMakeup
+              << "  makeup12 peak=" << onMakeup12 << std::endl;
+    const float diffMk = std::abs (onMakeup12 - onNoMakeup);
+    check (diffMk < 0.06f,
+           "T75.4 打开后加 12dB Makeup 输出基本不变（Future MB 亮点行为）",
+           juce::String (diffMk));
+
+    // ⑤ 输出必须有限（补偿不得失控）
+    check (std::isfinite (onLowRatio) && std::isfinite (onHighRatio)
+        && std::isfinite (onNoMakeup) && std::isfinite (onMakeup12),
+           "T75.5 打开时输出均有限（无 NaN/失控）", "");
+
+    // ⑥ 补偿量不得超上限（防正反馈爆音）
+    const float maxAllowed = 0.5f * std::pow (10.0f, 24.0f / 20.0f);
+    check (onHighRatio < maxAllowed && onMakeup12 < maxAllowed,
+           "T75.6 补偿量受 ±24dB 上限约束（不爆音）",
+           juce::String (onHighRatio) + " / " + juce::String (onMakeup12));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7976,6 +8085,7 @@ int main()
     testPopoverIndexClamp();         // T72 Phase popover 读取入口索引钳制
     testDisplayViewIndexClamp();     // T73 Phase DisplayView 访问器索引钳制
     testExpandEndToEndAudio();       // T74 Phase Expand 端到端音频效果
+    testAutoGain();                  // T75 Phase Auto-Gain 响度匹配
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -7983,6 +8093,10 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
+
+
+
 
 
 

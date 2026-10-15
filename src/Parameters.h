@@ -73,6 +73,7 @@ namespace Param
         inline constexpr const char* lookahead     = "lookahead";
         inline constexpr const char* oversampling  = "oversampling";   // 2026-10-14
         inline constexpr const char* globalMix     = "globalMix";      // Phase：全局干湿比 0-200%
+        inline constexpr const char* autoGain      = "autoGain";       // Future MB 对标：响度自动补偿（默认关）
     }
 
     // ---------- 频段参数 ID（"band" + i + PascalCase） ----------
