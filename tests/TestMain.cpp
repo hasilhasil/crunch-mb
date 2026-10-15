@@ -6999,6 +6999,110 @@ static void testFreqInputEmptyApply()
     }
 }
 
+// ------------------------------------------------------------
+// T65 Phase：自绘下拉的键盘导航（R17 修复）
+//   原缺陷：DisplayView::keyPressed 只转发给 freqInput_，下拉打开时
+//   键盘完全无响应——键盘用户无法操作这 5 个选择器。
+//   Pro-MB / Future MB 的下拉均支持 ↑/↓/Enter/Esc。
+// ------------------------------------------------------------
+static void testDropDownKeyboardNav()
+{
+    std::cout << "\n--- T65 Phase 下拉键盘导航 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    const float btnX = 920.0f - 218.0f + 43.0f;
+    const float btnY = 3.0f + 12.0f;
+
+    // ① 打开下拉，hover 初值应为 -1（无选中）
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isDropDownOpenForTest(), "T65.1 下拉可打开", "");
+    check (dv.dropDownHoverForTest() == -1, "T65.2 打开时无 hover 项",
+           juce::String (dv.dropDownHoverForTest()));
+
+    // ② 首次按 ↓ 应落到第 0 项（而非 -1 + 1 = 0 之外的怪值）
+    check (dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0)),
+           "T65.3 ↓ 键被消费", "");
+    check (dv.dropDownHoverForTest() == 0, "T65.4 首次 ↓ 落到第 0 项",
+           juce::String (dv.dropDownHoverForTest()));
+
+    // ③ 再按 ↓ → 第 1 项
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));
+    check (dv.dropDownHoverForTest() == 1, "T65.5 再次 ↓ → 第 1 项",
+           juce::String (dv.dropDownHoverForTest()));
+
+    // ④ ↑ → 回第 0 项
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::upKey, 0, 0));
+    check (dv.dropDownHoverForTest() == 0, "T65.6 ↑ → 回第 0 项",
+           juce::String (dv.dropDownHoverForTest()));
+
+    // ⑤ 从首项按 ↑ → 环绕到末项（Pro-MB 语义）
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::upKey, 0, 0));
+    check (dv.dropDownHoverForTest() == dv.dropDownCountForTest() - 1,
+           "T65.7 首项按 ↑ 环绕到末项",
+           juce::String (dv.dropDownHoverForTest()) + " / " +
+           juce::String (dv.dropDownCountForTest()));
+
+    // ⑥ 从末项按 ↓ → 环绕回首项
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));
+    check (dv.dropDownHoverForTest() == 0, "T65.8 末项按 ↓ 环绕回首项",
+           juce::String (dv.dropDownHoverForTest()));
+
+    // ⑦ End → 末项
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::endKey, 0, 0));
+    check (dv.dropDownHoverForTest() == dv.dropDownCountForTest() - 1,
+           "T65.9 End → 末项", juce::String (dv.dropDownHoverForTest()));
+
+    // ⑧ Home → 首项
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::homeKey, 0, 0));
+    check (dv.dropDownHoverForTest() == 0, "T65.10 Home → 首项",
+           juce::String (dv.dropDownHoverForTest()));
+
+    // ⑨ Enter 应用当前 hover 项并收起
+    const int chosen = dv.dropDownHoverForTest();
+    check (dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0)),
+           "T65.11 Enter 被消费", "");
+    check (! dv.isDropDownOpenForTest(), "T65.12 Enter 后下拉收起", "");
+    (void) chosen;
+
+    // ⑩ Esc 取消：不应用、只收起
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    check (dv.isDropDownOpenForTest(), "T65.13 可再次打开", "");
+    const int modeBefore = dv.getDisplayRangeModeForTest();
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::escapeKey, 0, 0));
+    check (! dv.isDropDownOpenForTest(), "T65.14 Esc 收起下拉", "");
+    check (dv.getDisplayRangeModeForTest() == modeBefore,
+           "T65.15 Esc 不改变档位（取消语义）",
+           juce::String (modeBefore) + " vs " + juce::String (dv.getDisplayRangeModeForTest()));
+
+    // ⑪ Enter 应用：移动到第 2 项后回车，档位应变 2
+    dv.mouseDownForTest (btnX, btnY);
+    dv.mouseUpForTest (btnX, btnY);
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));  // 0
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));  // 1
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::downKey, 0, 0));  // 2
+    dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+    std::cout << "  Enter 应用后档位 = " << dv.getDisplayRangeModeForTest() << std::endl;
+    check (dv.getDisplayRangeModeForTest() == 2,
+           "T65.16 Enter 应用 hover 项（档位 = 2）",
+           juce::String (dv.getDisplayRangeModeForTest()));
+
+    // ⑫ 下拉关闭时键盘不应被消费（不吞别人的键）
+    check (! dv.keyPressedForTest (juce::KeyPress ('a', 0, 0)),
+           "T65.17 下拉关闭时键盘不被消费", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7070,6 +7174,7 @@ int main()
     testStateLoadReappliesLatency(); // T62 Phase setStateInformation 重应用延迟
     testKnobWheelModifiers();        // T63 Phase 旋钮滚轮修饰键 + 输入上限
     testFreqInputEmptyApply();       // T64 Phase 频率输入框空输入 + 长度上限
+    testDropDownKeyboardNav();       // T65 Phase 下拉键盘导航
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

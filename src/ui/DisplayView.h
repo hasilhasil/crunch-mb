@@ -129,8 +129,11 @@ public:
     /** Phase 测试钩子：自绘下拉是否打开 / 矩形。 */
     bool isDropDownOpenForTest() const { return dropDownOpen_; }
     juce::Rectangle<float> dropDownRectForTest() const { return dropDownRect(); }
-    /** Phase 测试钩子：下拉项数。 */
+
     int dropDownCountForTest() const { return dropDownCount_; }
+    /** T65：下拉 hover 项 + 键盘导航测试钩子 */
+    int  dropDownHoverForTest() const { return dropDownHover_; }
+    bool keyPressedForTest (const juce::KeyPress& k) { return keyPressed (k); }
     /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
     juce::Rectangle<float> dynamicsSegRectForTest() const
     {

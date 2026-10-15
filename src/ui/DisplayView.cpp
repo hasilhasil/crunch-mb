@@ -2132,6 +2132,52 @@ bool DisplayView::keyPressed (const juce::KeyPress& key)
 {
     if (freqInput_ != nullptr && freqInput_->keyPressed (key))
         return true;
+
+    // Phase（R17 修复）：自绘下拉的键盘导航。
+    // 此前 keyPressed 只转发给 freqInput_，下拉打开时键盘完全无响应——
+    // 键盘用户（以及不便用鼠标的场景）无法操作这 5 个选择器。
+    // Pro-MB / Future MB 的下拉均支持 ↑/↓/Enter/Esc。
+    if (dropDownOpen_ && dropDownCount_ > 0)
+    {
+        const auto kc = key.getKeyCode();
+
+        if (key == juce::KeyPress::escapeKey)
+        {
+            closeDropDown();
+            return true;
+        }
+        if (key == juce::KeyPress::returnKey || key == juce::KeyPress::spaceKey)
+        {
+            const int item = (dropDownHover_ >= 0 && dropDownHover_ < dropDownCount_)
+                                 ? dropDownHover_ : 0;
+            clickDropDownItem (item);
+            return true;
+        }
+        if (kc == juce::KeyPress::upKey || kc == juce::KeyPress::downKey)
+        {
+            const int step = (kc == juce::KeyPress::downKey) ? 1 : -1;
+            int next = (dropDownHover_ < 0) ? (step > 0 ? 0 : dropDownCount_ - 1)
+                                            : dropDownHover_ + step;
+            // 环绕：从末项按 ↑ 回首项，从首项按 ↓ 到末项
+            if (next < 0) next = dropDownCount_ - 1;
+            if (next >= dropDownCount_) next = 0;
+            dropDownHover_ = next;
+            repaint();
+            return true;
+        }
+        if (kc == juce::KeyPress::homeKey)
+        {
+            dropDownHover_ = 0;
+            repaint();
+            return true;
+        }
+        if (kc == juce::KeyPress::endKey)
+        {
+            dropDownHover_ = dropDownCount_ - 1;
+            repaint();
+            return true;
+        }
+    }
     return false;
 }
 
@@ -2301,6 +2347,9 @@ void DisplayView::openDropDown (int count)
     dropDownOpen_ = true;
     dropDownCount_ = count;
     dropDownHover_ = -1;
+    // Phase（R17）：打开即夺焦，否则 keyPressed 收不到键盘事件
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
     repaint();
 }
 
@@ -2371,6 +2420,9 @@ void DisplayView::openGlobalParamDropDown (const juce::String& paramId,
     globalBarY_       = anchorRect.getY();
     globalBarAnchorX_ = anchorRect.getX();
     dropDownOpen_     = true;
+    // Phase（R17）：打开即夺焦，与 openDropDown 一致
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
     repaint();
 }
 
