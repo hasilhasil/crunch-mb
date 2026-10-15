@@ -7213,6 +7213,149 @@ static void testKnobKeyboardStep()
            "T66.21 无关键不被消费", "");
 }
 
+// ------------------------------------------------------------
+// T67 Phase：popover 内自绘滑块的键盘/滚轮步进（R19 修复）
+//   原缺陷：BandPopover 的 5 个滑轨（Ratio/Knee/Ext/Detector/Lookahead）
+//   是纯自绘的，只有 beginSliderDrag/dragSlider/endSliderDrag 鼠标拖动——
+//   键盘与滚轮完全无效。这是 R17/R18 清点清单漏掉的第三个实例。
+// ------------------------------------------------------------
+static void testPopoverSliderKeyboard()
+{
+    std::cout << "\n--- T67 Phase popover 滑块键盘/滚轮 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // 打开 band0 的 popover（点该段分区内一点，与 T36 同法）
+    dv.mouseDownForTest (230.0f, 120.0f);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    check (dv.isPopoverOpenForTest(), "T67.0 popover 可打开", "");
+    const int band = dv.getPopoverBandForTest();
+    std::cout << "  popover band = " << band << std::endl;
+
+    // 用 DisplayView 暴露的滑块操作入口（经 popover 转发）
+    // ① Ratio（k=0）：↑ 应增大
+    {
+        const double before = dv.popoverSliderValueForTest (0);
+        dv.popoverStepSliderForTest (0, 1, false);
+        const double after = dv.popoverSliderValueForTest (0);
+        std::cout << "  Ratio: " << before << " -> " << after << std::endl;
+        check (after > before + 1.0e-6, "T67.1 Ratio ↑ 增大",
+               juce::String (before) + " -> " + juce::String (after));
+    }
+
+    // ② Ratio ↓ 应减小
+    {
+        const double before = dv.popoverSliderValueForTest (0);
+        dv.popoverStepSliderForTest (0, -1, false);
+        const double after = dv.popoverSliderValueForTest (0);
+        std::cout << "  Ratio: " << before << " -> " << after << std::endl;
+        check (after < before - 1.0e-6, "T67.2 Ratio ↓ 减小",
+               juce::String (before) + " -> " + juce::String (after));
+    }
+
+    // ③ Ratio 细调（Shift）步长更小
+    {
+        dv.popoverApplySliderForTest (0, 4.0);
+        const double before = dv.popoverSliderValueForTest (0);
+        dv.popoverStepSliderForTest (0, 1, true);      // fine
+        const double after = dv.popoverSliderValueForTest (0);
+        std::cout << "  Ratio fine: " << before << " -> " << after
+                  << " (Δ=" << (after - before) << ")" << std::endl;
+        check (after > before && (after - before) < 1.0,
+               "T67.3 Ratio fine 步长小于 coarse", juce::String (after - before));
+    }
+
+    // ④ Ratio 上界钳制在 20
+    {
+        dv.popoverApplySliderForTest (0, 20.0);
+        dv.popoverStepSliderForTest (0, 1, false);
+        check (std::abs (dv.popoverSliderValueForTest (0) - 20.0) < 1.0e-6,
+               "T67.4 Ratio 上界钳制 20", juce::String (dv.popoverSliderValueForTest (0)));
+        dv.popoverApplySliderForTest (0, 1.0);
+        dv.popoverStepSliderForTest (0, -1, false);
+        check (std::abs (dv.popoverSliderValueForTest (0) - 1.0) < 1.0e-6,
+               "T67.5 Ratio 下界钳制 1", juce::String (dv.popoverSliderValueForTest (0)));
+    }
+
+    // ⑤ Knee（k=1）：↑ 增大且钳在 1.0（=48dB）
+    {
+        dv.popoverApplySliderForTest (1, 0.0);
+        dv.popoverStepSliderForTest (1, 1, false);
+        const double v = dv.popoverSliderValueForTest (1);
+        std::cout << "  Knee: 0 -> " << v << std::endl;
+        check (v > 0.0 && v <= 1.0, "T67.6 Knee ↑ 增大且 ≤ 1", juce::String (v));
+        dv.popoverApplySliderForTest (1, 1.0);
+        dv.popoverStepSliderForTest (1, 1, false);
+        check (std::abs (dv.popoverSliderValueForTest (1) - 1.0) < 1.0e-6,
+               "T67.7 Knee 上界钳制 1.0", juce::String (dv.popoverSliderValueForTest (1)));
+    }
+
+    // ⑥ Ext（k=2）：布尔翻转
+    {
+        dv.popoverApplySliderForTest (2, 0.0);
+        dv.popoverStepSliderForTest (2, 1, false);
+        const double v = dv.popoverSliderValueForTest (2);
+        std::cout << "  Ext: 0 -> " << v << std::endl;
+        check (std::abs (v - 1.0) < 1.0e-6, "T67.8 Ext 0 → 1", juce::String (v));
+        dv.popoverStepSliderForTest (2, 1, false);
+        check (std::abs (dv.popoverSliderValueForTest (2) - 0.0) < 1.0e-6,
+               "T67.9 Ext 1 → 0（再拨一次）", juce::String (dv.popoverSliderValueForTest (2)));
+    }
+
+    // ⑦ Detector（k=3）：布尔翻转
+    {
+        dv.popoverApplySliderForTest (3, 0.0);
+        dv.popoverStepSliderForTest (3, 1, false);
+        check (std::abs (dv.popoverSliderValueForTest (3) - 1.0) < 1.0e-6,
+               "T67.10 Detector 0 → 1", juce::String (dv.popoverSliderValueForTest (3)));
+    }
+
+    // ⑧ Lookahead（k=4）：三档循环 0 → 0.5 → 1
+    //    注意：k=4 是全局 Choice 参数，必须经 stepSlider 的真实写入路径，
+    //    不能直接 applySliderForTest（那只改本地副本，随后被 syncFromParams 覆盖）
+    {
+        dv.popoverStepSliderForTest (4, -1, false);   // 确保回 Off
+        dv.popoverStepSliderForTest (4, -1, false);
+        const double start = dv.popoverSliderValueForTest (4);
+        dv.popoverStepSliderForTest (4, 1, false);
+        const double a = dv.popoverSliderValueForTest (4);
+        dv.popoverStepSliderForTest (4, 1, false);
+        const double b = dv.popoverSliderValueForTest (4);
+        std::cout << "  Lookahead: " << start << " -> " << a << " -> " << b << std::endl;
+        check (std::abs (a - 0.5) < 1.0e-6, "T67.11 Lookahead 0 → 中档",
+               juce::String (a));
+        check (std::abs (b - 1.0) < 1.0e-6, "T67.12 Lookahead 中 → 高档",
+               juce::String (b));
+        dv.popoverStepSliderForTest (4, 1, false);
+        check (std::abs (dv.popoverSliderValueForTest (4) - 1.0) < 1.0e-6,
+               "T67.13 Lookahead 高档再 ↑ 不动（不越界）",
+               juce::String (dv.popoverSliderValueForTest (4)));
+        dv.popoverStepSliderForTest (4, -1, false);
+        check (std::abs (dv.popoverSliderValueForTest (4) - 0.5) < 1.0e-6,
+               "T67.14 Lookahead ↓ 回中档", juce::String (dv.popoverSliderValueForTest (4)));
+    }
+
+    // ⑨ 细调对分档/布尔无效（fine = false 才翻）
+    {
+        dv.popoverApplySliderForTest (2, 0.0);
+        check (! dv.popoverStepSliderForTest (2, 1, true),
+               "T67.15 fine 对布尔滑块无效（返回 false）", "");
+        check (std::abs (dv.popoverSliderValueForTest (2) - 0.0) < 1.0e-6,
+               "T67.16 fine 不改变布尔滑块值", juce::String (dv.popoverSliderValueForTest (2)));
+    }
+
+    // ⑩ 非法索引返回 false
+    check (! dv.popoverStepSliderForTest (9, 1, false), "T67.17 非法滑块索引返回 false", "");
+    check (! dv.popoverStepSliderForTest (-1, 1, false), "T67.18 负索引返回 false", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7286,6 +7429,7 @@ int main()
     testFreqInputEmptyApply();       // T64 Phase 频率输入框空输入 + 长度上限
     testDropDownKeyboardNav();       // T65 Phase 下拉键盘导航
     testKnobKeyboardStep();          // T66 Phase 旋钮常态键盘步进
+    testPopoverSliderKeyboard();     // T67 Phase popover 滑块键盘/滚轮
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

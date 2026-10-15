@@ -84,6 +84,13 @@ public:
     void beginSliderDrag (int k, float mouseX);
     void dragSlider (int k, float mouseX);
     void endSliderDrag();
+    /**
+     * Phase（R19）：滑块键盘/滚轮步进。
+     *   k = 0 Ratio(1..20) / 1 Knee(0..48dB) / 2 Ext / 3 Detector / 4 Lookahead(三档)
+     *   notches > 0 增、< 0 减；fine = Shift 细调
+     * 返回 true 表示该滑块消费了这次输入。
+     */
+    bool stepSlider (int k, int notches, bool fine);
     int  sliderDragIndex() const noexcept { return sliderDrag_; }
 
     /** 光标闪烁推进。 */
@@ -104,6 +111,9 @@ public:
     juce::Rectangle<float> popoverRectForTest() const { return popoverRect(); }
     /** 测试钩子：直接施加一次滑杆值（applySlider 为 private）。 */
     void applySliderForTest (int k, double v) { applySlider (k, v); }
+    /** R19：滑块键盘/滚轮步进测试钩子 */
+    bool   stepSliderForTest (int k, int notches, bool fine) { return stepSlider (k, notches, fine); }
+    double sliderValueForTest (int k) const { return sliders_[(size_t) juce::jlimit (0, 4, k)]; }
     /** 测试钩子：直接施加一次旋钮值（applyPopoverKnob 为 private）。 */
     void applyKnobForTest (int k, double v) { applyPopoverKnob (k, v); }
     /** 测试钩子：旋钮矩形（T40 用）。 */

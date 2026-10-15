@@ -134,6 +134,19 @@ public:
     /** T65：下拉 hover 项 + 键盘导航测试钩子 */
     int  dropDownHoverForTest() const { return dropDownHover_; }
     bool keyPressedForTest (const juce::KeyPress& k) { return keyPressed (k); }
+    /** R19：popover 滑块键盘/滚轮步进测试钩子（经 popover 转发） */
+    bool   popoverStepSliderForTest (int k, int notches, bool fine)
+    {
+        return bandPopover_ != nullptr ? bandPopover_->stepSliderForTest (k, notches, fine) : false;
+    }
+    double popoverSliderValueForTest (int k) const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->sliderValueForTest (k) : 0.0;
+    }
+    void   popoverApplySliderForTest (int k, double v)
+    {
+        if (bandPopover_ != nullptr) bandPopover_->applySliderForTest (k, v);
+    }
     /** Phase C-6 测试钩子：Dynamics 分段按钮矩形。 */
     juce::Rectangle<float> dynamicsSegRectForTest() const
     {
@@ -544,6 +557,8 @@ private:
     /** 全局选择器下拉的锚点（global bar 内被点项的位置）。 */
     float globalBarY_ = 0.0f;
     float globalBarAnchorX_ = 0.0f;
+    /** R19：popover 内自绘滑轨的键盘焦点（-1 = 无）。 */
+    int sliderFocus_ = -1;
     /** global bar 内四个全局 Choice 选择器的矩形与参数 id（绘制/命中共用）。 */
     juce::Array<juce::Rectangle<float>> globalSelectorRects_;
     juce::StringArray globalSelectorIds_;

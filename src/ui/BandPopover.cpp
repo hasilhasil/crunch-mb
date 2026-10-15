@@ -207,15 +207,15 @@ void BandPopover::clickExpertRow (ExpertRow row)
             // Off → 1ms → 3ms 循环（lookahead 是全局参数，k=4 只显示不在此写；
             // 这里显式循环全局 lookahead 参数）
             {
-                // ⚠️ lookahead 是 Choice 参数，getParamFast 返回的实际值**就是选项索引**
-                //    （0/1/2），不是 normalized（0/0.5/1）。迁移前这里是
-                //    `getParamNorm(...) * 2.0f` 把 normalized 转索引；迁移后
-                //    getParamNorm 已改为返回实际值，再 ×2 会得到 0/2/4 ——
-                //    从 3ms 点一下会跳过 1ms 直接回 Off（T40.18 只测了 Off→1ms 没抓到）。
-                const int cur = (int) juce::roundToInt (getParamNorm ("lookahead"));
+                // ⚠️ lookahead 是 Choice 参数，实际值**就是选项索引**（0/1/2）。
+                //   这里必须用 getParamPhysical（实际值语义）而不是
+                //   getParamNorm（normalized）——R19 把 getParamNorm 改成真正的
+                //   归一化后，若继续用它会读到 0/0.5/1，roundToInt 得 0/0/1，
+                //   循环立刻错乱（T55.4 实测回归）。
+                const int cur = (int) juce::roundToInt (getParamPhysical ("lookahead"));
                 const int next = (cur + 1) % 3;
                 setParamNorm ("lookahead", next * 0.5f);   // 写入侧仍是 normalized
-                sliders_[4] = next;
+                sliders_[4] = next * 0.5f;
             }
             break;
         case ExpertRow::Filtering:
@@ -379,6 +379,61 @@ void BandPopover::endSliderDrag()
     sliderDrag_ = -1;
 }
 
+bool BandPopover::stepSlider (int k, int notches, bool fine)
+{
+    // Phase（R19 修复）：滑块此前只有鼠标拖动，键盘与滚轮完全无效——
+    // 这是 R17/R18 清点清单漏掉的第三个实例（Popup 里的 5 个自绘滑块）。
+    // Pro-MB / Future MB 的滑轨控件均可用方向键与滚轮调整。
+    if (k < 0 || k > 4)
+        return false;
+
+    // 步长：连续值用 1/20 量程（fine 用 1/100）；分档值用整档
+    const double coarse = fine ? 0.01 : 0.05;
+    const int steps = fine ? 1 : notches;
+    const double delta = coarse * steps;
+
+    if (k == 0)
+    {
+        // Ratio：1..20（线性）
+        const double cur = sliders_[0];
+        const double next = juce::jlimit (1.0, 20.0, cur + delta * 19.0);
+        if (std::abs (next - cur) < 1.0e-9) return false;
+        applySlider (0, next);
+        return true;
+    }
+    if (k == 1)
+    {
+        // Knee：0..48 dB（归一化存储）
+        const double cur = sliders_[1];
+        const double next = juce::jlimit (0.0, 1.0, cur + delta);
+        if (std::abs (next - cur) < 1.0e-9) return false;
+        applySlider (1, next);
+        return true;
+    }
+    if (k == 2 || k == 3)
+    {
+        // Ext / Detector：布尔开关（一次 notches 翻一个；fine 不动）
+        if (fine) return false;
+        applySlider (k, sliders_[(size_t) k] > 0.5 ? 0.0 : 1.0);
+        return true;
+    }
+    // k == 4：Lookahead 三档（0=Off, 0.5=1ms, 1=3ms）。
+    // ⚠️ applySlider 对 k=4 不写参数（全局参数另走 clickExpertRow），
+    //    所以这里必须显式写，否则 syncFromParams() 会把 sliders_[4]
+    //    覆盖回实际参数值，步进看起来"无效"。
+    {
+        const double cur = sliders_[4];
+        double next;
+        if (notches > 0)      next = (cur < 0.25) ? 0.5 : 1.0;
+        else if (notches < 0) next = (cur > 0.75) ? 0.5 : 0.0;
+        else                  next = cur;
+        if (std::abs (next - cur) < 1.0e-9) return false;
+        setParamNorm ("lookahead", (float) next);      // 0/0.5/1 → 索引 0/1/2
+        sliders_[4] = next;
+        return true;
+    }
+}
+
 void BandPopover::applySlider (int k, double v)
 {
     sliders_[(size_t) juce::jlimit (0, 4, k)] = v;
@@ -415,12 +470,12 @@ void BandPopover::syncFromParams()
             knobs_[(size_t) k]->setValue (values_[(size_t) k], false);
 
     sliders_[0] = getParamPhysical (Param::bandRatio (b));
-    sliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");
-    sliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");
-    sliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");
-    // ⚠️ lookahead 是 Choice：getParamNorm 返回的实际值已是索引 0..2，
-    //    不能再 ×2（同 clickExpertRow 里的 Lookahead 分支）。
-    sliders_[4] = getParamNorm ("lookahead");
+    sliders_[1] = getParamNorm ("band" + juce::String (b) + "Knee");        // 0..1
+    sliders_[2] = getParamNorm ("band" + juce::String (b) + "Ext");         // 0..1
+    sliders_[3] = getParamNorm ("band" + juce::String (b) + "Detector");    // 0..1
+    // ⚠️ lookahead 是 Choice：存**归一化** 0/0.5/1（与 stepSlider 的三档一致）。
+    //    实际值是索引 0..2，用 getParamPhysical 读后换算。
+    sliders_[4] = juce::jlimit (0.0f, 1.0f, getParamPhysical ("lookahead") * 0.5f);
     dynamicsExpand_ = sliders_[3] >= 0.0f && getParamNorm ("band" + juce::String (b) + "Dynamics") > 0.5f;
 }
 
@@ -701,7 +756,18 @@ void BandPopover::resized()
 // 所以"按 normalized 用"的调用点必须自己转，不能假设两者等价。
 float BandPopover::getParamNorm (const juce::String& id) const
 {
-    return proc_.getBackend().getParamFast (id);
+    // Phase（R19 修复）：此前这里用 getParamFast()——它返回**实际值**，
+    // 不是 normalized（见 §8.2 R7/R9 的同类错误：getRawParameterValue 的名字
+    // 是个陷阱，getParamFast 同样）。后果：sliders_[1]（Knee）存 0..1 的
+    // 归一化值，读回来却变成 0..48——滑块的视觉位置与实际 Knee 值长期不一致，
+    // 而 applySlider 总是紧跟 syncFromParams()，所以每次拖动后滑块都会"跳"。
+    // 现在用真实归一化：physical → normalized 换算。
+    const float phys = proc_.getBackend().getParamFast (id);
+    const float lo = paramRangeMinOf (id);
+    const float hi = paramRangeMaxOf (id);
+    if (hi <= lo)
+        return 0.0f;
+    return juce::jlimit (0.0f, 1.0f, (phys - lo) / (hi - lo));
 }
 
 float BandPopover::paramRangeMinOf (const juce::String& id) const

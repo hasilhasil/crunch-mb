@@ -2178,6 +2178,30 @@ bool DisplayView::keyPressed (const juce::KeyPress& key)
             return true;
         }
     }
+    // Phase（R19）：popover 内自绘滑轨的键盘步进（↑/↓/←/→，Shift = 细调）。
+    // 此前这些滑块只有鼠标拖动，键盘完全无效——R17/R18 清点漏掉的第三例。
+    if (bandPopover_ != nullptr && bandPopover_->isOpen())
+    {
+        int sk = -1;
+        const bool hoverOnSlider = bandPopover_->hitTestSlider (lastMousePos_, sk);
+        if (! hoverOnSlider)
+            sk = sliderFocus_;                 // 无 hover 时用上次聚焦的滑块
+        if (sk >= 0)
+        {
+            const auto kc = key.getKeyCode();
+            if (kc == juce::KeyPress::upKey || kc == juce::KeyPress::rightKey)
+            {
+                if (bandPopover_->stepSlider (sk, 1, key.getModifiers().isShiftDown()))
+                { sliderFocus_ = sk; repaint(); return true; }
+            }
+            if (kc == juce::KeyPress::downKey || kc == juce::KeyPress::leftKey)
+            {
+                if (bandPopover_->stepSlider (sk, -1, key.getModifiers().isShiftDown()))
+                { sliderFocus_ = sk; repaint(); return true; }
+            }
+        }
+    }
+
     return false;
 }
 
@@ -2514,6 +2538,22 @@ void DisplayView::openDisplayRangeMenu()
 void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
     ensureTimerRunning();      // Phase E-2
+
+    // Phase（R19）：popover 打开且指针在其中 → 滚轮归滑轨控件，
+    // 不再去改频段宽度（否则在 Ratio/Knee 上滚轮会突然改变分频）。
+    if (bandPopover_ != nullptr && bandPopover_->isOpen()
+        && bandPopover_->popoverRectForTest().contains (e.position))
+    {
+        int sk = -1;
+        if (bandPopover_->hitTestSlider (e.position, sk))
+        {
+            const int notches = (wheel.deltaY > 0.0f) ? 1 : -1;
+            const bool fine = e.mods.isShiftDown();
+            if (bandPopover_->stepSlider (sk, notches, fine))
+                return;
+        }
+    }
+
     // #4 修订：只要在**分区内**滚轮就可改该段大小（不要求 hover 在频点上）
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
@@ -3136,7 +3176,9 @@ void DisplayView::applyOutputSettings()
 void DisplayView::openAnalyzerMenu()
 {
     // Phase D：已改为自绘 AnalyzerPanel（悬停打开 / 点击 sticky）。
-    // 这个函数保留给测试钩子与键盘路径用：等价于"点击按钮"。
+    // 这个函数保留给测试钩子用：等价于"点击按钮"。
+    // （曾注释说"留给键盘路径用"，但当时并没有键盘路径调用它——
+    //   见 §8.2 教训 18：注释里的错误论断比没有注释更危险。）
     if (analyzerPanel_ != nullptr)
     {
         analyzerPanel_->clickButton();
