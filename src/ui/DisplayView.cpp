@@ -778,6 +778,24 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
                 juce::Rectangle<float> (sx (26.0f), sy (6.0f), sx (160.0f), sy (18.0f)),
                 juce::Justification::centredLeft);
 
+    // Phase（R25）：总开关（enabled）——插件级 bypass。
+    // ⚠️ 与底栏 BYPASS 胶囊**不是同一个东西**，命名与视觉都要区分：
+    //   · 本控件 = enabled：整条链旁通，直通**原始输入**（不含 Input Gain）
+    //   · 底栏 BYPASS = 四段 Mix=0 宏：段级旁通，Input/Output Gain 仍生效
+    // 放顶栏（层级高于底栏一切控件），用电源圆符号 + "POWER" 文字。
+    // Pro-MB / Future MB 的总开关同样是顶栏的电源式按钮。
+    powerBtnRect_ = juce::Rectangle<float> (sx (196.0f), sy (3.0f), sx (78.0f), sy (24.0f));
+    {
+        const bool on = isPluginEnabled();
+        g.setColour (on ? pal_.track : pal_.accent);       // 关时用 accent 强调（异常态）
+        g.fillRoundedRectangle (powerBtnRect_, sx (12.0f));
+        g.setColour (on ? pal_.dim : juce::Colours::white.withAlpha (0.92f));
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+        // U+23FC POWER SYMBOL（电源圆），与文字连排
+        g.drawText (juce::String::fromUTF8 ("\xE2\x8F\xBF") + juce::String (on ? " ON" : " OFF"),
+                    powerBtnRect_, juce::Justification::centred);
+    }
+
     // CURVE 开关 + ⚙（Phase 4.4/5 接交互）
     auto curveBtn = juce::Rectangle<float> (W - sx (124.0f), sy (3.0f), sx (86.0f), sy (24.0f));
     g.setColour (pal_.track);
@@ -814,6 +832,21 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     g.setColour (pal_.text);
     g.setFont (MBTheme::font (MBTheme::regular(), 12.0f));
     g.drawText (juce::String::fromUTF8 ("\xE2\x9A\x99"), gearBtn, juce::Justification::centred);
+
+    // Phase（R25）：总开关关闭时，在顶栏中部显示一条明确提示。
+    // 只靠 POWER 胶囊变色不够——用户可能没注意到那个小胶囊，
+    // 却会发现"调什么都没反应"。这里给出文字说明原因。
+    if (! isPluginEnabled())
+    {
+        g.setColour (pal_.accent.withAlpha (0.14f));
+        g.fillRoundedRectangle (juce::Rectangle<float> (sx (292.0f), sy (5.0f),
+                                                        sx (206.0f), sy (20.0f)), sx (10.0f));
+        g.setColour (pal_.accent);
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
+        g.drawText ("PLUGIN OFF - CLICK POWER TO ENABLE",
+                    juce::Rectangle<float> (sx (292.0f), sy (5.0f), sx (206.0f), sy (20.0f)),
+                    juce::Justification::centred);
+    }
 }
 
 void DisplayView::drawGlobalBar (juce::Graphics& g)
@@ -1931,6 +1964,32 @@ bool DisplayView::hitTestGlobalBypass (juce::Point<float> p) const
     return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 }
 
+bool DisplayView::isPluginEnabled() const
+{
+    // Phase（R25）：插件总开关（enabled）。Bool 参数实际值 0/1。
+    // 与 isAllBypassed()（四段 Mix=0 宏）是两回事，见 powerBtnRect_ 处注释。
+    return proc_.getBackend().getParamFast (Param::ID::enabled) >= 0.5f;
+}
+
+bool DisplayView::hitTestPowerButton (juce::Point<float> p) const
+{
+    // Phase（R25）：顶栏 POWER 胶囊（sx196..sx274，y = 3..27）。
+    // ⚠️ 不能依赖 powerBtnRect_——那个成员在 drawTopStrip() 里赋值，
+    //    而悬停命中发生在任何绘制之前（首次悬停时矩形还是空的）。
+    //    这与 hitTestOutputButton 当年失败的原因相同（T44.2）。
+    const float x0 = sx (196.0f), x1 = sx (274.0f);
+    const float y0 = sy (3.0f),  y1 = sy (27.0f);
+    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+}
+
+void DisplayView::togglePluginEnabled()
+{
+    // Phase（R25）：切换总开关。直接写参数，DSP 侧 readScalars 每块读
+    // （实际是 processBlock 开头读），所以下一块立即生效。
+    setParamPhysical (Param::ID::enabled, isPluginEnabled() ? 0.0f : 1.0f);
+    repaint();
+}
+
 bool DisplayView::hitTestOutputButton (juce::Point<float> p) const
 {
     // Phase D-4：OUT 按钮（W−196..W−118，y = H−32+5，高 22），与 drawGlobalBar 一致。
@@ -2613,6 +2672,15 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     const auto p = e.position;
+
+    // -1) Phase（R25）：顶栏 POWER 胶囊（插件总开关 enabled）。
+    //     放在最前面：它是最高层级的控件，任何时候点击都应立即响应，
+    //     即使 Popover/抽屉/面板都开着（关掉后那些也就没意义了）。
+    if (hitTestPowerButton (p))
+    {
+        togglePluginEnabled();
+        return;
+    }
 
     // 0) Phase 5.3：Popover 打开时，点 ✕ → 收起
     if (bandPopover_ != nullptr && bandPopover_->isOpen() && bandPopover_->hitTestClose (p))

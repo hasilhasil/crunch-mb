@@ -304,6 +304,13 @@ public:
         return (i >= 0 && i < globalSelectorRects_.size())
                    ? globalSelectorRects_[i] : juce::Rectangle<float>();
     }
+    /** T78 测试钩子：插件总开关（enabled）当前状态。 */
+    bool isPluginEnabledForTest() const { return isPluginEnabled(); }
+    /** T78 测试钩子：POWER 胶囊矩形（与 hitTestPowerButton 同一几何）。 */
+    juce::Rectangle<float> powerButtonRectForTest() const
+    {
+        return juce::Rectangle<float> (sx (196.0f), sy (3.0f), sx (78.0f), sy (24.0f));
+    }
     /** T76 测试钩子：等价于点击 OUT 按钮（含"打开前从参数同步副本"）。 */
     void openOutputPanelForTest()
     {
@@ -707,12 +714,20 @@ private:
     std::unique_ptr<BandPopover>  bandPopover_;
     juce::Point<float> lastMousePos_ { -1.0f, -1.0f };
     juce::Rectangle<float> displayRangeBtn_;
+    /** Phase（R25）：顶栏 POWER 胶囊矩形（绘制用；命中走 hitTestPowerButton 现算）。 */
+    juce::Rectangle<float> powerBtnRect_;
 
     bool  isAllBypassed() const;
     juce::Rectangle<float> midiBtnRect_;
     /** Phase D-7：MIDI Learn 按钮命中（现算，不依赖 paint 副作用）。 */
     bool hitTestMidiButton (juce::Point<float> p) const;
     bool hitTestGlobalBypass (juce::Point<float> p) const;
+    /** Phase（R25）：插件总开关（enabled）。与 isAllBypassed() 是两回事。 */
+    bool isPluginEnabled() const;
+    /** Phase（R25）：顶栏 POWER 胶囊命中（现算，不依赖 paint 副作用）。 */
+    bool hitTestPowerButton (juce::Point<float> p) const;
+    /** Phase（R25）：切换总开关（写 enabled 参数）。 */
+    void togglePluginEnabled();
     /** Phase D-4：底栏 OUT 按钮（可点，悬停打开 Output 面板）。 */
     bool hitTestOutputButton (juce::Point<float> p) const;
     bool hitTestDisplayRange (juce::Point<float> p) const;

@@ -8198,6 +8198,106 @@ static void testInputGainAndOversamplingUi()
     }
 }
 
+// ------------------------------------------------------------
+// T78 Phase：插件总开关 enabled 的 UI 暴露（R25）
+//   R24 核对的三个"鼠标用户碰不到"参数里最后一个。
+//   ⚠️ 语义必须与底栏 BYPASS 胶囊区分：
+//     · 本控件 = enabled：整条链旁通，直通**原始输入**（不含 Input Gain）
+//     · 底栏 BYPASS = 四段 Mix=0 宏：段级旁通，Input/Output Gain 仍生效
+//   放置：顶栏（层级高于底栏一切控件），电源圆符号 + ON/OFF。
+// ------------------------------------------------------------
+static void testPluginPowerSwitch()
+{
+    std::cout << "\n--- T78 Phase 插件总开关（enabled）UI ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T78.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ① 初始应为开（enabled 默认 true）
+    check (mb->apvts.getRawParameterValue (Param::ID::enabled)->load() >= 0.5f,
+           "T78.1 enabled 默认为开",
+           juce::String (mb->apvts.getRawParameterValue (Param::ID::enabled)->load()));
+    check (dv.isPluginEnabledForTest(), "T78.2 DisplayView 反映 enabled=开", "");
+
+    // ② 点 POWER 胶囊 → 应变关
+    {
+        const float px = 920.0f * (196.0f / 920.0f) + 920.0f * (39.0f / 920.0f);  // 胶囊中心 x
+        const float py = 620.0f * (15.0f / 620.0f);                               // 胶囊中心 y
+        dv.mouseDownForTest (px, py);
+        dv.mouseUpForTest (px, py);
+        const float v = mb->apvts.getRawParameterValue (Param::ID::enabled)->load();
+        std::cout << "  点 POWER 后 enabled = " << v << std::endl;
+        check (v < 0.5f, "T78.3 点 POWER → enabled 翻转为关", juce::String (v));
+        check (! dv.isPluginEnabledForTest(), "T78.4 DisplayView 反映 enabled=关", "");
+    }
+
+    // ③ 再点 → 开
+    {
+        const float px = 920.0f * (235.0f / 920.0f);
+        const float py = 620.0f * (15.0f / 620.0f);
+        dv.mouseDownForTest (px, py);
+        dv.mouseUpForTest (px, py);
+        check (mb->apvts.getRawParameterValue (Param::ID::enabled)->load() >= 0.5f,
+               "T78.5 再点 POWER → 翻回开",
+               juce::String (mb->apvts.getRawParameterValue (Param::ID::enabled)->load()));
+    }
+
+    // ④ 从参数侧设为关，UI 应反映（无需重开任何东西）
+    mb->setParamPhysicalForTest (Param::ID::enabled, 0.0f);
+    check (! dv.isPluginEnabledForTest(),
+           "T78.6 参数侧设关 → DisplayView 立即反映", "");
+
+    // ⑤ 端到端：enabled=关时，processBlock 应直通原始输入（不经 Input Gain）
+    {
+        mb->setParamPhysicalForTest (Param::ID::inputGain, 12.0f);   // +12 dB
+        mb->setParamPhysicalForTest (Param::ID::enabled, 0.0f);      // 总开关关
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 512; ++i)
+        {
+            const float v = 0.25f * (float) std::sin (6.283185 * 200.0 * i / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        mb->processBlock (buf, midi);
+        const float peak = buf.getMagnitude (0, 512);
+        std::cout << "  enabled=关 时输出峰值 = " << peak << std::endl;
+        // 若 Input Gain 生效，峰值应 ≈ 0.25 * 10^(12/20) ≈ 0.995
+        // 直通则应 ≈ 0.25
+        check (peak < 0.4f,
+               "T78.7 enabled=关 时直通原始输入（Input Gain 不生效）",
+               juce::String (peak));
+    }
+
+    // ⑥ enabled=开 时 Input Gain 应生效（对照，证明 ⑤ 不是别的原因）
+    {
+        mb->setParamPhysicalForTest (Param::ID::enabled, 1.0f);
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 512; ++i)
+        {
+            const float v = 0.25f * (float) std::sin (6.283185 * 200.0 * i / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        mb->processBlock (buf, midi);
+        const float peak = buf.getMagnitude (0, 512);
+        std::cout << "  enabled=开 时输出峰值 = " << peak << std::endl;
+        // Input Gain +12dB 后理论峰值 ≈ 0.995，再经段压缩会降一些。
+        // 阈值取 0.6：远高于"直通 0.25"，又留足压缩余量。
+        check (peak > 0.6f,
+               "T78.8 enabled=开 时 Input Gain 生效（对照组）",
+               juce::String (peak));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -8282,6 +8382,7 @@ int main()
     testAutoGain();                  // T75 Phase Auto-Gain 响度匹配
     testAutoGainUiRow();             // T76 Phase Output 面板 Auto-Gain 行
     testInputGainAndOversamplingUi(); // T77 Phase InputGain / Oversampling UI 暴露
+    testPluginPowerSwitch();          // T78 Phase 插件总开关 enabled UI
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
