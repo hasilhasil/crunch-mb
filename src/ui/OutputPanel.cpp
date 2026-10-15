@@ -11,7 +11,7 @@ namespace
     constexpr float kDesignH = 620.0f;
     constexpr float kGlobalBarH = 32.0f;
     constexpr float kRowH = 22.0f;
-    constexpr int   kNumRows = 3;   // OutputGain / GlobalMix / GlobalBypass
+    constexpr int   kNumRows = 4;   // OutputGain / GlobalMix / GlobalBypass / AutoGain
 }
 
 juce::Rectangle<float> OutputPanel::panelRect() const
@@ -110,6 +110,8 @@ void OutputPanel::clickRow (int row)
         case 0:  outputGainDb_ += 3.0f; if (outputGainDb_ > 36.0f)  outputGainDb_ = -36.0f; break;
         case 1:  globalMixPct_ += 25.0f; if (globalMixPct_ > 200.0f) globalMixPct_ = 0.0f;   break;
         case 2:  globalBypass_ = ! globalBypass_; break;
+        // Auto-Gain（Future MB 对标）：响度自动补偿。默认关。
+        case 3:  autoGain_ = ! autoGain_; break;
         default: break;
     }
     if (onSettingsChanged)
@@ -154,6 +156,8 @@ void OutputPanel::paint (juce::Graphics& g)
         { "Output Gain", juce::String (outputGainDb_, 1) + " dB", false },
         { "Mix",         juce::String ((int) globalMixPct_) + " %",  false },
         { "Global Bypass", globalBypass_ ? "ON" : "OFF",       globalBypass_ },
+        // Auto-Gain：打开时用 accent 高亮，与 Global Bypass 同一视觉语言
+        { "Auto-Gain",  autoGain_ ? "ON" : "OFF",             autoGain_ },
     };
 
     g.setFont (MBTheme::font (MBTheme::regular(), 9.5f));

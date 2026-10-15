@@ -8004,6 +8004,78 @@ static void testAutoGain()
            juce::String (onHighRatio) + " / " + juce::String (onMakeup12));
 }
 
+// ------------------------------------------------------------
+// T76 Phase：Output 面板的 Auto-Gain 行（UI 暴露）
+//   Auto-Gain 上一轮只做了 DSP + 参数，UI 上无控件——用户无法开关。
+//   本测试验证：Output 面板第 4 行（row 3）点击后参数被翻转，
+//   且打开面板时会从参数反向同步当前值。
+// ------------------------------------------------------------
+static void testAutoGainUiRow()
+{
+    std::cout << "\n--- T76 Phase Output 面板 Auto-Gain 行 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T76.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ① 初始：参数为关
+    check (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load() < 0.5f,
+           "T76.1 autoGain 参数初始为关", "");
+
+    // ② 打开 Output 面板（点 OUT 按钮）
+    dv.openOutputPanelForTest();
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+    check (dv.isOutputOpenForTest(), "T76.2 Output 面板可打开", "");
+
+    // ③ 面板的 Auto-Gain 副本应与参数一致（打开时反向同步）
+    check (! dv.outputPanelAutoGainForTest(),
+           "T76.3 打开时面板副本与参数一致（关）", "");
+
+    // ④ 点第 4 行（row 3）→ 参数应翻转为开
+    const auto pr = dv.outputPanelRectForTest();
+    // 行几何与 OutputPanel::hitTestRow 相同：top = y + H*(7/(4*22+14))
+    const float kRowH = 22.0f, kNumRows = 4.0f;
+    const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
+    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
+    const float rowY = top + rowH * 3.0f + rowH * 0.5f;      // 第 4 行中心
+    const float rowX = pr.getCentreX();
+
+    dv.mouseDownForTest (rowX, rowY);
+    dv.mouseUpForTest (rowX, rowY);
+    std::cout << "  点击 Auto-Gain 行后参数 = "
+              << mb->apvts.getRawParameterValue (Param::ID::autoGain)->load() << std::endl;
+    check (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load() >= 0.5f,
+           "T76.4 点 Auto-Gain 行 → 参数翻转为开",
+           juce::String (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load()));
+
+    // ⑤ 再点一次 → 翻回关
+    dv.mouseDownForTest (rowX, rowY);
+    dv.mouseUpForTest (rowX, rowY);
+    check (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load() < 0.5f,
+           "T76.5 再点一次 → 翻回关",
+           juce::String (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load()));
+
+    // ⑥ 从参数侧设为开，再打开面板 → 副本应反映"开"
+    mb->setParamPhysicalForTest (Param::ID::autoGain, 1.0f);
+    dv.openOutputPanelForTest();
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+    check (dv.outputPanelAutoGainForTest(),
+           "T76.6 参数为开时打开面板，副本反映开（反向同步生效）", "");
+
+    // ⑦ 关闭面板不应改参数
+    mb->setParamPhysicalForTest (Param::ID::autoGain, 0.0f);
+    dv.clickOutsideOutputPanelForTest();
+    for (int t = 0; t < 20; ++t) dv.tickForTest();
+    check (mb->apvts.getRawParameterValue (Param::ID::autoGain)->load() < 0.5f,
+           "T76.7 关闭面板不改变参数", "");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -8086,6 +8158,7 @@ int main()
     testDisplayViewIndexClamp();     // T73 Phase DisplayView 访问器索引钳制
     testExpandEndToEndAudio();       // T74 Phase Expand 端到端音频效果
     testAutoGain();                  // T75 Phase Auto-Gain 响度匹配
+    testAutoGainUiRow();             // T76 Phase Output 面板 Auto-Gain 行
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

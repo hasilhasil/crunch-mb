@@ -19,6 +19,7 @@ class CrunchMBAudioProcessor;
 //   Output Gain   ±36 dB（现有全局参数 outputGain）
 //   Mix           0–200%（全局干湿比）
 //   Global Bypass 开关
+//   Auto-Gain     开关（Future MB 对标：ITU-R BS.1770 响度自动补偿）
 //
 // 注意：Mix 0-200% 是**新增**的全局参数（原来是每段独立 Mix 0-100%），
 // 需要动 DSP —— 见实现里的 TODO 标记。
@@ -50,15 +51,18 @@ public:
     float outputGainDb() const noexcept { return outputGainDb_; }
     float globalMixPct() const noexcept { return globalMixPct_; }
     bool  globalBypass() const noexcept { return globalBypass_; }
+    /** Auto-Gain（Future MB 对标，默认关）。 */
+    bool  autoGain() const noexcept { return autoGain_; }
 
     /** 测试钩子 */
     void  setOutputGainForTest (float v)  { outputGainDb_ = v; }
     void  setGlobalMixForTest (float v)   { globalMixPct_ = v; }
     void  setGlobalBypassForTest (bool v) { globalBypass_ = v; }
+    void  setAutoGainForTest (bool v)     { autoGain_ = v; }
 
     // ---- 命中测试 ----
     juce::Rectangle<float> panelRect() const;
-    /** rowOut: 0=OutputGain 1=GlobalMix 2=GlobalBypass */
+    /** rowOut: 0=OutputGain 1=GlobalMix 2=GlobalBypass 3=AutoGain */
     bool hitTestRow (juce::Point<float> p, int& rowOut) const;
     void clickRow (int row);
 
@@ -73,6 +77,7 @@ private:
     float outputGainDb_ = 0.0f;
     float globalMixPct_ = 100.0f;
     bool  globalBypass_ = false;
+    bool  autoGain_     = false;   // Future MB 对标：默认关
 
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
 };

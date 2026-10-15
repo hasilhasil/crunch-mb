@@ -2778,6 +2778,9 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             outputPanel_->setOutputGainForTest (getParamPhysical (Param::ID::outputGain));
             outputPanel_->setGlobalMixForTest (getParamPhysical (Param::ID::globalMix));
             outputPanel_->setGlobalBypassForTest (isAllBypassed());
+            // Auto-Gain：Bool 参数实际值 0/1
+            outputPanel_->setAutoGainForTest (
+                getParamPhysical (Param::ID::autoGain) >= 0.5f);
             outputPanel_->clickButton();
             applyOutputSettings();
         }
@@ -3152,6 +3155,10 @@ void DisplayView::applyOutputSettings()
 
     // Phase：全局 Mix 0-200% 已接线 DSP（MultibandDSP::globalMixLin_）
     setParamPhysical (Param::ID::globalMix, outputPanel_->globalMixPct());
+
+    // Auto-Gain（Future MB 对标）：直接写全局 Bool 参数。
+    // DSP 侧 readScalars 每块读它，所以这里写完立即生效。
+    setParamPhysical (Param::ID::autoGain, outputPanel_->autoGain() ? 1.0f : 0.0f);
 
     // Global Bypass：与既有全局 BYPASS 胶囊同一语义（四段 Mix=0 宏）
     const bool wantBypass = outputPanel_->globalBypass();

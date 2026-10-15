@@ -280,6 +280,31 @@ public:
         return outputPanel_ != nullptr ? outputPanel_->panelRect()
                                        : juce::Rectangle<float>();
     }
+    /** T76 测试钩子：Output 面板的 Auto-Gain 副本值。 */
+    bool outputPanelAutoGainForTest() const
+    {
+        return outputPanel_ != nullptr && outputPanel_->autoGain();
+    }
+    /** T76 测试钩子：等价于点击 OUT 按钮（含"打开前从参数同步副本"）。 */
+    void openOutputPanelForTest()
+    {
+        if (outputPanel_ == nullptr)
+            return;
+        outputPanel_->setHostBounds (getLocalBounds());
+        // 与 mouseDown 的 OUT 按钮分支一致：先同步副本再打开，避免显示过期值
+        outputPanel_->setOutputGainForTest (getParamPhysical (Param::ID::outputGain));
+        outputPanel_->setGlobalMixForTest (getParamPhysical (Param::ID::globalMix));
+        outputPanel_->setGlobalBypassForTest (isAllBypassed());
+        outputPanel_->setAutoGainForTest (getParamPhysical (Param::ID::autoGain) >= 0.5f);
+        outputPanel_->clickButton();
+        applyOutputSettings();
+    }
+    /** T76 测试钩子：点面板外（收起）。 */
+    void clickOutsideOutputPanelForTest()
+    {
+        if (outputPanel_ != nullptr)
+            outputPanel_->clickOutside();
+    }
     bool  isPopoverExpertOpenForTest() const;
     bool  hasSpectrumFrameForTest() const
     {
