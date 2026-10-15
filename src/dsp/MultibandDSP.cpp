@@ -233,6 +233,14 @@ void MultibandDSP::process (float* const* channels, int numSamples,
                             const float* const* sidechain, int sidechainChannels) noexcept
 {
     // 2026-10-14：过采样包装。整条链跑在 procRate_ 下，这里只负责上/下采样。
+    //
+    // ⚠️ 这里的 `numSamples <= maxBlock_` 守卫**不能**改成音频线程分块循环。
+    // JUCE 的 `dsp::Oversampling` 内部按 initProcessing() 时给的块大小预分配
+    // FIR 状态；本次实测：改成"按 maxBlock_ 分块、每块传子块"后，
+    // processSamplesUp 返回的块大小与本次处理的 n 不符，copy 回 channels 时
+    // 多写 (maxBlock_ − n) 个样本 → 堆损坏（0xC0000374 / 0xC0000005）。
+    // 若将来要支持"宿主给出超过 maxBlock_ 的块"，正确位置是在
+    // prepareToPlay 里把 maxBlock_ 一开始就设得足够大，而不是在音频线程分片。
     if (osFactor_ > 1 && oversampler_ != nullptr && numSamples <= maxBlock_)
     {
         const int chans = juce::jmin (numCh_, 2);

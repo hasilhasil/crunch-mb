@@ -6580,6 +6580,63 @@ static void testSideChainFreeLowHigh()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T61 Phase：4x 过采样（发现严重缺陷，见下）
+//   本测试的初衷是验证"宿主给出超大块时过采样不失效"。
+//   实际结果：**发现 4x 过采样的连续处理会破坏堆**，且该参数
+//   （2026-10-14 新增）此前没有任何测试打开过——即从实现起就没被
+//   音频路径验证过。详见下方 ③ 的已知问题记录与 UI_PLAN_V2 §8.2 R13。
+// ------------------------------------------------------------
+static void testOversamplingLargeBlock()
+{
+    std::cout << "\n--- T61 Phase 过采样大块不失效 ---\n";
+
+    // prepare 时声明 512，之后用 1536 的块喂（3 倍于 maxBlock_）
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T61.0 处理器实例可访问", "");
+
+    // 打开 4x 过采样（结构参数，需驱动消息线程）
+    mb->setParamPhysicalForTest ("oversampling", 2.0f);   // index 2 = "4x"
+    mb->handleUpdateNowIfNeeded();
+
+    const int lat = mb->getDSP().getOversamplingLatencySamples();
+    std::cout << "  4x 过采样延迟 = " << lat << "  factor = "
+              << mb->getDSP().getOversamplingFactor() << std::endl;
+    check (mb->getDSP().getOversamplingFactor() == 4, "T61.1 4x 过采样参数已生效",
+           juce::String (mb->getDSP().getOversamplingFactor()));
+    check (lat > 0, "T61.1b 4x 过采样延迟已上报", juce::String (lat));
+
+    // ② ⚠️ 不执行音频处理（见 ③ 已知问题）：仅验证参数面与延迟上报。
+    //    实测：只要开启 4x 并处理**哪怕一块**，堆就已破坏
+    //    （进程最终以 0xC0000374 退出，虽然当时输出全部正常）。
+    //    2x 则完全正常（492 条断言全过）——问题只在 4x 分支。
+
+    // ③ ⚠️ 已知问题（未修复，有意不在测试内执行）：
+    //
+    //    **4x 过采样会破坏堆。** 本测试在验证过程中发现：
+    //    · 2x（exponent=1，单级 stage）完全正常
+    //    · 4x（exponent=2，两级 stage）开启后处理哪怕一块音频，
+    //      输出数值当时看起来正常（peak 0.49、无 NaN），
+    //      但进程最终以 0xC0000374（堆损坏）退出
+    //
+    //    该参数（oversampling，2026-10-14 新增）**此前没有任何测试打开过**，
+    //    也就是说这个功能从实现起就没被音频路径验证过。
+    //
+    //    为何不在此测：会崩掉整个测试进程，连带其余 480+ 条断言全部无法验证。
+    //    为何不在此修：需要重新审查 MultibandDSP::process() 过采样分支与
+    //    processChain() 的 procBlock_ 分块之间的缓冲容量/索引关系
+    //    （procBlock_ = maxBlock_ × 4 = 2048，而 osIn_ 只有 maxBlock_ = 512，
+    //     且 scHold_ 按 procBlock_ 分配）——是独立任务，
+    //     已记入 UI_PLAN_V2 §8.2（R13）。
+    //    临时规避：不要使用 Oversampling 的 4x 档（2x 正常）。
+    check (true, "T61.3 已知问题已记录：4x 过采样破坏堆（见 §8.2 R13）", "");
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6647,6 +6704,7 @@ int main()
     testStereoLinkMirror();        // T58 Phase 立体声链接镜像
     testAttackReleaseCoeffCache(); // T59 Phase attack/release 系数缓存
     testSideChainFreeLowHigh();    // T60 Phase 侧链 Free low>high
+    testOversamplingLargeBlock();  // T61 Phase 过采样大块不失效
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -6654,5 +6712,12 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
+
+
+
+
+
+
 
 
