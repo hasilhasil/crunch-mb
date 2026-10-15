@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-15，第七十七轮 · 成品 VST3 已装机待宿主测试）
+### 进度总览（更新于 2026-10-15，第七十八轮 · R31：mono 崩溃 + 切采样率延迟不更新（已修，VST3 已重装））
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -573,7 +573,8 @@ namespace Anim {
 | **R29 ✅ 已交付**（第七十四轮，`88437d7`） | **Monitor 内部信号试听**（`50_COMPARISON.md` 交互清单第 9 条，Future MB 特色）："Monitor 旋钮可以直接听内部信号（Gate/Upward/Compressor/Spec 的增益变化）——调音利器"。我们此前没有。与 Auto-Gain 同样纪律：**默认 Output = 现有行为逐样本不变**。档位：Output（默认）/ Input（干声）/ Band 1-4（该段信号）/ Gain Reduction（衰减量本身作为可听信号）。所有源信号都在块内现成（`bandStore_`/`dryStore_`/`gStore_`），**无额外缓冲、无分配**；作用于 Output Gain **之后**（用户 output trim 语义不变）。Output 面板加第 6 行循环切换，非 Output 时像 Global Bypass 一样高亮，一眼看出在试听别的信号 | **Future MB**：Monitor 旋钮试听内部信号，调音时不用戴耳机接跳线 |
 | **S4 ✅ 已扫完，无缺陷**（第七十六轮） | **测试套件稳定性 + 产物真实加载**（两项此前从未验证过）：① **连跑 8 次测试套件**，8/8 完全一致——`exit 0`、`PASS 722 / FAIL 0`、零失败行。R20 曾是偶发崩溃（`0xC0000005`，花了整轮才定位到是测试 UB 而非线程竞争），其修复经受住了时间检验；② **CMake 只有一个 `juce_add_plugin` 目标**（`FORMATS VST3 Standalone`），确认两种格式产物齐全：`Crunch MB.exe`（Standalone）与 `Crunch MB.vst3/Contents/x86_64-win/Crunch MB.vst3`；`moduleinfo.json` 含三个标准类（Audio Module / Component Controller / Plugin Compatibility），CID 编码 `Kilo`+`CRMB`，SDK VST 3.7.12，Sub Categories `Fx|Dynamics`；③ **真实启动 Standalone**：12 秒后仍在运行、编辑器窗口标题 "Crunch MB"、收到关闭请求后干净退出——这覆盖了**插件构造、编辑器创建、消息循环**三件事，而这三件编译通过都不能证明 | — （验证空白，非缺陷。记它是为了让后人知道这一类已查过，见教训 30） |
 | **成品 VST3 已装机**（第七十七轮） | 用户要求在宿主里测试，故把 Release 构建的 VST3 装到宿主默认扫描路径。**安装位置**：`%LOCALAPPDATA%\Programs\Common\VST3\Crunch MB.vst3`（用户级 VST3 目录，Ableton / Reaper / Studio One / FL 默认都会扫，且不需要管理员权限）。**系统级** `C:\Program Files\Common Files\VST3\` 写入被拒（当前会话非 Administrator，沙箱亦拒绝），已向用户说明。装机前旧的同名安装**已备份**为 `_CrunchMB_backup_<时间戳>.vst3`（留在系统目录，确认新版无误后可删）。装机后三项校验：① 文件树完整（`moduleinfo.json` + `x86_64-win/Crunch MB.vst3` 4.56 MB）；② **SHA256 与构建产物完全一致**（`68ED5AE9…D80DE`）；③ **`LoadLibrary` 真实加载成功**（宿主加载 VST3 就是这个调用），handle 非空、`FreeLibrary` 正常返回 | — （部署动作，非缺陷） |
-> **教训（第七十七轮补充，共 42 条）**：
+| **R31 ✅ 已修复**（第七十八轮，`64163bb`） | **mono 输入第一块即崩（`0xC0000005`）** + **切采样率后延迟上报不更新**。两者都在宿主适配路径上，而**全部既有测试都写死 48kHz + 512 块 + 立体声**，从未碰过别的组合。① 崩溃根因：`processBlock` 用 `getMainBusNumInputChannels()` 推通道数，但它与 **buffer 实际通道数可能不一致**（实测 `mainInCh=2` 而 buffer 只有 1 通道），于是 `chans>1` 分支调 `buffer.getSample(1,i)` / `getWritePointer(1)` **越界**。修法：以 buffer 实况收敛 `safeCh`，并给 `MultibandDSP::process`/`processChain` 加显式 `numChannels` 参数（不再信任 prepare 时捕获的值）。② 延迟根因：`applyStructure()`/`updateLatency()` 只在 `setStateInformation` 里跑，而**宿主切工程采样率只调 `prepareToPlay`**，分频器/过采样器继续按旧采样率跑、延迟上报停留旧值。修法：`prepareToPlay` 里补一次结构重应用 + 延迟刷新。修复后实测延迟 **48k=582 → 96k=1158**（正好 2 倍） | **两类教训**：① "宿主会告诉我几个通道"不能信——**以 buffer 实况为准**。② **"什么时机重算派生状态"要按宿主的调用序列设计**，不能只按自己觉得合理的时机（参数变更）。宿主切采样率走的是 prepareToPlay，不是 setStateInformation | T84 十条断言（746/0）：五种采样率（44.1k/48k/88.2k/96k/192k）输出有限非静音且延迟随率缩放；七种块长（含非 2 幂的 333）；**mono in/out（原先崩的）**；mono 进/stereo 出；切采样率后稳定且延迟跟踪新率；切块长后稳定；release/prepare 反复 3 次正常。**VST3 已重新构建并装机**（旧版备份，SHA256 校验一致，LoadLibrary 通过） |
+> **教训（第七十八轮补充，共 43 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -615,6 +616,7 @@ namespace Anim {
 > 40. **不要对时变系统断言"逐样本复现"**。R29 续（T83.3）：我想证明"切回 Monitor=Output 与基准一致"，写了同 seed 随机序列重放 + 逐样本比对，失败在 0.46。原因不是产品缺陷——**整条链是时变系统**（过采样滤波器、lookahead 环、压缩包络、Auto-Gain 的 300ms 平滑都带状态），重放同一输入不会复现同一输出，那是线性时不变系统才有的性质。**这类断言的问题在于它逼出了一个错误结论**（看起来像"Monitor 有残留"）。正确的问法是"切回后输出是否恢复正常量级"，而不是"是否与过去某一刻相同"。**写可复现性断言前先问：这个系统是 LTI 吗？带包络/平滑/滤波状态的一律不是。**
 > 41. **"编译通过"和"能加载"是两件事，"能加载"和"测过"也是两件事**。S4：三目标全部编译成功、测试 722/0，但此前从未确认过**产物真的存在**、**插件真的起得来**。补做后拿到三样证据：① 连跑 8 次测试套件（R20 曾是偶发崩溃，这是它的复检）；② 双格式产物路径齐全 + `moduleinfo.json` 三类/SDK 版本/子类别正确；③ **真实启动 Standalone**，12 秒后仍在运行、窗口标题正确、收到关闭请求后干净退出。第③项覆盖的是**插件构造、编辑器创建、消息循环**——这三件没有一件能由编译或单元测试证明。**验收清单里"能构建"这一项要拆成"能构建 / 有产物 / 能加载 / 测过"四步**，混为一条就会漏。
 > 42. **交付给用户的东西，装到哪儿和装的是什么一样重要**。第七十七轮：用户要在宿主里测，装机时踩到三件事——① `C:\Program Files\Common Files\VST3\` **写不进去**（会话非 Administrator，且沙箱也拒），退到用户级 `%LOCALAPPDATA%\Programs\Common\VST3\`（主流宿主都扫这里，不需要提权）；② 目标位置**已有旧版同名安装**，先备份成带时间戳的 `.vst3` 再覆盖，别直接删；③ 装完必须校验——文件树、**SHA256 与构建产物比对**、以及 **`LoadLibrary` 真实加载**（宿主加载 VST3 就是这个调用）。只复制文件不校验，等于没验证"用户拿到的是不是一个能用的插件"。
+> 43. **"测试全绿"只覆盖了测试所处的环境**。R31：746 条断言全绿，但**每一条都跑在 48kHz / 512 块 / 立体声**下。第一次把测试搬出这个环境（T84），立刻抓到两个真缺陷：mono 输入**第一块就崩**（`0xC0000005`）、切采样率后**延迟上报停在旧值**。根因是两条想当然：① "宿主会告诉我几个通道"——实测 `mainInCh=2` 而 buffer 只有 1 通道，**以 buffer 实况为准才安全**；② "参数变了才需要重算派生状态"——宿主切采样率走的是 `prepareToPlay` 而非 `setStateInformation`，**重算时机要按宿主的调用序列设计**。**每个音频插件都该有一组"环境矩阵"测试：采样率 × 块长 × 通道数 × 中途切换**，否则绿灯只说明"在一种环境下能跑"。
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -817,12 +819,12 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **722**（+435） |
+| `CrunchMBTests` 断言数 | 287 | **746**（+459） |
 | 参数总数 | 62 | **86**（+24：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix、autoGain、**monitorMode**） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
-| 重构/迁移引入的真 bug | **31 个，全部修复**（R1-R27，均有测试锁定） | 见 §8.2 |
+| 重构/迁移引入的真 bug | **32 个，全部修复**（R1-R31，均有测试锁定） | 见 §8.2 |
 | 扫完无缺陷的专项审查 | — | **4 项**（S1 固定数组 / S2 DSP 声音路径 / S3 全功能组合 / S4 稳定性+产物加载） |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
@@ -869,6 +871,7 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
 
 
 
