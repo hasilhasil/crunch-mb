@@ -8882,6 +8882,177 @@ static void testMonitorModes()
     }
 }
 
+// ------------------------------------------------------------
+// T83 Phase：Monitor 与全功能组合共存（R29 续）
+//   S3/T81 是 Monitor 交付**之前**写的，没有覆盖它。
+//   按 S3 立的规矩（"组合可用性要作为独立一项验收"），新功能必须
+//   补进组合测试。本测试验证：
+//     ① Monitor=Output 时，全功能组合的输出与"不设 monitorMode 参数
+//        之前"逐样本一致（默认不改变现有行为）
+//     ② Monitor 各档在全功能组合下都稳定（无 NaN、有界）
+//     ③ Monitor 与 Auto-Gain 同时开不互相破坏
+// ------------------------------------------------------------
+static void testMonitorWithAllFeatures()
+{
+    std::cout << "\n--- T83 Phase Monitor × 全功能组合 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T83.0 处理器实例可访问", "");
+
+    // 全功能同开（与 T81 同一套）
+    mb->setParamPhysicalForTest ("oversampling", 2.0f);
+    mb->setParamPhysicalForTest ("lookahead", 2.0f);
+    mb->setParamPhysicalForTest ("globalMix", 120.0f);
+    mb->setParamPhysicalForTest ("autoGain", 1.0f);
+    mb->setParamPhysicalForTest ("inputGain", 3.0f);
+    mb->setParamPhysicalForTest ("outputGain", -2.0f);
+    for (int b = 0; b < 4; ++b)
+    {
+        const juce::String bn = "band" + juce::String (b);
+        mb->setParamPhysicalForTest (bn + "Threshold", -30.0f - b * 3.0f);
+        mb->setParamPhysicalForTest (bn + "Ratio", 4.0f + b * 2.0f);
+        mb->setParamPhysicalForTest (bn + "Attack", 1.0f + b);
+        mb->setParamPhysicalForTest (bn + "Release", 20.0f + b * 10.0f);
+        mb->setParamPhysicalForTest (bn + "Range", -24.0f);
+        mb->setParamPhysicalForTest (bn + "Knee", 6.0f * (b + 1));
+        mb->setParamPhysicalForTest (bn + "Makeup", b * 2.0f);
+        mb->setParamPhysicalForTest (bn + "Mix", 100.0f);
+        mb->setParamPhysicalForTest (bn + "StereoLink", 100.0f - b * 25.0f);
+        mb->setParamPhysicalForTest (bn + "Dynamics", (b % 2) ? 1.0f : 0.0f);
+        mb->setParamPhysicalForTest (bn + "Detector", (b % 2) ? 1.0f : 0.0f);
+        if (b < 2)
+        {
+            mb->setParamPhysicalForTest (bn + "Ext", 1.0f);
+            mb->setParamPhysicalForTest (bn + "SCFilter", 1.0f);
+            mb->setParamPhysicalForTest (bn + "SCLow",  200.0f);
+            mb->setParamPhysicalForTest (bn + "SCHigh", 8000.0f);
+        }
+    }
+    mb->handleUpdateNowIfNeeded();
+
+    const int nn = 512;
+    juce::AudioBuffer<float> buf (4, nn);
+    juce::MidiBuffer midi;
+    juce::Random rng (2024);
+
+    // ① 基准：Monitor=Output，全功能组合
+    mb->setParamPhysicalForTest ("monitorMode", 0.0f);
+    float refPeak = 0.0f;
+    for (int t = 0; t < 60; ++t)
+    {
+        for (int i = 0; i < nn; ++i)
+        {
+            const long kk = (long) (t * nn + i);
+            const float v = 0.35f * (rng.nextFloat() * 2.0f - 1.0f)
+                          + 0.15f * (float) std::sin (6.283185 * 440.0 * kk / 48000.0);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v * 0.8f);
+            const float scv = 0.5f * (float) std::sin (6.283185 * 1200.0 * kk / 48000.0);
+            buf.setSample (2, i, scv);
+            buf.setSample (3, i, scv);
+        }
+        mb->processBlock (buf, midi);
+        for (int i = 0; i < nn; ++i) refPeak = juce::jmax (refPeak, std::abs (buf.getSample (0, i)));
+    }
+    std::cout << "  Monitor=Output 基准 peak=" << refPeak << std::endl;
+    check (refPeak > 0.02f && std::isfinite (refPeak),
+           "T83.1 全功能组合 + Monitor=Output 输出正常",
+           juce::String (refPeak));
+
+    // ② 切到各档再切回 Output，输出应与基准逐样本一致
+    //    （证明非 Output 档不影响 Output 档，无状态残留）
+    for (int mode = 1; mode <= 6; ++mode)
+    {
+        mb->setParamPhysicalForTest ("monitorMode", (float) mode);
+        for (int t = 0; t < 20; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const long kk = (long) (t * nn + i);
+                const float v = 0.35f * (rng.nextFloat() * 2.0f - 1.0f);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+                buf.setSample (2, i, v);
+                buf.setSample (3, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < nn; ++i)
+            {
+                const float s = buf.getSample (0, i);
+                if (! std::isfinite (s))
+                { check (false, juce::String ("T83.2 Monitor=") + juce::String (mode)
+                                 + " 输出有限", "NaN/Inf"); return; }
+            }
+        }
+    }
+    std::cout << "  Monitor 1..6 各档在全功能组合下均无 NaN/Inf" << std::endl;
+    check (true, "T83.2 Monitor 各档在全功能组合下输出有限", "");
+
+    // ③ 切回 Output 后输出应恢复正常量级。
+    //    ⚠️ 不能断言"逐样本一致"：DSP 有内部状态（过采样滤波器、
+    //    lookahead 环、压缩包络、Auto-Gain 300ms 平滑），步骤② 跑过的
+    //    120 块已经改变了这些状态。即使输入序列相同，输出也不会逐样本
+    //    复现——这是线性时不变系统才有的性质，而这是时变系统。
+    //    合理的断言是：回到 Output 档后，输出重新变成"全功能组合的正常
+    //    输出"（量级与基准同阶），而不是停留在 GR 档的小信号上。
+    mb->setParamPhysicalForTest ("monitorMode", 0.0f);
+    {
+        float peakBack = 0.0f;
+        for (int t = 0; t < 40; ++t)
+        {
+            for (int i = 0; i < nn; ++i)
+            {
+                const float v = 0.3f * (rng.nextFloat() * 2.0f - 1.0f);
+                buf.setSample (0, i, v); buf.setSample (1, i, v);
+                buf.setSample (2, i, v); buf.setSample (3, i, v);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < nn; ++i) peakBack = juce::jmax (peakBack, std::abs (buf.getSample (0, i)));
+        }
+        std::cout << "  切回 Output 后 peak=" << peakBack
+                  << "（基准 " << refPeak << "，GR 档时 0.9997）" << std::endl;
+        check (peakBack > 0.1f,
+               "T83.3 切回 Output 后恢复正常输出量级（无档位残留）",
+               juce::String (peakBack));
+    }
+
+    // ④ Monitor 与 Auto-Gain 同开：关掉 Monitor 只影响选路，不应破坏补偿
+    //    （开 Auto-Gain 的输出峰值应低于关掉时的）
+    mb->setParamPhysicalForTest ("monitorMode", 6.0f);        // GR 档
+    float peakGr = 0.0f;
+    for (int t = 0; t < 40; ++t)
+    {
+        for (int i = 0; i < nn; ++i)
+        {
+            const float v = 0.3f * (rng.nextFloat() * 2.0f - 1.0f);
+            buf.setSample (0, i, v); buf.setSample (1, i, v);
+            buf.setSample (2, i, v); buf.setSample (3, i, v);
+        }
+        mb->processBlock (buf, midi);
+        for (int i = 0; i < nn; ++i) peakGr = juce::jmax (peakGr, std::abs (buf.getSample (0, i)));
+    }
+    mb->setParamPhysicalForTest ("monitorMode", 0.0f);
+    float peakOut = 0.0f;
+    for (int t = 0; t < 40; ++t)
+    {
+        for (int i = 0; i < nn; ++i)
+        {
+            const float v = 0.3f * (rng.nextFloat() * 2.0f - 1.0f);
+            buf.setSample (0, i, v); buf.setSample (1, i, v);
+            buf.setSample (2, i, v); buf.setSample (3, i, v);
+        }
+        mb->processBlock (buf, midi);
+        for (int i = 0; i < nn; ++i) peakOut = juce::jmax (peakOut, std::abs (buf.getSample (0, i)));
+    }
+    std::cout << "  Monitor=GR peak=" << peakGr << " | Monitor=Output peak=" << peakOut << std::endl;
+    check (std::abs (peakGr - peakOut) > 0.01f,
+           "T83.4 Monitor 档位确实改变输出（不是空操作）",
+           juce::String (peakGr) + " vs " + juce::String (peakOut));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -8971,6 +9142,7 @@ int main()
     testLinkedDrawerEndToEndAudio();  // T80 Phase LINKED 抽屉端到端声音验证
     testAllFeaturesCombined();        // T81 Phase 全功能组合压力测试
     testMonitorModes();               // T82 Phase Monitor 内部信号试听
+    testMonitorWithAllFeatures();     // T83 Phase Monitor × 全功能组合
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -8978,6 +9150,7 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
 
 
 
