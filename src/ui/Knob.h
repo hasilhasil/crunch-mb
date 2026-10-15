@@ -72,15 +72,26 @@ public:
                                    nullptr, nullptr, juce::Time(),
                                    juce::Point<float> (downX, downY), juce::Time(), 1, false));
     }
-    void mouseWheelForTest (float x, float y, float dy)
+    void mouseWheelForTest (float x, float y, float dy,
+                            juce::ModifierKeys mods = juce::ModifierKeys())
     {
         auto src = juce::Desktop::getInstance().getMainMouseSource();
         juce::MouseWheelDetails w; w.deltaY = dy; w.isReversed = false;
-        mouseWheelMove (juce::MouseEvent (src, juce::Point<float> (x, y), juce::ModifierKeys(),
+        mouseWheelMove (juce::MouseEvent (src, juce::Point<float> (x, y), mods,
                                           0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                           nullptr, nullptr, juce::Time(),
                                           juce::Point<float> (x, y), juce::Time(), 1, false), w);
     }
+    /** T63：文本编辑测试钩子 */
+    double      getValueForTest() const { return value_; }
+    void        openEditorForTest()     { openEditor(); }
+    void        keyPressedForTest (const juce::KeyPress& k) { keyPressed (k); }
+    /** 便捷重载：直接给字符（构造 KeyPress 走单字符路径）。 */
+    void        keyPressedCharForTest (juce::juce_wchar ch)
+    {
+        keyPressed (juce::KeyPress (ch));
+    }
+    juce::String editTextForTest() const { return editText_; }
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -109,6 +120,8 @@ public:
 
 private:
     void commitValue (double v);
+    /** 细调提交：跳过 interval 量化（Shift 滚轮/拖动用）。 */
+    void commitValueFine (double v);
     void openEditor();
     void closeEditor (bool apply);
     float valueToAngle (double v) const;      // 弧度

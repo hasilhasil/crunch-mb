@@ -47,6 +47,14 @@ void Knob::commitValue (double v)
     setValue (v, true);
 }
 
+void Knob::commitValueFine (double v)
+{
+    // Phase：细调提交——**跳过 interval 量化**。
+    // 否则 Shift 细调在小 interval 参数上完全无效：step 0.1 会被
+    // round(v/1.0)*1.0 量化回 0，用户按 Shift 却毫无变化。
+    setValue (v, true);
+}
+
 void Knob::mouseDown (const juce::MouseEvent& e)
 {
     if (editing_) { closeEditor (true); return; }
@@ -96,12 +104,26 @@ void Knob::mouseDoubleClick (const juce::MouseEvent&)
     openEditor();
 }
 
-void Knob::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+void Knob::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
     if (editing_) return;
     const double span = max_ - min_;
     double step = (interval_ > 0.0) ? interval_ : span * 0.02;
     if (wheel.deltaY < 0) step = -step;
+
+    // Phase：Shift = 细调（与 mouseDrag 的 shiftFine_ 语义一致）。
+    // 此前滚轮没有细调，而拖动有——交互不一致：用户拖着能精调，
+    // 滚轮却一跳一个 interval。Pro-MB / Future MB 的滚轮都支持 Shift 细调。
+    if (e.mods.isShiftDown())
+    {
+        commitValueFine (value_ + step * 0.1);
+        return;
+    }
+
+    // Ctrl/Cmd = 加速（大步进，用于快速跨量程）
+    if (e.mods.isCtrlDown() || e.mods.isCommandDown())
+        step *= 5.0;
+
     commitValue (value_ + step);
 }
 
@@ -171,8 +193,18 @@ bool Knob::keyPressed (const juce::KeyPress& key)
     { editText_ = editText_.substring (0, juce::jmax (0, editText_.length() - 1)); repaint(); return true; }
 
     const juce::juce_wchar ch = key.getTextCharacter();
-    if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '+' || ch == '%')
-    { editText_ += juce::String::charToString (ch); repaint(); return true; }
+    // 某些构造路径（如 KeyPress('7')）只设 keyCode 不设 textCharacter，
+    // 此时 getTextCharacter() 返回 0。回退到 keyCode 兜底，保证真实键盘
+    // 与程序化构造都能输入。
+    const juce::juce_wchar c = (ch != 0) ? ch : (juce::juce_wchar) key.getKeyCode();
+    if ((c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' || c == '%')
+    {
+        // 限制输入长度：无上限时用户可无限键入，getDoubleValue() 对超长
+        // 字符串行为未定义（且视觉上会溢出旋钮）。
+        if (editText_.length() < 12)
+            editText_ += juce::String::charToString (c);
+        repaint(); return true;
+    }
     return false;
 }
 

@@ -6775,6 +6775,107 @@ static void testStateLoadReappliesLatency()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T63 Phase：旋钮滚轮修饰键 + 输入长度上限
+//   · Shift = 细调（0.1×）——此前滚轮无细调而拖动有，交互不一致
+//   · Ctrl/Cmd = 加速（5×）——快速跨量程
+//   · 文本输入长度上限 12——防无限键入导致 getDoubleValue 行为未定义
+// ------------------------------------------------------------
+static void testKnobWheelModifiers()
+{
+    std::cout << "\n--- T63 Phase 旋钮滚轮修饰键 + 输入上限 ---\n";
+
+    Knob k;
+    k.setRange (0.0, 100.0, 1.0);      // interval 1.0
+    k.setSize (60, 76);
+    k.setValue (50.0, false);
+
+    const auto wheel = [] (float dy) { return dy; };
+    const auto mods = [] (bool shift, bool ctrl) {
+        int f = 0;
+        if (shift) f |= juce::ModifierKeys::shiftModifier;
+        if (ctrl)  f |= juce::ModifierKeys::ctrlModifier;
+        return juce::ModifierKeys (f);
+    };
+
+    // ① 普通滚轮：一步一个 interval（1.0）
+    {
+        const double before = k.getValueForTest();
+        k.mouseWheelForTest (30, 30, wheel (1.0f), mods (false, false));
+        const double after = k.getValueForTest();
+        std::cout << "  普通滚轮: " << before << " -> " << after << std::endl;
+        check (std::abs (after - before - 1.0) < 1.0e-6,
+               "T63.1 普通滚轮一步一个 interval", juce::String (after - before));
+    }
+
+    // ② Shift 滚轮：细调 0.1×
+    {
+        const double before = k.getValueForTest();
+        k.mouseWheelForTest (30, 30, wheel (1.0f), mods (true, false));
+        const double after = k.getValueForTest();
+        std::cout << "  Shift 滚轮: " << before << " -> " << after << std::endl;
+        check (std::abs (after - before - 0.1) < 1.0e-6,
+               "T63.2 Shift 滚轮细调 0.1×", juce::String (after - before));
+    }
+
+    // ③ Ctrl 滚轮：加速 5×（步进量 5；因起点非 interval 倍数，
+    //    commitValue 会量化到最近倍数，故断言"变化量 ≥ 4.5"）
+    {
+        const double before = k.getValueForTest();
+        k.mouseWheelForTest (30, 30, wheel (1.0f), mods (false, true));
+        const double after = k.getValueForTest();
+        std::cout << "  Ctrl 滚轮: " << before << " -> " << after << std::endl;
+        check (after - before >= 4.5 && after - before <= 5.5,
+               "T63.3 Ctrl 滚轮加速约 5×", juce::String (after - before));
+    }
+
+    // ④ 反向滚轮：负向
+    {
+        const double before = k.getValueForTest();
+        k.mouseWheelForTest (30, 30, wheel (-1.0f), mods (false, false));
+        const double after = k.getValueForTest();
+        std::cout << "  反向滚轮: " << before << " -> " << after << std::endl;
+        check (std::abs (after - before + 1.0) < 1.0e-6,
+               "T63.4 反向滚轮负向步进", juce::String (after - before));
+    }
+
+    // ⑤ 边界钳制：滚到顶不越界
+    {
+        k.setValue (99.5, false);
+        k.mouseWheelForTest (30, 30, wheel (1.0f), mods (false, true));   // +5 → 钳 100
+        check (std::abs (k.getValueForTest() - 100.0) < 1.0e-6,
+               "T63.5 滚轮越界时钳制到 max", juce::String (k.getValueForTest()));
+        k.mouseWheelForTest (30, 30, wheel (-1.0f), mods (false, true));  // −5 → 95
+        check (std::abs (k.getValueForTest() - 95.0) < 1.0e-6,
+               "T63.6 滚轮反向也正确钳制", juce::String (k.getValueForTest()));
+    }
+
+    // ⑥ 输入长度上限：连续键入超过 12 字符应被截断
+    {
+        k.setValue (50.0, false);
+        k.openEditorForTest();
+        for (int i = 0; i < 30; ++i)
+            k.keyPressedCharForTest ('7');
+        const juce::String txt = k.editTextForTest();
+        std::cout << "  输入 30 个 '7' 后文本长度 = " << txt.length()
+                  << " 内容 = " << txt << std::endl;
+        check (txt.length() == 12,
+               "T63.7 文本输入截断到 12 字符", juce::String (txt.length()));
+    }
+
+    // ⑦ 提交合法值：输入 "25" 后回车 → 25
+    {
+        k.setValue (50.0, false);
+        k.openEditorForTest();
+        k.keyPressedCharForTest ('2');
+        k.keyPressedCharForTest ('5');
+        k.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey, 0, 0));
+        std::cout << "  输入 25 回车后值 = " << k.getValueForTest() << std::endl;
+        check (std::abs (k.getValueForTest() - 25.0) < 1.0e-6,
+               "T63.8 输入 25 回车后值为 25", juce::String (k.getValueForTest()));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6844,6 +6945,7 @@ int main()
     testSideChainFreeLowHigh();    // T60 Phase 侧链 Free low>high
     testOversamplingLargeBlock();  // T61 Phase 过采样大块不失效
     testStateLoadReappliesLatency(); // T62 Phase setStateInformation 重应用延迟
+    testKnobWheelModifiers();        // T63 Phase 旋钮滚轮修饰键 + 输入上限
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
