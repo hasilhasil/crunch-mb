@@ -488,7 +488,6 @@ private:
     void setParamNorm (const juce::String& id, float norm) const;
     void setParamPhysical (const juce::String& id, float physical) const;   // 物理值（偏斜参数用）
     bool getParamBool (const juce::String& id) const;
-    float getParamNorm (const juce::String& id) const;
     float getParamPhysical (const juce::String& id) const;
     static juce::String fmtHzShort (float hz);
     float paramRangeMinOf (const juce::String& id) const;

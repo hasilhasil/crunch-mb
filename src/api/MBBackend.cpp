@@ -71,6 +71,28 @@ float MBBackend::getParamFast (const juce::String& id) const
     return p->getValue();
 }
 
+float MBBackend::getParamNorm (const juce::String& id) const
+{
+    // Phase（R19）：与 getParamFast 同路径，只是返回 normalized 本身。
+    // 之前 UI 层各自实现这个换算，BandPopover 写对了、DisplayView 写错了
+    // （直接 return getParamFast）——同一换算写两遍必然一处漂移。
+    if (! paramCacheBuilt_)
+        return normalizedOf (id);
+
+    const auto it = paramCache_.find (id);
+    if (it == paramCache_.end() || it->second == nullptr)
+        return normalizedOf (id);
+
+    return juce::jlimit (0.0f, 1.0f, it->second->getValue());
+}
+
+float MBBackend::normalizedOf (const juce::String& id) const
+{
+    if (auto* p = proc_.apvts.getParameter (id))
+        return juce::jlimit (0.0f, 1.0f, p->getValue());
+    return 0.0f;
+}
+
 ParamInfo MBBackend::describeParam (juce::AudioProcessorParameter* p)
 {
     ParamInfo info;

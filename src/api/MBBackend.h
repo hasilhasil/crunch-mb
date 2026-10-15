@@ -75,6 +75,20 @@ public:
     void buildParamCache();
 
     /**
+     * Phase（R19）：按 **normalized**（0..1）读取参数。
+     *
+     * 为什么必须有这个：此前 facade 只有 getParamFast（实际值），UI 层需要
+     * 归一化值时只能自己实现——BandPopover 实现了（正确），DisplayView 也
+     * 实现了一个（直接 return getParamFast，是错的，R19 修掉并删除）。
+     * **同一个换算在两处各写一遍，必然一处漂移**，这与当年 paramMap_ 在
+     * facade 和 UI 各存一份是同一个错误（PLAN Phase 6 的立论）。
+     * 现在统一由 facade 提供，UI 不再自己算。
+     */
+    float getParamNorm (const juce::String& id) const;
+    /** getParamNorm 的慢路径（未建表/未命中时用）。 */
+    float normalizedOf (const juce::String& id) const;
+
+    /**
      * Phase：按 **normalized**（0..1）写入参数。
      *
      * 与 setParam 的分工：setParam 入参是实际值（规范语义），本函数入参是

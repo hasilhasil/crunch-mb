@@ -1729,14 +1729,6 @@ bool DisplayView::getParamBool (const juce::String& id) const
     return proc_.getBackend().getParamFast (id) >= 0.5f;
 }
 
-float DisplayView::getParamNorm (const juce::String& id) const
-{
-    // 注意：getParamFast 返回**实际值**，不是 normalized。
-    // 原有调用方都把它当 normalized 用（如 >= 0.5f 判 Bool），
-    // 对 Bool 参数实际值与 normalized 同为 0/1，语义不变。
-    return proc_.getBackend().getParamFast (id);
-}
-
 float DisplayView::getParamPhysical (const juce::String& id) const
 {
     return proc_.getBackend().getParamFast (id);

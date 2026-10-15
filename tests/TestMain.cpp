@@ -7356,6 +7356,82 @@ static void testPopoverSliderKeyboard()
     check (! dv.popoverStepSliderForTest (-1, 1, false), "T67.18 负索引返回 false", "");
 }
 
+// ------------------------------------------------------------
+// T68 Phase：getParamNorm 必须返回真归一化值（R19 教训 23 的锁定测试）
+//   R19：BandPopover::getParamNorm() 曾直接返回 getParamFast()（实际值），
+//   导致 Knee 滑轨视觉位置与实际膝宽长期不一致。
+//   本测试把该函数的输入/输出量纲钉死，防止未来被改回。
+// ------------------------------------------------------------
+static void testGetParamNormScale()
+{
+    std::cout << "\n--- T68 Phase getParamNorm 量纲锁定 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    auto& api = mb->getBackend();
+
+    // ① 0..48 dB 的 Knee：中值应得归一化 0.5
+    api.setParam ("band0Knee", 24.0f);
+    {
+        const float phys = api.getParam ("band0Knee").value;
+        const float norm = api.getParamNorm ("band0Knee");
+        std::cout << "  Knee phys=" << phys << " norm=" << norm << std::endl;
+        check (std::abs (phys - 24.0f) < 0.01f, "T68.1 Knee 物理值 = 24", juce::String (phys));
+        check (std::abs (norm - 0.5f) < 0.01f,
+               "T68.2 Knee 24dB → 归一化 0.5（不是 24）", juce::String (norm));
+    }
+
+    // ② Knee 0 → 0；48 → 1
+    api.setParam ("band0Knee", 0.0f);
+    check (std::abs (api.getParamNorm ("band0Knee")) < 0.01f,
+           "T68.3 Knee 0 → 归一化 0", juce::String (api.getParamNorm ("band0Knee")));
+    api.setParam ("band0Knee", 48.0f);
+    check (std::abs (api.getParamNorm ("band0Knee") - 1.0f) < 0.01f,
+           "T68.4 Knee 48 → 归一化 1", juce::String (api.getParamNorm ("band0Knee")));
+
+    // ③ Bool 参数 0/1 → 归一化仍 0/1（R7 修复的语义不能破）
+    api.setParamNormFast ("band0Ext", 0.0f);
+    check (api.getParamNorm ("band0Ext") < 0.01f, "T68.5 Bool Ext=0 → 0",
+           juce::String (api.getParamNorm ("band0Ext")));
+    api.setParamNormFast ("band0Ext", 1.0f);
+    check (api.getParamNorm ("band0Ext") > 0.99f, "T68.6 Bool Ext=1 → 1",
+           juce::String (api.getParamNorm ("band0Ext")));
+
+    // ④ Choice 参数：实际值 = 索引；归一化 = 索引/(N-1)
+    api.setParamNormFast ("lookahead", 0.0f);   // Off
+    check (std::abs (api.getParam ("lookahead").value) < 0.01f,
+           "T68.7 Choice lookahead=Off 实际值是索引 0", juce::String (api.getParam ("lookahead").value));
+    api.setParamNormFast ("lookahead", 0.5f);   // 1 ms
+    check (std::abs (api.getParam ("lookahead").value - 1.0f) < 0.01f,
+           "T68.8 Choice lookahead=1ms 实际值是索引 1", juce::String (api.getParam ("lookahead").value));
+    api.setParamNormFast ("lookahead", 1.0f);   // 3 ms
+    check (std::abs (api.getParam ("lookahead").value - 2.0f) < 0.01f,
+           "T68.9 Choice lookahead=3ms 实际值是索引 2", juce::String (api.getParam ("lookahead").value));
+    check (std::abs (api.getParamNorm ("lookahead") - 1.0f) < 0.01f,
+           "T68.10 Choice lookahead=3ms 归一化 1", juce::String (api.getParamNorm ("lookahead")));
+
+    // ⑤ 偏斜范围（Ratio 1..20）：中点 10.5 → 归一化 0.5
+    api.setParam ("band0Ratio", 10.5f);
+    {
+        const float norm = api.getParamNorm ("band0Ratio");
+        std::cout << "  Ratio phys=10.5 norm=" << norm << std::endl;
+        check (std::abs (norm - 0.5f) < 0.01f,
+               "T68.11 Ratio 中点 → 归一化 0.5", juce::String (norm));
+    }
+
+    // ⑥ setParamNorm 写入侧确实是 normalized（不是实际值）
+    api.setParamNormFast ("band0Ratio", 0.0f);
+    check (std::abs (api.getParam ("band0Ratio").value - 1.0f) < 0.01f,
+           "T68.12 setParamNorm(0) → 物理值 1（范围下限，非 0）",
+           juce::String (api.getParam ("band0Ratio").value));
+    api.setParamNormFast ("band0Ratio", 1.0f);
+    check (std::abs (api.getParam ("band0Ratio").value - 20.0f) < 0.01f,
+           "T68.13 setParamNorm(1) → 物理值 20（范围上限）",
+           juce::String (api.getParam ("band0Ratio").value));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -7430,6 +7506,7 @@ int main()
     testDropDownKeyboardNav();       // T65 Phase 下拉键盘导航
     testKnobKeyboardStep();          // T66 Phase 旋钮常态键盘步进
     testPopoverSliderKeyboard();     // T67 Phase popover 滑块键盘/滚轮
+    testGetParamNormScale();         // T68 Phase getParamNorm 量纲锁定
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -7437,6 +7514,7 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
 
 
 

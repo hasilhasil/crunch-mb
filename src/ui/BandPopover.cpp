@@ -756,18 +756,10 @@ void BandPopover::resized()
 // 所以"按 normalized 用"的调用点必须自己转，不能假设两者等价。
 float BandPopover::getParamNorm (const juce::String& id) const
 {
-    // Phase（R19 修复）：此前这里用 getParamFast()——它返回**实际值**，
-    // 不是 normalized（见 §8.2 R7/R9 的同类错误：getRawParameterValue 的名字
-    // 是个陷阱，getParamFast 同样）。后果：sliders_[1]（Knee）存 0..1 的
-    // 归一化值，读回来却变成 0..48——滑块的视觉位置与实际 Knee 值长期不一致，
-    // 而 applySlider 总是紧跟 syncFromParams()，所以每次拖动后滑块都会"跳"。
-    // 现在用真实归一化：physical → normalized 换算。
-    const float phys = proc_.getBackend().getParamFast (id);
-    const float lo = paramRangeMinOf (id);
-    const float hi = paramRangeMaxOf (id);
-    if (hi <= lo)
-        return 0.0f;
-    return juce::jlimit (0.0f, 1.0f, (phys - lo) / (hi - lo));
+    // Phase（R19）：委托给 facade，UI 层不再自己实现 physical→normalized。
+    // 此前这里有一份等价实现、DisplayView 里还有一份错的（直接 return
+    // getParamFast）——同一个换算写两遍，必然一处漂移。
+    return proc_.getBackend().getParamNorm (id);
 }
 
 float BandPopover::paramRangeMinOf (const juce::String& id) const
