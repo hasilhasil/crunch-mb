@@ -360,7 +360,7 @@ namespace Anim {
 
 > 每期独立可编译、可回退；每期结束跑 `CrunchMBTests`（基线 287/0，不得回退）。
 
-### 进度总览（更新于 2026-10-14，第四十九轮 · R18 修复：旋钮常态键盘）
+### 进度总览（更新于 2026-10-14，第五十一轮 · R19 修复：popover 滑块键盘 + Knee 量纲）
 
 | Phase | 内容 | 状态 | 提交 |
 |---|---|---|---|
@@ -477,6 +477,7 @@ namespace Anim {
 | **R16 修复：频率输入空值钳成 20Hz**（`9119f27`） | 双击频谱上的分割线握柄可输入精确频率（支持 "2k" 简写）。但空文本按回车时 `jlimit(20,20000,0)` = 20Hz，**分割线被静默跳到最低频**，界面无提示。现改为空输入/纯空白时放弃应用。T64.1/2/3 验证三种空输入都不产生应用；T64.4-8 验证正常输入、"2k" 简写、越界钳制、Esc 取消均正确 | **Pro-MB**：分割线握柄上直接显示并可编辑频率（Phase B-2 已实现显示；编辑路径本次修正） |
 | **R17 修复：下拉键盘导航**（`d7d01d4`） | 自绘下拉（Display Range + 全局栏 4 个选择器）此前**完全无键盘支持**——↑/↓/Enter/Esc 全部无响应，键盘用户无法操作任何一个选择器。现补全：↑/↓ 移动（首末环绕）、Home/End、Enter/Space 应用、Esc 取消，且打开即夺焦。**操作表现上**：现在可以用键盘在这 5 个下拉里逐项浏览并确认，与鼠标点击等效 | **Pro-MB / Future MB**：两者的下拉均支持方向键导航；原生 `PopupMenu` 本来也带此能力，换自绘时丢了 |
 | **R18 修复：旋钮常态键盘步进**（`175fdde`） | 旋钮在正常态下**方向键/PgUp/Home/Backspace 全部无效**，只能鼠标拖动或滚轮。现补全：↑/↓ 步进 coarse（interval×10）、Shift+方向 = fine（一个 interval）、PgUp/PgDn = 双倍 coarse、Home/End = min/max、Backspace/Delete = 复位默认值（与 Ctrl+click 同义）、Enter/Space = 进文本编辑（与双击同义），全部钳制。**操作表现上**：现在可以 Tab 到任一旋钮用键盘精调，Shift 细调、Backspace 复位都与鼠标等效 | **Pro-MB / Future MB**：两者旋钮均支持方向键步进；Backspace/Delete 复位是 FabFilter 系列惯例 |
+| **R19 修复：popover 滑块键盘/滚轮 + Knee 量纲**（`4ea45c3`） | ① Ratio/Knee/Ext/Detector/Lookahead 五个自绘滑轨此前**只有鼠标拖动**，现补键盘与滚轮（Shift = 细调）。② 更关键：`getParamNorm()` 一直返回实际值而非归一化值，**Knee 滑轨的视觉位置与实际膝宽长期不一致**，每次拖动后握柄还会"跳"回。修后滑轨位置与参数值严格对应。**操作表现上**：拖动 Knee 不再跳，滚轮悬停在滑轨上不再误改频段宽度 | **Pro-MB / Future MB**：两者滑轨控件均支持键盘与滚轮；Pro-MB 的 Knee 滑轨位置与膝宽严格对应 |
 
 ### Phase D 待做
 
@@ -537,8 +538,9 @@ namespace Anim {
 | **R16 ✅ 已修复**（第四十五轮，`9119f27`） | **频率输入框空输入把分割线静默改到 20Hz**：`FreqInputEditor::close(apply)` 里 `jlimit(20, 20000, text.getFloatValue() * mult)`——空字符串经 `getFloatValue()` 得 0，而 0 被钳进 [20,20000] 就是 **20**。用户双击频率握柄想输入、又直接按回车（本意取消）→ 分割线跳到最低频，**界面无任何提示**。另外 `text_` 同样无长度上限（与 R15 同款） | **"钳制把无效值变成了一个合法值"**——这是最隐蔽的一类输入 bug：既没崩也没报错，只是悄悄给了一个看似正常的数。R12 的侧链 low>high 是同类（参数违序被钳成"看似可用"） | 空输入/纯空白（如只按了 "k"）时放弃应用并关闭，不碰参数；"0" 仍按原语义钳制。`text_` 截断到 8 字符。同样补 `KeyPress` 的 keyCode 回退 |
 | **R17 ✅ 已修复**（第四十七轮，`d7d01d4`） | **自绘下拉完全无键盘导航**：`DisplayView::keyPressed` 只转发给 `freqInput_`，下拉打开时键盘毫无响应——**键盘用户无法操作 5 个选择器中的任何一个**（Display Range + Phase/Slope/Quality/Lookahead）。另外 `openDropDown` 未夺焦，即使补了键盘分支也收不到事件 | 自绘控件替换原生控件时（commit `c4e03d3`），只对标了"外观与鼠标交互"，**漏了对标"键盘与无障碍"**——原生 `PopupMenu` 本来是有键盘导航的，换成自绘后这条能力被悄悄丢掉了 | 补 ↑/↓（首末项环绕）、Home/End、Enter/Space 应用、Esc 取消；无 hover 时首次 ↓ 落第 0 项；`openDropDown`/`openGlobalParamDropDown` 打开即夺焦。T65 十七条断言全锁（含"Esc 不改变档位""Enter 应用后档位确实 = hover 项""关闭时键盘不被吞"） |
 | **R18 ✅ 已修复**（第四十九轮，`175fdde`） | **旋钮常态下无键盘入口**：`Knob::keyPressed` 开头就是 `if (! editing_) return false;`——正常态下方向键/PgUp/Home/Backspace **全部无效**，只能鼠标拖动或滚轮。另外 `setWantsKeyboardFocus(true)` 只在 `openEditor()` 里调，即使补了键盘分支也收不到事件 | 与 R17 同根，是**把 R17 的教训应用到其余自绘控件时发现的第二例**：Phase C 重写旋钮时对标了鼠标交互（拖动/滚轮/Shift 细调/Ctrl+click 复位/双击输入），唯独没做键盘。而"控件是自己的"这个事实让人误以为"没有的就是不需要的" | 常态键盘：↑/↓（←/→ 同义）步进 coarse（interval×10）、Shift+方向 = fine（一个 interval）、PgUp/PgDn = 双倍 coarse、Home/End = min/max、Backspace/Delete = 复位默认值（与 Ctrl+click 同义）、Enter/Space = 进文本编辑（与双击同义），全部钳制在范围内。构造时即 `setWantsKeyboardFocus(true)`。原编辑态逻辑拆为 `keyPressedEditing()` 保持独立。T66 二十一条断言全锁（含"编辑态 Enter/Esc 原有行为未被破坏"） |
+| **R19 ✅ 已修复**（第五十一轮，`4ea45c3`） | **两处**：① **popover 内 5 个自绘滑轨无键盘/滚轮**（Ratio/Knee/Ext/Detector/Lookahead 只有 `beginSliderDrag`/`dragSlider` 鼠标拖动）——R17/R18 清点清单漏掉的**第三例**。② **`getParamNorm()` 返回的是实际值而非归一化值**（`return proc_.getBackend().getParamFast(id)`）——facade 迁移起就存在，与 R7/R9 同族。后果：`sliders_[1]`（Knee）存 0..1 读回变 0..48，**滑轨视觉位置与实际膝宽长期不一致**，且 `applySlider` 总紧跟 `syncFromParams()`，每次拖动后握柄都会"跳" | ① 同 R17/R18：自绘控件只做了鼠标。② 同 R7/R9：**函数名承诺 normalized，交付的却是 actual**——`getRawParameterValue` 是出名的陷阱，`getParamFast` 同样是 | ① 新增 `stepSlider(k, notches, fine)`：Ratio/Knee 连续步进、Ext/Detector 翻转、Lookahead 三档循环；`DisplayView` 的滚轮与键盘在 popover 内转给它（含 `sliderFocus_` 回退）。Lookahead 必须显式写全局参数——`applySlider` 对 k=4 故意不写，否则会被 `syncFromParams()` 覆盖回"看起来没反应"。② `getParamNorm` 改为真实 physical→normalized 换算；**所有想要实际值的调用点改调 `getParamPhysical`**（Lookahead 行、`syncFromParams` 初始化）——不改这些调用点，Lookahead 循环立刻错乱（T55.4 当场抓住） |
 
-> **教训（第四十九轮补充，共 22 条）**：
+> **教训（第五十一轮补充，共 23 条）**：
 > 4. **每个新手势开始时要清零上一个手势的状态**——不要假设 mouseUp 总会来。
 > 5. **不要把一个模型（多选）硬套在另一个模型（单选）上**；先确认数据模型再设计交互。
 > 6. **命中几何不要依赖 paint 的副作用**——悬停/点击发生在绘制之前，paint 里赋值的矩形在首次交互时还是空的。要么现算，要么在构造/resize 时同步。
@@ -556,6 +558,7 @@ namespace Anim {
 > 20. **钳制会把"无效输入"偷偷变成"合法值"，这是最隐蔽的一类 bug**。R16：空文本 → 0 → `jlimit(20,20000,0)` = 20Hz。既没崩、没报错、没 NaN，只是悄悄给了一个看似正常的数——所以它不会在任何"健全性检查"里露头，只能靠**明确断言"这种输入不应该产生任何应用"**来抓。R12 的侧链 low>high 是同一族（违序被钳成"看似可用"）。**凡是 `jlimit`/`clamp` 的下游，都要问一句：如果输入是空的/0/NaN，钳完会得到什么？那个值合理吗？**
 > 21. **用自绘控件替换原生控件时，必须清点原生控件"免费给"的能力**。R17：换成自绘下拉后外观和鼠标交互都对标了，却把 `PopupMenu` 本来带的键盘导航悄悄丢了。原生控件不是只有外观——它还带着一整套键盘行为、焦点规则、无障碍语义。**替换前的清点清单应该是：鼠标交互 ✓ / 键盘交互 ✓ / 焦点管理 ✓ / 状态指示（当前项、hover）✓**，四项都要重新实现，漏一项就是一个 R17。
 > 22. **"这个控件是我自己写的"会让人误以为"没有的就是不需要的"**。R18：旋钮是自己写的，于是鼠标做全了（拖动/滚轮/Shift 细调/Ctrl+click/双击输入），键盘一样没做——而 R17 刚立过"要清点原生能力"的规矩，却没回头查自己写的控件。**规矩立了之后要立刻在整个代码库里扫一遍同类**，否则它只是对当时那一个文件有效。另外：`setWantsKeyboardFocus` 这类"基础设施"要和功能一起加，只加 `keyPressed` 分支不加焦点，等于没加。
+> 23. **修一个函数语义之前，先把它的调用点全列出来**。R19：`getParamNorm()` 名字承诺 normalized、实际返回 actual。这个错从 facade 迁移起就在，但**没人发现**——因为"读回来和写进去对不上"只在连续操作时才显形（拖动滑块 → 跳回）。而修它的时候我又差点制造一次回归：只改了函数，没改"其实想要 actual"的调用点，Lookahead 循环当场错乱（T55.4 抓住）。**"改语义"和"改调用点"必须是同一次提交里的同一件事**，且要靠回归测试确认后者没漏。
 > 10. **迁移读取 API 时，要把跟着它的每一段算术都当嫌疑人**。R7 扫了"比较表达式"（`< 0.5f`）就以为扫完了，R9 证明"转换表达式"（`* (N-1)`）同样会留坑。正确做法：grep 出所有 `getParamFast|getParamNorm` 的调用点，逐个问"这个参数的类型是什么（Bool/Choice/Float），这个表达式假设的是哪种语义"。**另外，注释里的错误论断比没有注释更危险**——`getParamNorm` 上那句"Choice 实际值与 normalized 同为 0/1"直接导致了 R9。
 > 9. **"平滑"类改动要枚举所有跳变来源，不只是参数变化**。R8：SPI 平滑了参数变化，却漏了 BYP 状态切换——后者同样是瞬时跳变。**并且，测平滑的测试必须制造出真实差值**：不喂音频时 `getBandGainDb()` 返回 0，目标和当前值相等，平滑是空转，断言会假通过。
 
@@ -758,12 +761,12 @@ T39 频谱 17 项均通过）。
 
 | 指标 | 起始 | 最终 |
 |---|---|---|
-| `CrunchMBTests` 断言数 | 287 | **562**（+275） |
+| `CrunchMBTests` 断言数 | 287 | **581**（+294） |
 | 参数总数 | 62 | **84**（+22：oversampling、每段侧链滤波×3、StereoLink、Dynamics、globalMix） |
 | `DisplayView.cpp` | 2282 行 | 1982 行（4 个独立组件抽出） |
 | UI 组件数 | 1（Knob） | 8（Knob / LinkedDrawer / BandPopover / FreqInputEditor / SpectrumView / AnalyzerPanel / OutputPanel + Anim） |
 | UI 直触 APVTS 次数 | — | **0**（原 26 处，`fafa3da` 全部改走 facade） |
-| 重构/迁移引入的真 bug | **19 个，全部修复**（R1-R18，均有测试锁定） | 见 §8.2 |
+| 重构/迁移引入的真 bug | **20 个，全部修复**（R1-R19，均有测试锁定） | 见 §8.2 |
 
 ### 相对 Pro-MB / Future MB 的能力覆盖
 
@@ -809,6 +812,8 @@ T39 频谱 17 项均通过）。
 > 但代码里**一个字节都没有**——这是计划书之外唯一被完整记录却完全未实现的需求。
 > 第十六轮按 `crunch-api-interface.md` v1.0 §2/§3 补齐，新增
 > `src/api/{IPluginBackend.h, IMBBackend.h, MBBackend.{h,cpp}}`。
+
+
 
 
 
