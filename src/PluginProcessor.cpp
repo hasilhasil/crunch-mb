@@ -387,7 +387,17 @@ void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBy
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));   // 监听器会触发结构重应用
+        {
+            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+            // Phase（R14 修复）：replaceState 直接改 ValueTree，**不经过**
+            // setValueNotifyingHost → parameterChanged 监听器不触发。
+            // 若载入的会话改了 oversampling/lookahead/phaseMode 等结构参数，
+            // 分频器与延迟上报会停留在旧值——宿主按旧延迟补偿 → 输出时间错位。
+            // 这里显式补一次结构重应用与延迟更新（消息线程安全）。
+            applyStructure();
+            updateLatency();
+        }
 }
 
 juce::AudioProcessorEditor* CrunchMBAudioProcessor::createEditor()

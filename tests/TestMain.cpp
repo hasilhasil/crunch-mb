@@ -6708,6 +6708,73 @@ static void testOversamplingLargeBlock()
     mb->setEditorActive (false);
 }
 
+// ------------------------------------------------------------
+// T62 Phase：setStateInformation 必须重应用结构与延迟
+//   JUCE 的 ValueTree::replaceState 直接改树，**不经过**
+//   setValueNotifyingHost → parameterChanged 监听器不触发 →
+//   applyStructure()/updateLatency() 不被调用。
+//   若载入的会话改了 oversampling/lookahead，延迟上报停留在旧值，
+//   宿主按旧延迟补偿 → 输出时间错位。
+// ------------------------------------------------------------
+static void testStateLoadReappliesLatency()
+{
+    std::cout << "\n--- T62 Phase setStateInformation 重应用延迟 ---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T62.0 处理器实例可访问", "");
+
+    // ① 默认（oversampling=Off, lookahead=Off）延迟应为 0
+    const int lat0 = mb->getLatencySamples();
+    std::cout << "  默认延迟 = " << lat0 << std::endl;
+    check (lat0 == 0, "T62.1 默认延迟 = 0", juce::String (lat0));
+
+    // ② 直接改参数（走 setValueNotifyingHost → 监听器 → updateLatency）
+    mb->setParamPhysicalForTest ("oversampling", 2.0f);   // 4x
+    mb->handleUpdateNowIfNeeded();
+    const int lat4x = mb->getLatencySamples();
+    std::cout << "  4x 延迟 = " << lat4x << std::endl;
+    check (lat4x > 0, "T62.2 切 4x 后延迟上报（监听器路径）", juce::String (lat4x));
+
+    // ③ 保存状态，改回默认，再载入 → 延迟必须回到 0
+    juce::MemoryBlock saved;
+    mb->getStateInformation (saved);
+    check (saved.getSize() > 0, "T62.3 状态可保存", juce::String ((int) saved.getSize()));
+
+    mb->setParamPhysicalForTest ("oversampling", 0.0f);
+    mb->handleUpdateNowIfNeeded();
+    check (mb->getLatencySamples() == 0, "T62.4 切回 Off 后延迟 = 0",
+           juce::String (mb->getLatencySamples()));
+
+    mb->setStateInformation (saved.getData(), (int) saved.getSize());
+    const int latAfterLoad = mb->getLatencySamples();
+    std::cout << "  载入 4x 状态后延迟 = " << latAfterLoad << std::endl;
+    check (latAfterLoad == lat4x,
+           "T62.5 setStateInformation 后延迟重应用（不停留在旧值）",
+           juce::String (latAfterLoad) + " vs " + juce::String (lat4x));
+
+    // ④ 结构参数也应重应用（分频器交叉点）
+    mb->setParamPhysicalForTest ("xover1", 200.0f);
+    mb->handleUpdateNowIfNeeded();
+    mb->setParamPhysicalForTest ("xover1", 3000.0f);
+    mb->handleUpdateNowIfNeeded();
+    mb->setStateInformation (saved.getData(), (int) saved.getSize());
+    const float x1After = mb->apvts.getRawParameterValue (Param::ID::xover1)->load();
+    const float x1Saved = [&] {
+        mb->setParamPhysicalForTest ("xover1", 200.0f);
+        mb->handleUpdateNowIfNeeded();
+        return mb->apvts.getRawParameterValue (Param::ID::xover1)->load();
+    }();
+    std::cout << "  载入后 xover1 = " << x1After << " (saved=" << x1Saved << ")" << std::endl;
+    check (std::abs (x1After - x1Saved) < 0.5f,
+           "T62.6 载入后结构参数恢复（APVTS 层）",
+           juce::String (x1After) + " vs " + juce::String (x1Saved));
+
+    mb->setEditorActive (false);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -6776,6 +6843,7 @@ int main()
     testAttackReleaseCoeffCache(); // T59 Phase attack/release 系数缓存
     testSideChainFreeLowHigh();    // T60 Phase 侧链 Free low>high
     testOversamplingLargeBlock();  // T61 Phase 过采样大块不失效
+    testStateLoadReappliesLatency(); // T62 Phase setStateInformation 重应用延迟
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
