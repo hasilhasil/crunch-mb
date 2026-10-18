@@ -71,7 +71,13 @@ public:
     bool clickDynamicsSeg();
     bool dynamicsIsExpand() const noexcept { return dynamicsExpand_; }
     bool isExpertOpen() const noexcept { return expertOpen_; }
-    void toggleExpert() { expertOpen_ = ! expertOpen_; repaint(); }
+    void toggleExpert()
+    {
+        expertOpen_ = ! expertOpen_;
+        // R35（C-b）：EXPERT 内容现在由 ExpertLayer 子组件绘制，要单独重绘
+        if (expertLayer_ != nullptr) expertLayer_->repaint();
+        repaint();
+    }
 
     /** Phase C-5：EXPERT 展开内容的两行可点区域。 */
     enum class ExpertRow { None = 0, Detector, Lookahead, Filtering, SCLow, SCHigh };
@@ -100,6 +106,10 @@ public:
 
     /** 同步参数 → 控件（切段/外部改动后调用）。 */
     void syncFromParams();
+
+    /** R35（N4）：按 parameterID 精确刷新（宿主自动化 / 其它控件改参数）。
+     *  返回 true 表示该 id 属于本面板并已处理。 */
+    bool syncParam (const juce::String& paramId);
 
     /** 供 DisplayView 读取的滑杆值（绘制 hover 态等）。 */
     /**
@@ -155,6 +165,14 @@ public:
     {
         return popKnobRect (juce::jlimit (0, kPopKnobs - 1, k));
     }
+    /** R35（C-b）测试钩子：EXPERT 覆盖层是否为最上层子组件。 */
+    bool expertLayerIsTopmost() const
+    {
+        if (expertLayer_ == nullptr || getNumChildComponents() == 0)
+            return false;
+        return getChildComponent (getNumChildComponents() - 1) == expertLayer_.get();
+    }
+
     /** A：第 k 个旋钮的透明度（跟随 anim_ 淡入）。 */
     float popKnobAlphaForTest (int k) const
     {
@@ -166,6 +184,21 @@ private:
     juce::Rectangle<float> popoverRect() const;
     juce::Rectangle<float> popKnobRect (int k) const;
     juce::Rectangle<float> popSliderRect (int k) const;
+
+    /** R35（C-b）：EXPERT 展开内容的**覆盖层**。
+     *  JUCE 里子组件永远画在父组件 paint() 之后，而 EXPERT 框原先是在
+     *  BandPopover::paint() 里画的 → 被 5 个 Knob 子组件盖住右半部分
+     *  （旋钮 3/4 正好压在 SC HIGH-PASS / SC LOW-PASS 的数值列上）。
+     *  改成独立子组件、并在旋钮之后 addAndMakeVisible，就合成在旋钮之上；
+     *  它不接收鼠标（命中仍由 DisplayView 经 hitTestExpertRow 分发）。 */
+    struct ExpertLayer : public juce::Component
+    {
+        BandPopover& owner;
+        explicit ExpertLayer (BandPopover& o) : owner (o) { setInterceptsMouseClicks (false, false); }
+        void paint (juce::Graphics& g) override { owner.paintExpertLayer (g); }
+    };
+    std::unique_ptr<ExpertLayer> expertLayer_;
+    void paintExpertLayer (juce::Graphics& g);
 
     void ensureKnobs();
     void layoutKnobs (bool force);
@@ -202,6 +235,8 @@ private:
     double sliderDragV0_ = 0.0;
 
     std::array<std::unique_ptr<Knob>, kPopKnobs> knobs_;
+    /** R35（D）：上次下发给 Knob 的直径（Knob 无 getter）。 */
+    std::array<float, kPopKnobs> knobDiameters_ { { 0, 0, 0, 0, 0 } };
     bool knobsReady_ = false;
 
     std::array<double, kPopKnobs> values_ {};             // 物理值
@@ -214,3 +249,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BandPopover)
 };
+

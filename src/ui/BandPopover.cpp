@@ -54,6 +54,8 @@ void BandPopover::setHostBounds (juce::Rectangle<int> hostBounds)
     if (hostBounds_ == hostBounds)
         return;
     hostBounds_ = hostBounds;
+    if (expertLayer_ != nullptr)
+        expertLayer_->setBounds (getLocalBounds());
     layoutKnobs (true);
     repaint();
 }
@@ -276,6 +278,8 @@ bool BandPopover::advance (double nowMs)
         tween_.snapTo (animTarget_);
     }
     layoutKnobs (false);
+    if (expertLayer_ != nullptr && expertOpen_)
+        expertLayer_->repaint();       // R35（C-b）：覆盖层随动画重绘
     if (! open_ && anim_ <= Anim::kSnapEps)
         for (auto& kb : knobs_)
             if (kb != nullptr) kb->setVisible (false);
@@ -325,6 +329,16 @@ void BandPopover::ensureKnobs()
         knobs_[(size_t) k].reset (kb);
     }
     knobsReady_ = true;
+
+    // R35（C-b）：EXPERT 覆盖层必须在旋钮**之后**创建/置顶，
+    // 否则它会被 5 个 Knob 盖住（子组件按 z 序合成）。
+    if (expertLayer_ == nullptr)
+    {
+        expertLayer_ = std::make_unique<ExpertLayer> (*this);
+        addAndMakeVisible (*expertLayer_);
+    }
+    expertLayer_->setBounds (getLocalBounds());
+    expertLayer_->toFront (false);
 }
 
 void BandPopover::layoutKnobs (bool force)
@@ -337,6 +351,19 @@ void BandPopover::layoutKnobs (bool force)
         if (knobs_[(size_t) k] == nullptr)
             continue;
         const auto rc = popKnobRect (k);
+        auto* kb = knobs_[(size_t) k].get();
+        if (kb == nullptr)
+            continue;
+        // R35（D）：旋钮直径随面板高度缩放（原先写死 38px，窗口放大后
+        // 旋钮在一大片空槽里显得很小）。上下限防止极端尺寸下失真。
+        // Knob 没有 diameter getter，用成员缓存，避免每帧 setKnobDiameter
+        // （它会 invalidateBackLayer + repaint，代价不小）。
+        const float dia = juce::jlimit (24.0f, 72.0f, rc.getHeight() * (38.0f / 74.0f));
+        if (std::abs (knobDiameters_[(size_t) k] - dia) > 0.5f)
+        {
+            knobDiameters_[(size_t) k] = dia;
+            kb->setKnobDiameter (dia);
+        }
         // R34（A）：去掉纵向滑入，只保留淡入。
         // 原先这里是 `rc.getY() + (1.0f - a) * rc.getHeight()`——把旋钮下移最多
         // 一整个旋钮行高（默认 74px），而 paint() 只对**面板**做 alpha 淡入、
@@ -344,7 +371,6 @@ void BandPopover::layoutKnobs (bool force)
         // 用户实测"弹出二级菜单时里面的旋钮跟菜单窗口不同步"。
         // 现在位置恒等于最终槽位，透明度跟随面板 anim_ 一起淡入淡出。
         const int nx = (int) rc.getX(), ny = (int) rc.getY();
-        auto* kb = knobs_[(size_t) k].get();
         if (force || kb->getX() != nx || kb->getY() != ny
                  || kb->getWidth() != (int) rc.getWidth() || kb->getHeight() != (int) rc.getHeight())
             kb->setBounds (nx, ny, (int) rc.getWidth(), (int) rc.getHeight());
@@ -491,6 +517,61 @@ void BandPopover::syncFromParams()
     //    实际值是索引 0..2，用 getParamPhysical 读后换算。
     sliders_[4] = juce::jlimit (0.0f, 1.0f, getParamPhysical ("lookahead") * 0.5f);
     dynamicsExpand_ = sliders_[3] >= 0.0f && getParamNorm ("band" + juce::String (b) + "Dynamics") > 0.5f;
+}
+
+// R35（N4）：按 parameterID 精确刷新。
+// 返回 true 表示这个 id 属于本 popover（无论是否被 band_ 过滤），
+// 让调用方知道"已处理"，避免再做无谓的全量同步。
+//
+// 为什么要按 id 而不是每帧全量：宿主一次自动化 sweep 会连发几十个回调，
+// 全量 syncFromParams() 每次都读 9 个参数 + 5 次 setValue（会 repaint）。
+// 按 id 过滤后只有真正受影响的控件会动。
+bool BandPopover::syncParam (const juce::String& paramId)
+{
+    if (band_ < 0)
+        return false;
+    const juce::String prefix = "band" + juce::String (band_);
+    if (! paramId.startsWith (prefix))
+    {
+        // 全局的 lookahead 也属于本面板（EXPERT 行 + sliders_[4]）
+        return paramId == Param::ID::lookahead;
+    }
+
+    const juce::String suffix = paramId.substring (prefix.length());
+
+    static const char* kKnobSuffix[kPopKnobs] = {
+        "Threshold", "Range", "Attack", "Release", "Mix"
+    };
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        if (suffix != kKnobSuffix[k])
+            continue;
+        const double v = getParamPhysical (paramId);
+        values_[(size_t) k] = v;
+        normValues_[(size_t) k] = juce::jlimit (0.0f, 1.0f,
+            (float) ((v - paramRangeMinOf (paramId))
+                   / (double) juce::jmax (1.0e-6f,
+                                          paramRangeMaxOf (paramId) - paramRangeMinOf (paramId))));
+        // ⚠️ sendNotification=false：这是"参数 → 控件"的回灌，
+        //    再触发 onValueChange 会把值又写回参数（无限回环 + 与宿主打架）。
+        if (knobs_[(size_t) k] != nullptr)
+            knobs_[(size_t) k]->setValue (v, false);
+        return true;
+    }
+
+    if (suffix == "Ratio")   { sliders_[0] = getParamPhysical (paramId);          return true; }
+    if (suffix == "Knee")    { sliders_[1] = getParamNorm (paramId);              return true; }
+    if (suffix == "Ext")     { sliders_[2] = getParamNorm (paramId);              return true; }
+    if (suffix == "Detector"){ sliders_[3] = getParamNorm (paramId);              return true; }
+    if (suffix == "Dynamics")
+    {
+        dynamicsExpand_ = getParamNorm (paramId) > 0.5f;
+        return true;
+    }
+    if (suffix == "SCFilter" || suffix == "SCLow" || suffix == "SCHigh")
+        return true;        // EXPERT 行直接读参数绘制，无需缓存
+
+    return false;
 }
 
 void BandPopover::tickEditCursors (juce::uint32 nowMs)
@@ -704,8 +785,19 @@ void BandPopover::paint (juce::Graphics& g)
         }
     }
 
-    // ---- EXPERT 展开内容：5 行低频操作项（Phase：加侧链滤波三行）----
-    if (expertOpen_)
+    // ---- EXPERT 展开内容已移到 ExpertLayer 子组件（R35/C-b）----
+    // 原因：子组件永远画在父 paint() 之后，EXPERT 框若留在这里会被
+    // 5 个 Knob 盖住右半（旋钮 3/4 压在 SC HIGH-PASS / SC LOW-PASS 数值列上）。
+}
+
+// R35（C-b）：EXPERT 展开层——由 ExpertLayer 子组件调用，合成在旋钮之上。
+void BandPopover::paintExpertLayer (juce::Graphics& g)
+{
+    if (! open_ || ! expertOpen_ || anim_ < 0.004f)
+        return;
+    const float a = juce::jlimit (0.0f, 1.0f, anim_);
+    const auto r = popoverRect();
+
     {
         const auto box = expertContentRect();
         g.setColour (pal_.surface.withAlpha (0.96f * a));
@@ -758,6 +850,8 @@ void BandPopover::paint (juce::Graphics& g)
 
 void BandPopover::resized()
 {
+    if (expertLayer_ != nullptr)
+        expertLayer_->setBounds (getLocalBounds());
     layoutKnobs (true);
 }
 
@@ -812,3 +906,4 @@ juce::String BandPopover::fmtHzShort (float hz)
     if (hz >= 1000.0f) return juce::String (hz / 1000.0f, 1) + "k";
     return juce::String ((int) std::round (hz));
 }
+

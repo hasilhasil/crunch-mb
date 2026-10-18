@@ -210,15 +210,31 @@ void LinkedDrawer::layoutKnobs (bool force)
         // 旋钮顶部留 20/120 给标签行（Knob 的标签画在旋钮上方），
         // 否则标签会突出到面板外、贴到绘图区上
         const float x = panel.getX() + unitW * (float) k + (unitW - knobW) * 0.5f;
-        const float y = panel.getY() + panel.getHeight() * (20.0f / 120.0f)
-                      + (1.0f - juce::jlimit (0.0f, 1.0f, anim_)) * panel.getHeight();
+        // R35（A 同款）：去掉纵向滑入，改为位置恒定 + 透明度跟随 anim_。
+        // 原先这里也是 `+ (1 - anim) * panel.getHeight()`，把旋钮最多下移
+        // 一整个面板高度，而面板只做 alpha 淡入 → 旋钮从面板外滑上来。
+        const float y = panel.getY() + panel.getHeight() * (20.0f / 120.0f);
         const int nx = (int) x, ny = (int) y;
         auto* kb = knobs_[(size_t) k].get();
         // A3：只在位置变化超过 1px 时才 setBounds，避免每帧 5 次 resized()
         if (force || kb->getX() != nx || kb->getY() != ny
                  || kb->getWidth() != (int) knobW || kb->getHeight() != (int) knobH)
             kb->setBounds (nx, ny, (int) knobW, (int) knobH);
+        kb->setAlpha (juce::jlimit (0.0f, 1.0f, anim_));
     }
+}
+
+// R35（N4）：MIX 是抽屉里**唯一绝对值**的旋钮（其余 4 个是 Δ 偏移）。
+// 宿主自动化或 BYP 宏改过 Mix 后，这把旋钮的读数会停在旧值；
+// 偏移旋钮按定义不需要回读（applyOffset 现场读参数再叠加）。
+void LinkedDrawer::syncMixFromParams()
+{
+    auto& kb = knobs_[(size_t) kLinkedMixIndex];
+    if (kb == nullptr)
+        return;
+    const double v = getParamPhysical ("band0Mix");
+    if (std::abs (v - kb->getValue()) > 1.0e-6)
+        kb->setValue (v, false);      // 不回告，避免与参数互相打架
 }
 
 void LinkedDrawer::syncKnobVisibility()

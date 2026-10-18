@@ -235,12 +235,16 @@ void CrunchMBAudioProcessor::parameterChanged (const juce::String& parameterID, 
         triggerAsyncUpdate();          // 合并到下一消息循环
 
     // R32：任何参数变化都通知 UI"该醒了"。
-    // Phase E-2 空闲停表后，timerCallback（唯一的参数检测点）不再运行，
-    // 宿主自动化改参数时画面会永久停在旧值。这里既置原子标志（paint 消费），
-    // 也直接触发重绘回调——不必等下一个巡检周期。
+    // Phase E-2 空闲降频后 UI 唯一的检测点也是定时器，这里置原子标志兜底。
     uiWakeFlag_.store (true, std::memory_order_release);
-    if (uiWakeCallback_)
-        uiWakeCallback_();
+
+    // R35（N4）：带 id 的精确通知，让 UI 只刷新对应的参数副本。
+    // ⚠️ 只在**消息线程**调用回调：宿主做 sample-accurate 自动化时 setValue
+    //    可能发生在音频线程，那里绝不能碰 juce::Component，也不该构造
+    //    juce::String 拷贝。音频线程路径只置上面的 uiWakeFlag_，
+    //    由 UI 定时器做一次全量同步（见 DisplayView::syncUiFromParams）。
+    if (uiWakeCallback_ != nullptr && juce::MessageManager::existsAndIsCurrentThread())
+        uiWakeCallback_ (parameterID);
 }
 
 void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const noexcept
@@ -410,7 +414,18 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 void CrunchMBAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())
+    {
+        // R35（N14）：Analyzer 的 6 项显示设置不是 APVTS 参数，
+        // 这里作为 XML 属性一起存。否则关开编辑器 / 宿主重载工程后
+        // Pre/Post/Resolution/Speed/Tilt/Freeze 全部回到默认。
+        xml->setAttribute ("uiAnalyzerPre",    analyzerSettings_.preOn ? 1 : 0);
+        xml->setAttribute ("uiAnalyzerPost",   analyzerSettings_.postOn ? 1 : 0);
+        xml->setAttribute ("uiAnalyzerFft",    analyzerSettings_.fftSize);
+        xml->setAttribute ("uiAnalyzerSpeed",  analyzerSettings_.speed);
+        xml->setAttribute ("uiAnalyzerTilt",   (double) analyzerSettings_.tilt);
+        xml->setAttribute ("uiAnalyzerFrozen", analyzerSettings_.frozen ? 1 : 0);
         copyXmlToBinary (*xml, destData);
+    }
 }
 
 void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -418,6 +433,19 @@ void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBy
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
         {
+            // R35（N14）：先取回显示设置（缺失时保留当前值，兼容旧工程）。
+            if (xml->hasAttribute ("uiAnalyzerPre"))
+            {
+                AnalyzerSettings s;
+                s.preOn   = xml->getIntAttribute ("uiAnalyzerPre", 1) != 0;
+                s.postOn  = xml->getIntAttribute ("uiAnalyzerPost", 1) != 0;
+                s.fftSize = juce::jlimit (1024, 8192, xml->getIntAttribute ("uiAnalyzerFft", 2048));
+                s.speed   = juce::jlimit (0, 2, xml->getIntAttribute ("uiAnalyzerSpeed", 1));
+                s.tilt    = (float) xml->getDoubleAttribute ("uiAnalyzerTilt", 0.0);
+                s.frozen  = xml->getIntAttribute ("uiAnalyzerFrozen", 0) != 0;
+                analyzerSettings_ = s;
+            }
+
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
 
             // Phase（R14 修复）：replaceState 直接改 ValueTree，**不经过**
@@ -427,6 +455,10 @@ void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBy
             // 这里显式补一次结构重应用与延迟更新（消息线程安全）。
             applyStructure();
             updateLatency();
+
+            // R35（N14）：载入后旧的 displayRangeMode_ 之类缓存也可能失效，
+            // 用一次全量 UI 唤醒让 DisplayView 去拉最新的设置。
+            uiWakeFlag_.store (true, std::memory_order_release);
         }
 }
 

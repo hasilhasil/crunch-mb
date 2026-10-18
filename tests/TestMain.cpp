@@ -2313,6 +2313,7 @@ static void testInteraction()
         // 分割线 x 从当前参数反算（不用硬编码 306——参数可能已被前面用例改过）
         const float x1f = denormF (Param::ID::xover1, paramF (Param::ID::xover1));
         const float before = paramF (Param::ID::xover1);
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
         dv.mouseDownForTest (freqToXforTest (x1f), 300.0f);        // 抓取带 ±4px
         dv.mouseDragForTest (freqToXforTest (400.0f), 300.0f);
         const float after = paramF (Param::ID::xover1);
@@ -2340,6 +2341,7 @@ static void testInteraction()
         const float before = paramF (Param::bandMakeup (0));
         const float cx = freqToXforTest (60.0f);
         const float cy = dv.getCurveYAtFreq (60.0f);                       // 曲线真实 y（随量程变化）
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，曲线拖拽前先收起
         dv.mouseDownForTest (cx, cy);
         dv.mouseDragForTest (cx, cy - 120.0f);                             // 上拖 → Makeup 增
         const float after = paramF (Param::bandMakeup (0));
@@ -2683,6 +2685,7 @@ static void testFreqDotAndGlobalBypass()
         dv.mouseDownForTest (freqToXforTest (500.0f), 400.0f);  // < 800Hz → L 段
         check (dv.getSelectedBandForTest() == 0, "T24.5 xover1=800Hz 后 500Hz 处选 L 段",
                juce::String (dv.getSelectedBandForTest()));
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
         dv.mouseDownForTest (freqToXforTest (900.0f), 400.0f);  // > 800Hz → LM 段
         check (dv.getSelectedBandForTest() == 1, "T24.6 xover1=800Hz 后 900Hz 处选 LM 段",
                juce::String (dv.getSelectedBandForTest()));
@@ -3711,6 +3714,7 @@ static void testPopover()
         for (int t = 0; t < 30; ++t) dv.tickForTest();
         check (dv.isPopoverOpenForTest(), "T36.9 点曲线区 → Popover 打开（不抢占）", "");
 
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
         dv.mouseDownForTest (cx, cy);
         dv.mouseDragForTest (cx, cy - 80.0f);
         dv.mouseUpForTest (cx, cy - 80.0f);
@@ -4503,6 +4507,7 @@ static void testPopoverControls()
         // 之后拖曲线区域应正常改 Makeup（不再被滑杆分支吃掉）
         const float cy = dv.curveYAtFreqForTest (freqToXforTest (2449.0f));
         const float mkBefore = phys (Param::bandMakeup (2));
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
         dv.mouseDownForTest (freqToXforTest (2449.0f), cy);
         dv.mouseDragForTest (freqToXforTest (2449.0f), cy - 100.0f);
         dv.mouseUpForTest (freqToXforTest (2449.0f), cy - 100.0f);
@@ -4707,6 +4712,7 @@ static void testBandSweepMultiSelect()
                             return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
             return 0.0f;
         }();
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
         dv.mouseDownForTest (cx2, cy2);
         dv.mouseDragForTest (cx2, cy2 - 120.0f);
         dv.mouseUpForTest (cx2, cy2 - 120.0f);
@@ -4746,6 +4752,7 @@ static void testBandSweepMultiSelect()
                                 return (float) rp->getNormalisableRange().convertFrom0to1 (pw->getValue());
                 return 0.0f;
             }();
+            dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
             dv.mouseDownForTest (ex, ey);
             dv.mouseDragForTest (ex, ey + 80.0f);
             dv.mouseUpForTest (ex, ey + 80.0f);
@@ -9643,6 +9650,222 @@ static void testUiBatch1Fixes()
     }
 }
 
+// ------------------------------------------------------------
+// T88 Phase：第二批 UI 修复回归（R35）
+//   N4  打开的副本必须跟随参数变化（路线 A：parameterID 回调）
+//   N14 Analyzer 设置随工程状态持久化
+//   C-a 底栏下拉向上展开且整体在窗口内
+//   C-b EXPERT 覆盖层位于旋钮之上
+//   C-c popover 与 Analyzer / Output 面板双向互斥
+//   N2  popover 面板实心（点面板体不关/不跳段）
+//   N3  面板内滚轮不改分频
+//   D   刻度基准 X 与字号随窗口缩放
+// ------------------------------------------------------------
+static void testUiBatch2Fixes()
+{
+    std::cout << "\n--- T88 Phase UI 第二批修复（R35）---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T88.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ---- N4：Output 面板副本跟随外部参数变化 ----
+    {
+        check (dv.hasUiWakeCallbackForTest(), "T88.1 UI 唤醒回调已注册", "");
+
+        // 先把参数设成关，打开面板 → 面板显示 OFF
+        mb->setParamPhysicalForTest (Param::ID::autoGain, 0.0f);
+        mb->setParamPhysicalForTest (Param::ID::monitorMode, 0.0f);
+        dv.openOutputPanelForTest();
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+        check (! dv.outputPanelAutoGainForTest(), "T88.2 前置：面板显示 Auto-Gain 关", "");
+
+        // 外部（模拟宿主自动化 / MIDI）改成开 → 面板必须跟着变
+        mb->setParamPhysicalForTest (Param::ID::autoGain, 1.0f);
+        mb->setParamPhysicalForTest (Param::ID::monitorMode, 6.0f);   // Gain Reduction
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        std::cout << "  外部改参后：面板 autoGain=" << (int) dv.outputPanelAutoGainForTest()
+                  << "  monitor=" << dv.outputPanelMonitorForTest() << std::endl;
+        check (dv.outputPanelAutoGainForTest(),
+               "T88.3 外部打开 Auto-Gain → 面板副本跟着变成 ON（N4 核心）", "");
+        check (dv.outputPanelMonitorForTest() == 6,
+               "T88.4 外部切 Monitor=GainReduction → 面板副本同步",
+               juce::String (dv.outputPanelMonitorForTest()));
+
+        // 再关回去
+        mb->setParamPhysicalForTest (Param::ID::autoGain, 0.0f);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        check (! dv.outputPanelAutoGainForTest(), "T88.5 外部关闭 Auto-Gain → 面板回到 OFF", "");
+        dv.clickOutsideOutputPanelForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+    }
+
+    // ---- N4：popover 旋钮 / 滑杆副本跟随外部参数 ----
+    {
+        dv.openPopoverForBandForTest (1);
+        dv.snapPopoverForTest();
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        const double before = dv.getPopoverValueForTest (0);   // Threshold
+
+        mb->setParamPhysicalForTest (Param::bandThreshold (1), -33.0f);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        const double after = dv.getPopoverValueForTest (0);
+        std::cout << "  popover Threshold: " << before << " -> " << after << std::endl;
+        check (std::abs (after - (-33.0)) < 0.2,
+               "T88.6 外部改 Threshold → popover 旋钮副本同步（N4）",
+               juce::String (after));
+
+        // 滑杆副本：RATIO
+        mb->setParamPhysicalForTest (Param::bandRatio (1), 12.0f);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        check (std::abs (dv.popoverSliderValueForTest (0) - 12.0) < 0.2,
+               "T88.7 外部改 Ratio → popover 滑杆副本同步",
+               juce::String (dv.popoverSliderValueForTest (0)));
+
+        dv.closePopoverForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+    }
+
+    // ---- N4：抽屉 MIX 副本跟随外部参数 ----
+    {
+        dv.openLinkedDrawerForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        check (dv.isLinkedOpenForTest(), "T88.8 抽屉已打开", "");
+
+        mb->setParamPhysicalForTest (Param::bandMix (0), 35.0f);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        std::cout << "  抽屉 MIX 副本 = " << dv.drawerMixValueForTest() << std::endl;
+        check (std::abs (dv.drawerMixValueForTest() - 35.0) < 0.5,
+               "T88.9 外部改 Mix → 抽屉 MIX 旋钮副本同步（N4）",
+               juce::String (dv.drawerMixValueForTest()));
+        mb->setParamPhysicalForTest (Param::bandMix (0), 100.0f);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+    }
+
+    // ---- C-a：底栏下拉向上展开且整体在窗口内 ----
+    {
+        juce::Image img (juce::Image::ARGB, 920, 620, true);
+        { juce::Graphics g (img); dv.paintForTest (g); }
+        const auto sel = dv.globalSelectorRectForTest (0);
+        dv.mouseDownForTest (sel.getCentreX(), sel.getCentreY());
+        dv.mouseUpForTest (sel.getCentreX(), sel.getCentreY());
+        check (dv.isDropDownOpenForTest(), "T88.10 底栏选择器下拉已打开", "");
+        const auto dr = dv.dropDownRectForTest();
+        std::cout << "  下拉矩形: y=" << dr.getY() << " bottom=" << dr.getBottom()
+                  << "（窗口高 620）" << std::endl;
+        check (dr.getY() >= 0.0f && dr.getBottom() <= 620.0f,
+               "T88.11 下拉整体在窗口内（原先画到窗口外只露 8px）",
+               juce::String (dr.getY()) + ".." + juce::String (dr.getBottom()));
+        check (dr.getBottom() <= 620.0f - 32.0f + 1.0f,
+               "T88.12 下拉在底栏之上展开（不压住 global bar）",
+               juce::String (dr.getBottom()));
+        dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::escapeKey));
+    }
+
+    // ---- C-b：EXPERT 覆盖层在旋钮之上 ----
+    {
+        dv.openPopoverForBandForTest (2);
+        dv.snapPopoverForTest();
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        check (dv.expertLayerOnTopForTest(),
+               "T88.13 EXPERT 覆盖层位于最上层（不再被旋钮盖住）", "");
+        dv.closePopoverForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+    }
+
+    // ---- C-c：popover 与 Analyzer / Output 双向互斥 ----
+    {
+        // 开 Analyzer 面板（sticky）
+        const auto an = dv.analyzerButtonRectForTest();
+        dv.mouseDownForTest (an.getCentreX(), an.getCentreY());
+        dv.mouseUpForTest (an.getCentreX(), an.getCentreY());
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        check (dv.isAnalyzerOpenForTest(), "T88.14 前置：Analyzer 面板已开", "");
+
+        // 开 popover → Analyzer 必须收起
+        dv.openPopoverForBandForTest (0);
+        dv.snapPopoverForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        check (dv.isPopoverOpenForTest(), "T88.15 popover 已开", "");
+        check (! dv.isAnalyzerOpenForTest(),
+               "T88.16 开 popover → Analyzer 面板自动收起（C-c）", "");
+
+        // 反向：开 Output 面板 → popover 收起
+        const auto outB = dv.outputButtonRectForTest();
+        dv.mouseDownForTest (outB.getCentreX(), outB.getCentreY());
+        dv.mouseUpForTest (outB.getCentreX(), outB.getCentreY());
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+        check (dv.isOutputOpenForTest(), "T88.17 Output 面板已开", "");
+        check (! dv.isPopoverOpenForTest(),
+               "T88.18 开 Output 面板 → popover 自动收起（C-c 反向）", "");
+        dv.clickOutsideOutputPanelForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+    }
+
+    // ---- N2：popover 面板实心 ----
+    {
+        dv.openPopoverForBandForTest (1);
+        dv.snapPopoverForTest();
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+        const int bandBefore = dv.getPopoverBandForTest();
+        const auto pr = dv.popoverRectForTest();
+        // 点面板内既非控件也非 ✕ 的位置（面板正中偏下）
+        const float px = pr.getCentreX();
+        const float py = pr.getY() + pr.getHeight() * 0.93f;
+        dv.mouseDownForTest (px, py);
+        dv.mouseUpForTest (px, py);
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+        std::cout << "  点面板体后：open=" << (int) dv.isPopoverOpenForTest()
+                  << "  band=" << dv.getPopoverBandForTest()
+                  << "（原 " << bandBefore << "）" << std::endl;
+        check (dv.isPopoverOpenForTest(),
+               "T88.19 点面板体不会把面板关掉（N2）", "");
+        check (dv.getPopoverBandForTest() == bandBefore,
+               "T88.20 点面板体不会跳到别的段（N2）",
+               juce::String (dv.getPopoverBandForTest()));
+    }
+
+    // ---- N3：面板内滚轮不改分频 ----
+    {
+        const float x1Before = mb->apvts.getRawParameterValue (Param::ID::xover1)->load();
+        const auto pr = dv.popoverRectForTest();
+        dv.mouseWheelForTest (pr.getCentreX(), pr.getCentreY(), 0.0f, 1.0f);
+        const float x1After = mb->apvts.getRawParameterValue (Param::ID::xover1)->load();
+        std::cout << "  面板内滚轮: xover1 " << x1Before << " -> " << x1After << std::endl;
+        check (std::abs (x1After - x1Before) < 0.01f,
+               "T88.21 面板内滚轮不改分频（N3）", juce::String (x1After));
+        dv.closePopoverForTest();
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+    }
+
+    // ---- D：刻度基准 X 与字号随窗口缩放 ----
+    {
+        const float sx920 = dv.gainScaleRightXForTest();
+        const float fs920 = dv.uiFontScaleForTest();
+        dv.setSize (1840, 1240);
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+        const float sx1840 = dv.gainScaleRightXForTest();
+        const float fs1840 = dv.uiFontScaleForTest();
+        std::cout << "  刻度基准X: 920→" << sx920 << "  1840→" << sx1840
+                  << "  |  字号倍率: " << fs920 << " → " << fs1840 << std::endl;
+        check (sx1840 > sx920 * 1.8f,
+               "T88.22 刻度基准 X 随宽度缩放（原先写死 882，跑画面中间）",
+               juce::String (sx920) + " -> " + juce::String (sx1840));
+        check (sx1840 > 1700.0f,
+               "T88.23 1840 宽时刻度贴在右缘而非画面中间", juce::String (sx1840));
+        check (fs1840 > fs920 * 1.5f,
+               "T88.24 字号倍率随高度缩放", juce::String (fs920) + " -> " + juce::String (fs1840));
+        dv.setSize (920, 620);
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -9736,6 +9959,7 @@ int main()
     testUiNeverGetsStuck();           // T85 Phase UI 停表自恢复
     testChildrenDoNotSwallowMouse();  // T86 Phase 全屏子组件不得拦截鼠标
     testUiBatch1Fixes();              // T87 Phase UI 第一批修复（R34）
+    testUiBatch2Fixes();              // T88 Phase UI 第二批修复（R35）
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
@@ -9743,6 +9967,7 @@ int main()
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;
     return gFail == 0 ? 0 : 1;
 }
+
 
 
 

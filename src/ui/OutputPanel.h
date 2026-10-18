@@ -74,6 +74,31 @@ public:
     void  setAutoGainForTest (bool v)     { autoGain_ = v; }
     void  setMonitorForTest (int idx)     { monitorIdx_ = juce::jlimit (0, 6, idx); }
 
+    /** R35（N4）：把 6 行副本回读成真实参数值。
+     *  以前只在"打开面板那一刻"同步一次，于是宿主自动化改 Auto-Gain / Monitor、
+     *  或 Alt+拖 OUT 改 Output Gain 之后，面板显示与真实状态相反——
+     *  再点一下该行就会写出一个和用户预期相反的值。 */
+    void syncFromBackend (float inputGainDb, float outputGainDb, float mixPct,
+                          bool anyBypassed, bool autoGainOn, int monitorIdxIn)
+    {
+        const int mon = juce::jlimit (0, 6, monitorIdxIn);
+        const bool changed = (std::abs (inputGainDb_  - inputGainDb)  > 1.0e-4f)
+                          || (std::abs (outputGainDb_ - outputGainDb) > 1.0e-4f)
+                          || (std::abs (globalMixPct_ - mixPct)       > 1.0e-4f)
+                          || (globalBypass_ != anyBypassed)
+                          || (autoGain_ != autoGainOn)
+                          || (monitorIdx_ != mon);
+        if (! changed)
+            return;
+        inputGainDb_  = inputGainDb;
+        outputGainDb_ = outputGainDb;
+        globalMixPct_ = mixPct;
+        globalBypass_ = anyBypassed;
+        autoGain_     = autoGainOn;
+        monitorIdx_   = mon;
+        repaint();
+    }
+
     // ---- 命中测试 ----
     juce::Rectangle<float> panelRect() const;
     /** rowOut: 0=InputGain 1=OutputGain 2=GlobalMix 3=GlobalBypass 4=AutoGain 5=Monitor */

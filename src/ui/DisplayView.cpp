@@ -21,10 +21,11 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     setOpaque (true);
     startTimerHz (60);          // 电平表弹道 + 频谱帧拾取 + 曲线刷新
 
-    // R32：向处理器注册"参数变了就重绘"的回调。
-    // Phase E-2 空闲时定时器降到 4Hz 巡检，若没有这个回调，
-    // 宿主自动化改参数后最多要等 250ms 才在画面上反映。
-    proc_.setUiWakeCallback ([this] { uiWakeFromParam(); });
+    // R32/R35：向处理器注册"参数变了就刷新"的回调。
+    // Phase E-2 空闲时定时器降到 4Hz 巡检，没有这个回调的话宿主自动化
+    // 改参数后最多要等 250ms 才反映；更重要的是 N4：
+    // popover / 抽屉 / Output 面板各自持有参数快照，必须靠这里精确刷新。
+    proc_.setUiWakeCallback ([this] (const juce::String& id) { uiWakeFromParam (id); });
 
     // 仿 EQ 曲线频率点（mockup：20Hz→20kHz 对数，241 点）
     curveFreqs_.resize ((size_t) kCurvePoints);
@@ -71,6 +72,23 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     analyzerPanel_ = std::make_unique<AnalyzerPanel>();
     analyzerPanel_->setHostBounds (getLocalBounds());
     analyzerPanel_->onSettingsChanged = [this] { applyAnalyzerSettings(); };
+    // R35（N14）：用 processor 里持久化的设置初始化，否则关开编辑器 /
+    // 宿主重载工程后 Pre/Post/Resolution/Speed/Tilt/Freeze 全部回到默认。
+    {
+        const auto& as = proc_.getAnalyzerSettings();
+        analyzerPanel_->setPreOnForTest  (as.preOn);
+        analyzerPanel_->setPostOnForTest (as.postOn);
+        analyzerPanel_->setFftSizeForTest (as.fftSize);
+        analyzerPanel_->setSpeedForTest  (as.speed);
+        analyzerPanel_->setTiltForTest   (as.tilt);
+        analyzerPanel_->setFrozenForTest (as.frozen);
+        analyzerPreOn_   = as.preOn;
+        analyzerPostOn_  = as.postOn;
+        analyzerFftSize_ = as.fftSize;
+        analyzerSpeed_   = as.speed;
+        analyzerTilt_    = as.tilt;
+        analyzerFreeze_  = as.frozen;
+    }
     addAndMakeVisible (*analyzerPanel_);
     // Phase D-4：Output 自绘面板（同一套 sticky 语义）
     outputPanel_ = std::make_unique<OutputPanel>();
@@ -143,9 +161,6 @@ void DisplayView::togglePopover (bool open)
         return;
     if (open)
     {
-        // O6 方案1：与抽屉互斥
-        if (linkedDrawer_ != nullptr)
-            linkedDrawer_->setOpen (false);
         openPopoverForBand (selectedBand_);
     }
     else
@@ -157,6 +172,19 @@ void DisplayView::openPopoverForBand (int band)
 {
     if (bandPopover_ == nullptr)
         return;
+    // ---- 开合仲裁（放在本函数里，任何打开路径都经过）----
+    // O6 方案1：与 LINKED 抽屉互斥。
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->setOpen (false);
+    // R35（C-c）：Analyzer / Output 面板的 z 序在 bandPopover_ 之上
+    //   （由子组件构造顺序决定），它们 sticky 开着时会把 popover 盖住。
+    //   做成**双向互斥**：开 popover 就收起那两个面板，反过来开面板也会
+    //   收起 popover（见 mouseDown 的对应分支）。
+    //   ⚠️ 不用 toFront()：那会把 popover 抬到 freqInput_ 之上，
+    //      双击改分频时的输入框反而会被遮住。
+    if (analyzerPanel_ != nullptr) analyzerPanel_->clickOutside();
+    if (outputPanel_ != nullptr)   outputPanel_->clickOutside();
+
     float lx = 0.0f, rx = 0.0f;
     bandEdgesPx (band, lx, rx);
     bandPopover_->setBand (band);
@@ -216,6 +244,9 @@ void DisplayView::onBandBypassChanged (int band, bool bypassed)
 
 DisplayView::~DisplayView()
 {
+    // R35（N4）：必须先摘掉回调。processor 的生命周期长于编辑器，
+    // 残留的回调会指向已释放的 DisplayView（参数一变就是 use-after-free）。
+    proc_.setUiWakeCallback (nullptr);
     stopTimer();
 }
 
@@ -262,18 +293,74 @@ void DisplayView::setActive (bool active) noexcept
     }
 }
 
-// ---------------- R32：参数变化时的立即唤醒 ----------------
-// 由 processor 的 parameterChanged 在消息线程调用。
-// Phase E-2 空闲时定时器降到 kIdleHz(4) 巡检；没有这个回调的话，
-// 宿主自动化改参数后最多要等一个巡检周期（250ms）才在画面上反映。
-// 这里直接提回满帧并重绘一帧，让参数改动"即时可见"。
-void DisplayView::uiWakeFromParam()
+// ---------------- R32/R35：参数变化时的立即唤醒 + 精确刷新 ----------------
+// 由 processor 的 parameterChanged 在**消息线程**调用（音频线程自动化只置
+// 原子标志，见 PluginProcessor::parameterChanged）。
+//
+// N4 的本质是：popover / LINKED 抽屉 / Output 面板各自持有参数快照，
+// 以前只在"打开那一刻"同步一次，之后单向写参数。于是宿主自动化、
+// MIDI、或其它控件改同一参数后，这些面板的读数会永久停在旧值
+// （Output 面板的 Auto-Gain / Monitor 行甚至会显示与真实相反）。
+//
+// 这里把 id 收集起来，由定时器统一消费——这样：
+//   · 一次自动化 sweep 产生几十次回调时只刷新一次；
+//   · 刷新动作仍在消息线程、且不在回调栈里（避免回调中改组件状态）。
+void DisplayView::uiWakeFromParam (const juce::String& id)
 {
     if (isTimerRunning())
         startTimerHz (60);
-    idleFrames_     = 0;        // 重置降频滞后计数（否则下一帧就又降频）
-    uiStatePending_ = true;     // 阻止 timerCallback 立刻又降频
+    idleFrames_ = 0;
+    uiStatePending_ = true;
+    if (id.isNotEmpty() && ! pendingParamIds_.contains (id))
+        pendingParamIds_.add (id);          // 空 id = 全量同步（音频线程兜底）
     repaint();
+}
+
+// 把"参数已变"落到三个副本上。id 只是**选择器**（决定谁需要刷新），
+// 真正的取值仍由各组件向 backend 读——副本不持有第二份真源。
+void DisplayView::syncUiFromParams (bool fullSync)
+{
+    // ---- popover ----
+    if (bandPopover_ != nullptr && bandPopover_->isOpen())
+    {
+        if (fullSync)
+            bandPopover_->syncFromParams();
+        else
+            for (const auto& id : pendingParamIds_)
+                if (bandPopover_->syncParam (id))
+                    break;                  // 已在内部按需刷新
+    }
+
+    // ---- LINKED 抽屉（只有 MIX 是绝对值，偏移旋钮按定义不需要回读）----
+    if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen())
+        linkedDrawer_->syncMixFromParams();
+
+    // ---- Output 面板 ----
+    if (outputPanel_ != nullptr)
+        outputPanel_->syncFromBackend (
+            getParamPhysical (Param::ID::inputGain),
+            getParamPhysical (Param::ID::outputGain),
+            getParamPhysical (Param::ID::globalMix),
+            isAllBypassed(),
+            getParamPhysical (Param::ID::autoGain) >= 0.5f,
+            Param::choiceIndexFromValue (getParamPhysical (Param::ID::monitorMode)));
+}
+
+// ---------------- R35 测试钩子 ----------------
+bool DisplayView::hasUiWakeCallbackForTest() const
+{
+    // 通过"能不能触发一次空 id 唤醒"间接判断太脆弱，这里直接问处理器。
+    return proc_.hasUiWakeCallbackForTest();
+}
+
+double DisplayView::drawerMixValueForTest() const
+{
+    return linkedDrawer_ != nullptr ? linkedDrawer_->mixValueForTest() : 0.0;
+}
+
+bool DisplayView::expertLayerOnTopForTest() const
+{
+    return bandPopover_ != nullptr && bandPopover_->expertLayerIsTopmost();
 }
 
 // ---------------- 坐标映射（mockup v9 常量） ----------------
@@ -436,18 +523,27 @@ void DisplayView::drawScales (juce::Graphics& g)
     //   右轴 = 曲线/Range 增益域（accent，±curveRangeDisplay_）
     //   左轴 = 频谱/电平域（dim，0…−100）
     // #4：刻度文字 clamp 在绘图区内（上下各留一字高），避免首尾被状态栏/global bar 盖住
+    //
+    // ⚠️ R35（D）：这里所有字号与文字框高度都必须随窗口缩放。
+    //   原先字号写死 13.0f、框高写死 14/16px，而**右轴基准 X 用的是未缩放的
+    //   常量 kGainScaleRightX=882**——窗口拉到 1840 宽时右轴读数画在 x≈770，
+    //   而绘图区右缘在 1764，标签直接跑到画面中间。
+    //   用户实测"音量数字刻度表为固定缩放值不会跟着 UI 放大"。
+    const float fs = uiFontScale();          // 以 620 高为基准的字号倍率
     const float top = plotTopPx();
     const float bottom = plotBottomPx();
     const float W = (float) getWidth();
     auto clampTextBox = [&] (juce::Rectangle<float> r) -> juce::Rectangle<float>
     {
         const float h = r.getHeight();
-        const float y = juce::jlimit (top + h, bottom - h * 2.0f, r.getY());
+        const float y = juce::jlimit (juce::jmin (top + h, bottom - h),
+                                      juce::jmax (top + h, bottom - h * 2.0f),
+                                      r.getY());
         const float x = juce::jmin (r.getX(), W - r.getWidth() - 1.0f);
         return juce::Rectangle<float> (x, y, r.getWidth(), h);
     };
 
-    g.setFont (MBTheme::font (MBTheme::regular(), 13.0f));   // #5：字号 10→13
+    g.setFont (MBTheme::font (MBTheme::regular(), 13.0f * fs));   // #5：字号 10→13（D：随缩放）
 
     // 右轴：曲线/Range 增益刻度（accent）
     // #2：对齐 Pro-MB 截图——步长随量程：±3/±6 → 1dB、±12 → 2dB、±30 → 10dB；
@@ -455,12 +551,17 @@ void DisplayView::drawScales (juce::Graphics& g)
     {
         const float R = curveRangeDisplay_;
         const float step = (R <= 6.5f) ? 1.0f : (R <= 12.5f) ? 2.0f : 10.0f;
+        const float labelW = sx (56.0f);
+        const float labelH = sy (14.0f);
+        // R35（D）：基准 X 必须走 sx()，否则窗口变宽后跑到画面中间
+        const float scaleRightX = sx (kGainScaleRightX);
         for (float db = -std::floor (R / step) * step; db <= R + 1.0e-4f; db += step)
         {
             const juce::String t = (db > 0.0f ? "+" : "") + juce::String (db, (step < 1.0f ? 1 : 0));
             g.setColour (std::abs (db) < 1.0e-4f ? pal_.text : pal_.accent);
-            g.drawText (t, clampTextBox (juce::Rectangle<float> (kGainScaleRightX - sx (56.0f), gainToY (db) - 7.0f,
-                                                                 sx (56.0f), 14.0f)),
+            g.drawText (t, clampTextBox (juce::Rectangle<float> (scaleRightX - labelW,
+                                                                 gainToY (db) - labelH * 0.5f,
+                                                                 labelW, labelH)),
                         juce::Justification::centredRight);
         }
     }
@@ -469,12 +570,13 @@ void DisplayView::drawScales (juce::Graphics& g)
     g.setColour (pal_.dim);
     for (int db = 0; db >= -100; db -= 20)
         g.drawText (juce::String (db),
-                    clampTextBox (juce::Rectangle<float> (sx (4.0f), specDbToY ((float) db) - 7.0f,
-                                                          sx (48.0f), 14.0f)),
+                    clampTextBox (juce::Rectangle<float> (sx (4.0f),
+                                                          specDbToY ((float) db) - sy (7.0f),
+                                                          sx (48.0f), sy (14.0f))),
                     juce::Justification::centredLeft);
 
     // 底部频率刻度（常显）——#3：右缘标签右对齐并提亮；#5：字号 10.5→13
-    g.setFont (MBTheme::font (MBTheme::regular(), 13.0f));
+    g.setFont (MBTheme::font (MBTheme::regular(), 13.0f * fs));
     struct FLabel { float f; const char* t; bool bold; };
     for (const auto& l : { FLabel { 50, "50", false }, FLabel { 100, "100", false },
                            FLabel { 200, "200", false }, FLabel { 500, "500", false },
@@ -484,11 +586,12 @@ void DisplayView::drawScales (juce::Graphics& g)
     {
         g.setColour (l.bold ? pal_.text : pal_.dim);      // #3：20k 用亮色
         const float w = sx (46.0f);
+        const float h = sy (16.0f);                      // R35（D）：随缩放
         float x = freqToX (l.f) - w * 0.5f;
         // #3：右缘附近的标签右对齐到**绘图区右缘**（避开 IN/OUT 音量表）
         if (freqToX (l.f) > plotRightPx() - w)
             x = plotRightPx() - w;
-        g.drawText (l.t, juce::Rectangle<float> (x, sy (546.0f), w, 16.0f),
+        g.drawText (l.t, juce::Rectangle<float> (x, sy (546.0f), w, h),
                     juce::Justification::centredTop);
     }
 }
@@ -1233,6 +1336,20 @@ void DisplayView::timerCallback()
 
     pollStructureParams();
 
+    // R35（N4）：消费"参数已变"的通知，刷新各面板里的参数副本。
+    //   正常路径：uiWakeFromParam 收集了 parameterID → 精确刷新。
+    //   兜底路径：只有原子标志被置（音频线程自动化 / setStateInformation）
+    //             → 做一次全量同步。
+    {
+        const bool flagSet  = proc_.consumeUiWakeFlag();
+        const bool fullSync = flagSet && pendingParamIds_.isEmpty();
+        if (fullSync || ! pendingParamIds_.isEmpty())
+        {
+            syncUiFromParams (fullSync);
+            pendingParamIds_.clearQuick();
+        }
+    }
+
     // range 参数先读（autoExpand 与 Range 层都需要最新值）
     for (int b = 0; b < Param::kNumBands; ++b)
         bandRangeDb_[(size_t) b] =
@@ -1790,8 +1907,11 @@ int DisplayView::hitTestFreqDot (juce::Point<float> p, int& bandOut) const
             if (d < bd) { bd = d; best = i; }
         }
         const float py = gainToY (baseDb_[(size_t) best]);       // #5：只绑基准线（Makeup）
-        const float r = sx (11.0f);                      // 命中半径（含光环）
-        if (std::abs (p.x - px) <= r && std::abs (p.y - py) <= r)
+        const float rx = sx (11.0f);                     // 命中半径（含光环）
+        // R35（N12）：纵向容差必须走 sy()。原先 x/y 都用 sx(11)，
+        //   窗口宽高比一变，纵向手感就跟横向不一致。
+        const float ry = sy (11.0f);
+        if (std::abs (p.x - px) <= rx && std::abs (p.y - py) <= ry)
         {
             bandOut = b;
             return 1;
@@ -2573,11 +2693,18 @@ juce::Rectangle<float> DisplayView::dropDownRect() const
         return juce::Rectangle<float> (x, y, w, h);
     }
 
-    // 全局选择器：锚定在被点的那一项下方，行高稍矮（global bar 只有 32px）
+    // 全局选择器：**向上**展开（R35/C-a）。
+    //   原先写的是 `y = globalBarY_ + sy(8) + sy(16)`，也就是从底栏往下画——
+    //   而底栏就在窗口最底部，于是整个菜单落在组件之外被裁掉：
+    //   920×620 时只有约 8px 露出来，5 个选择器全部不可用，
+    //   而且那 8px 正好压在下拉首项上 → 点一下就静默选中第一项。
     const float w = sx (150.0f);
     const float rowH = sy (19.0f);
-    const float h = rowH * (float) dropDownCount_;
-    const float y = globalBarY_ + sy (8.0f) + sy (16.0f);
+    const float h = rowH * (float) juce::jmax (1, dropDownCount_);
+    const float barTop = (float) getHeight() - sy (kGlobalBarH);
+    float y = barTop - h - sy (6.0f);
+    // 不要顶穿顶栏
+    y = juce::jmax (sy (kTopStripH) + sy (2.0f), y);
     const float x = juce::jmax (sx (8.0f),
                         juce::jmin (globalBarAnchorX_, (float) getWidth() - w - sx (8.0f)));
     return juce::Rectangle<float> (x, y, w, h);
@@ -2780,7 +2907,10 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     }
 
     // 多层投影（与弹层面板同一套深度语言）
+    // R35（N11）：偏移/扩张必须随面板高度缩放，否则窗口放大后阴影贴死在
+    //   文本边上（BandPopover 的面板阴影早已乘了 k，这里一直没乘）。
     {
+        const float k = juce::jmax (0.6f, r.getHeight() / (22.0f * 5.0f));
         struct Layer { float dy; float alpha; float expand; };
         const Layer layers[3] = {
             { 2.0f, 0.30f, 0.0f },
@@ -2789,9 +2919,9 @@ void DisplayView::drawDropDown (juce::Graphics& g)
         };
         for (const auto& L : layers)
         {
-            auto shadow = r.translated (0.0f, L.dy).expanded (L.expand);
+            auto shadow = r.translated (0.0f, L.dy * k).expanded (L.expand * k);
             g.setColour (juce::Colours::black.withAlpha (L.alpha));
-            g.fillRoundedRectangle (shadow, r.getWidth() * 0.08f + L.expand);
+            g.fillRoundedRectangle (shadow, r.getWidth() * 0.08f + L.expand * k);
         }
     }
 
@@ -2800,7 +2930,9 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     g.setColour (pal_.accent.withAlpha (0.55f));
     g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
 
-    g.setFont (MBTheme::font (MBTheme::regular(), globalMode ? 10.0f : 10.0f));
+    // R35（N10）：原为 `globalMode ? 10.0f : 10.0f`（两个分支相同，恒等三元），
+    //   作者显然想区分两种模式字号但没写出来。这里按实际需要保留单一字号。
+    g.setFont (MBTheme::font (MBTheme::regular(), sy (10.0f)));
     for (int i = 0; i < dropDownCount_; ++i)
     {
         const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
@@ -2840,8 +2972,10 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 {
     ensureTimerRunning();      // Phase E-2
 
-    // Phase（R19）：popover 打开且指针在其中 → 滚轮归滑轨控件，
-    // 不再去改频段宽度（否则在 Ratio/Knee 上滚轮会突然改变分频）。
+    // Phase（R19）：popover 打开且指针在其中 → 滚轮归面板，不再改分频。
+    // R35（N3）：原先只在命中**滑轨**时消费滚轮，落在旋钮/EXPERT/空白上
+    //   仍会穿到下面的"按分区改 crossover"分支——用户在二级菜单里滚一下就
+    //   把分频点改了。现在只要在面板矩形内就整体拦下。
     if (bandPopover_ != nullptr && bandPopover_->isOpen()
         && bandPopover_->popoverRectForTest().contains (e.position))
     {
@@ -2853,6 +2987,7 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
             if (bandPopover_->stepSlider (sk, notches, fine))
                 return;
         }
+        return;      // R35（N3）：旋钮/EXPERT/空白上的滚轮一律不落到分频
     }
 
     // #4 修订：只要在**分区内**滚轮就可改该段大小（不要求 hover 在频点上）
@@ -2942,13 +3077,33 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // -1.5) R35（C-a）：打开的下拉**优先**消费自己矩形内的点击。
+    //   原先这段排在 LINKED 按钮/选择器之后，而底栏下拉改成**向上**展开后
+    //   会和 LINKED 梯形按钮（y 560..589）重叠 → 选最后一项时点到的是按钮，
+    //   下拉项永远选不中（T53.7/T53.9 就是这么失败的）。
+    //   ⚠️ 这里**只**处理"点中某一项"，不在点外面时关掉——关闭必须留给后面
+    //     的原始分支，否则"再点同一个选择器 = 收起"的 toggle 语义会被破坏
+    //     （先关掉再开，永远是打开）。
+    if (dropDownOpen_)
+    {
+        int item = -1;
+        if (hitTestDropDownItem (p, item))
+        {
+            clickDropDownItem (item);
+            return;
+        }
+    }
+
     // 0a) Analyzer 按钮（Pro-MB 底栏 Analyzer 对标，当前占原 IN 读数位）
     // Phase D：**Pro-MB 签名式交互** —— 悬停打开（非 sticky）、点击变 sticky、再点收起。
     // 原来只有"点击弹原生菜单"，没有悬停语义，也没有 sticky。
     if (hitTestAnalyzerButton (p))
     {
         if (analyzerPanel_ != nullptr)
+        {
+            togglePopover (false);       // R35（C-c）：双向互斥，避免被盖住
             analyzerPanel_->clickButton();
+        }
         repaint();
         return;
     }
@@ -3008,6 +3163,14 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
                 return;
             }
         }
+
+        // R35（N2）：Popover 面板必须"实心"——落在面板内、但没命中任何控件的
+        // 点击要就地吃掉。此前没有这一步，于是点面板标题/空隙会一路走到
+        // 下面的绘图区分支：同段 = togglePopover 把面板**关掉**；
+        // 落在别的段 x 范围 = 切到那段并重开；还会顺手布防 BandSweep，
+        // 从面板内拖动就变成扫段。用户实测"点二级菜单空白处会误关/跳段"。
+        if (bandPopover_->popoverRectForTest().contains (p))
+            return;
     }
 
     // 0) LINKED 抽屉梯形按钮（§5.2）：Phase D-2 sticky 语义
@@ -3043,17 +3206,10 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         openDisplayRangeMenu();
         return;
     }
-    // 下拉打开时：项点击 / 点外面收起
+    // 下拉打开时：点外面收起
+    //   （"点中某一项"已在 mouseDown 开头优先处理，见 R35/C-a）
     if (dropDownOpen_)
-    {
-        int item = -1;
-        if (hitTestDropDownItem (p, item))
-        {
-            clickDropDownItem (item);
-            return;
-        }
         closeDropDown();
-    }
 
     // 0e) Phase D-7：MIDI Learn 按钮（顶栏）
     // ⚠️ 命中要现算，不能读 midiBtnRect_——那个成员是 drawTopStrip 里赋值的，
@@ -3098,6 +3254,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         }
         if (outputPanel_ != nullptr)
         {
+            togglePopover (false);       // R35（C-c）：双向互斥
             // 打开前先从参数同步当前值，避免显示过期副本
             outputPanel_->setInputGainForTest (getParamPhysical (Param::ID::inputGain));
             outputPanel_->setOutputGainForTest (getParamPhysical (Param::ID::outputGain));
@@ -3589,6 +3746,17 @@ void DisplayView::applyAnalyzerSettings()
     eng.setTilt (analyzerTilt_);
     eng.setFrozen (analyzerFreeze_);
     syncSpectrumLayers();
+
+    // R35（N14）：把显示设置写回 processor，随工程状态一起持久化。
+    // 这 6 项不是 APVTS 参数（不该被宿主自动化），所以单独存进 XML 属性。
+    CrunchMBAudioProcessor::AnalyzerSettings as;
+    as.preOn   = analyzerPreOn_;
+    as.postOn  = analyzerPostOn_;
+    as.fftSize = analyzerFftSize_;
+    as.speed   = analyzerSpeed_;
+    as.tilt    = analyzerTilt_;
+    as.frozen  = analyzerFreeze_;
+    proc_.setAnalyzerSettings (as);
 }
 
 // ---------------- 入口 ----------------
@@ -3596,15 +3764,10 @@ void DisplayView::paint (juce::Graphics& g)
 {
     pollStructureParams();      // 分割线/分区/段名跟随参数（C2）；首帧 cachedX 兜底
 
-    // R32：参数变化唤醒。Phase E-2 降频后本函数可能很久不被调用；
-    // 一旦被调用且处理器报"有参数变过"，立即提回满帧并重绘一帧，
-    // 不必等下一个巡检周期（否则用户改参数后最多要等 250ms 才见反馈）。
-    if (proc_.consumeUiWakeFlag())
-    {
-        ensureTimerRunning();
-        startTimerHz (60);
-        repaint();
-    }
+    // R32/R35：参数变化的处理统一挪到 timerCallback 的 syncUiFromParams()。
+    // R35（N9）：这里原来是「paint() 里 consumeUiWakeFlag() + startTimerHz(60)
+    //   + repaint()」——在绘制中再请求绘制，语义混乱且会多一帧无效绘制。
+    //   现在时序是：parameterChanged 置脏 → 定时器消费 → 刷新副本 → repaint()。
 
     drawBackground (g);
     drawGrid (g);

@@ -63,9 +63,37 @@ public:
     {
         return uiWakeFlag_.exchange (false, std::memory_order_acq_rel);
     }
-    /** R32：参数变化时由编辑器注册的回调（消息线程），用于立即重绘，
-     *  不必等下一个巡检周期。为空表示没有打开的编辑器。 */
-    void setUiWakeCallback (std::function<void()> cb) { uiWakeCallback_ = std::move (cb); }
+    /** R32：参数变化时由编辑器注册的回调，用于立即重绘，不必等下一个巡检周期。
+     *  R35（N4）：签名带 **parameterID** —— UI 据此精确定位要刷新哪个副本
+     *  （popover / LINKED 抽屉 / Output 面板各自持有参数快照，此前只在"打开时"
+     *   同步一次；宿主自动化或别的入口改参数后显示会停在旧值，
+     *   Output 面板的 Auto-Gain / Monitor 行甚至会"显示与真实相反"）。
+     *  ⚠️ 只有**消息线程**才会调用它；音频线程自动化只置 uiWakeFlag_，
+     *     由 UI 定时器兜底做全量同步（绝不在音频线程碰组件）。
+     *  ⚠️ UI 侧必须在销毁时调用 setUiWakeCallback(nullptr)，
+     *     否则回调会指向已释放的组件（use-after-free）。 */
+    void setUiWakeCallback (std::function<void (const juce::String&)> cb)
+    {
+        uiWakeCallback_ = std::move (cb);
+    }
+    /** R35 测试钩子：回调是否已注册（编辑器存活期间应为 true）。 */
+    bool hasUiWakeCallbackForTest() const { return uiWakeCallback_ != nullptr; }
+
+    // ---------- R35（N4）：Analyzer 设置持久化 ----------
+    // 这 6 项是**显示设置**，不该进 APVTS 参数表（不需要宿主自动化，
+    // 也会把参数数从 86 推到 92）。改为随工程状态一起存成 ValueTree 属性，
+    // 否则关开编辑器/重载工程后 Pre/Post/Resolution/Speed/Tilt/Freeze 全部回到默认。
+    struct AnalyzerSettings
+    {
+        bool  preOn   = true;
+        bool  postOn  = true;
+        int   fftSize = 2048;
+        int   speed   = 1;        // 0=fast 1=medium 2=slow
+        float tilt    = 0.0f;
+        bool  frozen  = false;
+    };
+    const AnalyzerSettings& getAnalyzerSettings() const noexcept { return analyzerSettings_; }
+    void setAnalyzerSettings (const AnalyzerSettings& s) noexcept { analyzerSettings_ = s; }
 
     // ---------- 编辑器开关（懒启动频谱分析，Phase 4.1） ----------
     void setEditorActive (bool active) noexcept;
@@ -122,7 +150,9 @@ private:
 
     // R32：UI 唤醒标志（parameterChanged 置位 / DisplayView::paint 消费）
     std::atomic<bool> uiWakeFlag_ { false };
-    std::function<void()> uiWakeCallback_;
+    std::function<void (const juce::String&)> uiWakeCallback_;
+    // R35（N4）：Analyzer 显示设置（随状态持久化，见 getStateInformation）
+    AnalyzerSettings analyzerSettings_;
 
     // 电平表（音频线程写原子，UI 做弹道）
     std::atomic<float> inputPeak_  { 0.0f };

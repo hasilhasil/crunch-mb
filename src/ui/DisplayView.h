@@ -61,10 +61,11 @@ public:
     // 编辑器开关（懒启动频谱分析）
     void setActive (bool active) noexcept;
 
-    /** R32：参数变化时由 processor 在消息线程调用（经 setUiWakeCallback 注册）。
+    /** R32/R35：参数变化时由 processor 在消息线程调用（经 setUiWakeCallback 注册）。
      *  Phase E-2 空闲时定时器降到 4Hz 巡检；没有这个回调，宿主自动化改参数后
-     *  最多要等 250ms 才反映到画面。这里立即提回满帧并重绘一帧。 */
-    void uiWakeFromParam();
+     *  最多要等 250ms 才反映到画面。这里立即提回满帧并重绘一帧。
+     *  R35（N4）：带 parameterID —— 用于精确刷新面板里的参数副本。 */
+    void uiWakeFromParam (const juce::String& id);
 
     // 测试钩子：离屏渲染（无窗口），供像素级视觉回归断言使用
     // ⚠️ 只有**覆盖层**子组件需要在这里补画：抽屉 / Popover / 频率输入框。
@@ -173,8 +174,33 @@ public:
      *  而测试的 tickForTest 用虚拟时钟求值 → t 为负、动画永远停在起点，
      *  无法在测试里把 anim 推到 1。真实运行时由 60Hz 定时器推进。 */
     void snapPopoverForTest() { if (bandPopover_ != nullptr) bandPopover_->snapToCurrent(); }
+    /** R35（N4）测试钩子：参数变化回调是否已注册（编辑器存在时应为 true）。 */
+    bool hasUiWakeCallbackForTest() const;
+    /** R35（N4）测试钩子：抽屉 MIX 旋钮当前显示值。 */
+    double drawerMixValueForTest() const;
+    /** R35（C-b）测试钩子：EXPERT 覆盖层是否存在且位于最上层。 */
+    bool expertLayerOnTopForTest() const;
+    /** R35（D）测试钩子：右轴刻度的基准 X（应为 sx(kGainScaleRightX)）。 */
+    float gainScaleRightXForTest() const { return sx (kGainScaleRightX); }
+    /** R35（D）测试钩子：字号倍率。 */
+    float uiFontScaleForTest() const { return uiFontScale(); }
+    /** R35（N4）测试钩子：待刷新的参数队列长度。 */
+    int pendingParamCountForTest() const { return pendingParamIds_.size(); }
     /** R34（A）测试钩子：popover 当前动画值（0..1）。 */
     float popoverAnimForTest() const { return bandPopover_ != nullptr ? bandPopover_->anim() : 0.0f; }
+    /** R35（C-c）测试钩子：Analyzer / OUT 按钮矩形（与 hitTest 同一几何）。 */
+    juce::Rectangle<float> analyzerButtonRectForTest() const
+    {
+        const float W = (float) getWidth();
+        const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
+        return juce::Rectangle<float> (W * 0.5f - sx (150.0f), y0, sx (104.0f), sy (22.0f));
+    }
+    juce::Rectangle<float> outputButtonRectForTest() const
+    {
+        const float W = (float) getWidth();
+        const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
+        return juce::Rectangle<float> (W - sx (196.0f), y0, sx (78.0f), sy (22.0f));
+    }
     juce::Rectangle<float> gearButtonRectForTest() const
     {
         const float W = (float) getWidth();
@@ -603,6 +629,12 @@ private:
     // ---- 布局（按 920×620 设计，比例缩放） ----
     float sx (float x) const noexcept { return x * (float) getWidth()  / kDesignW; }
     float sy (float y) const noexcept { return y * (float) getHeight() / kDesignH; }
+    /** R35（D）：字号倍率。以 920×620 设计稿为 1.0，按**高度**缩放并限幅，
+     *  让刻度数字/读数等文字随窗口一起变大变小（原先一律写死像素字号）。 */
+    float uiFontScale() const noexcept
+    {
+        return juce::jlimit (0.75f, 2.4f, (float) getHeight() / kDesignH);
+    }
 
     // ---- 绘制分块 ----
     void drawBackground (juce::Graphics& g);
@@ -841,6 +873,11 @@ private:
     // 不一致就置 uiStatePending_ 并继续跑。
     bool uiStatePending_ = false;
     int  idleFrames_ = 0;               // R32：连续空闲帧计数（降频滞后用）
+    /** R35（N4）：待刷新的参数 id（消息线程收集，定时器统一消费）。
+     *  同一个 id 只保留一份；空字符串表示"全量同步"（音频线程兜底路径）。 */
+    juce::StringArray pendingParamIds_;
+    /** R35（N4）：把待刷新的参数落到 popover / 抽屉 / Output 面板的副本上。 */
+    void syncUiFromParams (bool fullSync);
     std::array<float, Param::kNumBands> lastDrawnBandRangeParam_ {};
     std::array<float, Param::kNumBands> lastDrawnThreshold_ {};
     std::array<float, Param::kNumBands> lastDrawnMakeup_ {};

@@ -76,6 +76,9 @@ public:
 
     /** 同步旋钮显隐（动画结束时隐藏子旋钮）。 */
     void syncKnobVisibility();
+    /** R35（N4）：MIX 旋钮回读参数（抽屉里唯一的绝对值旋钮）。
+     *  宿主自动化或 BYP 宏改过 Mix 后，读数要跟着走。 */
+    void syncMixFromParams();
 
     /** 光标闪烁推进（转发给所有子旋钮）。 */
     void tickEditCursors (juce::uint32 nowMs);
@@ -99,6 +102,13 @@ public:
         bool onThis = false, onChildren = false;
         getInterceptsMouseClicks (onThis, onChildren);
         return onChildren;
+    }
+
+    /** R35（N4）测试钩子：MIX 旋钮当前显示值。 */
+    double mixValueForTest() const
+    {
+        return (knobs_[(size_t) kLinkedMixIndex] != nullptr)
+                 ? knobs_[(size_t) kLinkedMixIndex]->getValue() : 0.0;
     }
 
 private:
@@ -130,3 +140,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LinkedDrawer)
 };
+
