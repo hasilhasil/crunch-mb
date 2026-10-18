@@ -174,6 +174,13 @@ public:
      *  而测试的 tickForTest 用虚拟时钟求值 → t 为负、动画永远停在起点，
      *  无法在测试里把 anim 推到 1。真实运行时由 60Hz 定时器推进。 */
     void snapPopoverForTest() { if (bandPopover_ != nullptr) bandPopover_->snapToCurrent(); }
+    /** R36：把所有面板的动画直接吸附到目标态（快照工具用；测试虚拟时钟下
+     *  tween 起点是真实时间，不吸附的话面板 alpha 会停在 0）。 */
+    void snapPanelsForTest()
+    {
+        if (linkedDrawer_  != nullptr) linkedDrawer_->snapToCurrent();
+        if (bandPopover_   != nullptr) bandPopover_->snapToCurrent();
+    }
     /** R35（N4）测试钩子：参数变化回调是否已注册（编辑器存在时应为 true）。 */
     bool hasUiWakeCallbackForTest() const;
     /** R35（N4）测试钩子：抽屉 MIX 旋钮当前显示值。 */
@@ -191,15 +198,11 @@ public:
     /** R35（C-c）测试钩子：Analyzer / OUT 按钮矩形（与 hitTest 同一几何）。 */
     juce::Rectangle<float> analyzerButtonRectForTest() const
     {
-        const float W = (float) getWidth();
-        const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
-        return juce::Rectangle<float> (W * 0.5f - sx (150.0f), y0, sx (104.0f), sy (22.0f));
+        return analyzerButtonRect();
     }
     juce::Rectangle<float> outputButtonRectForTest() const
     {
-        const float W = (float) getWidth();
-        const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
-        return juce::Rectangle<float> (W - sx (196.0f), y0, sx (78.0f), sy (22.0f));
+        return outputButtonRect();
     }
     juce::Rectangle<float> gearButtonRectForTest() const
     {
@@ -217,11 +220,7 @@ public:
     /** N7：第 b 段按钮列左缘 x（与 hitTestButton 同一几何）。 */
     float buttonColumnXForTest (int band) const
     {
-        const float W = (float) getWidth();
-        const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-        const float edge = (band < 3) ? nx[juce::jlimit (0, 2, band)]
-                                     : juce::jmin (W, sx (kMeterX) - sx (8.0f));
-        return edge - sx (40.0f);
+        return bandButtonRect (juce::jlimit (0, 3, band), 0).getX();
     }
     // 测试钩子：直接派发鼠标事件（mouseXxx 为 protected；内部经 Desktop 取 MouseInputSource）
     void mouseDownForTest (float x, float y);
@@ -391,6 +390,27 @@ public:
     bool isLinkedStickyForTest() const
     {
         return linkedDrawer_ != nullptr && linkedDrawer_->isSticky();
+    }
+    /** R36（B3/B6）测试钩子：LINKED 标签页点击、锁定按钮矩形、抽屉面板矩形、
+     *  二级菜单顶部频率文本。 */
+    void clickLinkedButtonForTest()
+    {
+        if (linkedDrawer_ == nullptr) return;
+        togglePopover (false);
+        linkedDrawer_->clickButton();
+    }
+    juce::Rectangle<float> pinRectForTest() const
+    {
+        return linkedDrawer_ != nullptr ? linkedDrawer_->pinRect() : juce::Rectangle<float>();
+    }
+    juce::Rectangle<float> linkedPanelRectForTest() const
+    {
+        return linkedDrawer_ != nullptr ? linkedDrawer_->panelRectForTest()
+                                        : juce::Rectangle<float>();
+    }
+    juce::String bandFreqTextForTest() const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->bandFreqTextForTest() : juce::String();
     }
     /** Phase D-3 测试钩子：是否正在多选拖拽。 */
     bool isBandSweepActiveForTest() const { return bandSweepActive_; }
@@ -620,7 +640,17 @@ private:
     float gainToY (float gainDb) const;
     float meterY (float db) const;
     // A8/#4：绘图区边界**完全贴合**状态栏下缘与 global bar 上缘（无间隙）
-    float plotBottomPx() const noexcept { return (float) getHeight() - sy (kGlobalBarH); }
+    float plotBottomPx() const noexcept
+    {
+        // R36（B3）：绘图区底缘要**扣掉 LINKED 标签页那一条**。
+        //   标签页（29px 高）常驻在 global bar 正上方；此前它只在抽屉打开时
+        //   才绘制，所以没占位；现在恒常可见，若仍把绘图区算到 global bar 上缘，
+        //   标签页就会盖住底部的分频手柄（x 290 / 492 两个手柄被压住，
+        //   用户只剩"拖整条分割线"这一条路）。
+        //   BandPopover 那边一直是 `H − kGlobalBarH − kDrawerBtnH`，
+        //   DisplayView 这里漏了后一项——本次对齐。
+        return (float) getHeight() - sy (kGlobalBarH) - sy (kDrawerBtnH);
+    }
     float plotTopPx()    const noexcept { return sy (kTopStripH); }
     float plotRightPx()  const noexcept { return sx (kMeterX) - sx (4.0f); }   // #3：右缘避开 IN/OUT 音量表
     float plotWidthPx()  const noexcept { return plotRightPx(); }
@@ -737,6 +767,8 @@ private:
     float paramRangeMaxOf (const juce::String& id) const;
     void setBandParamNorm (const juce::String& id, float norm) const;
     int  hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const;
+    /** R36（B4）：段内 S/M/B/Δ 按钮列的**唯一**几何来源。 */
+    juce::Rectangle<float> bandButtonRect (int band, int btn) const;
     int  hitTestDivider (juce::Point<float> p) const;
     bool hitTestCurve (juce::Point<float> p, int& bandOut) const;
     bool hitTestKnob (juce::Point<float> p, int& bandOut) const { return false; }
@@ -859,6 +891,11 @@ private:
      *  任何用户交互（鼠标/键盘/滚轮）都应调用它。 */
     void ensureTimerRunning()
     {
+        // R36（K4）：必须同时清空闲计数。
+        //   原先只把定时器提回 60Hz，idleFrames_ 继续累加——下一帧
+        //   timerCallback 立刻又判定"空闲"并打回 4Hz（而且空闲判定当时
+        //   也看不到旋钮/面板动画），悬停反馈等于拿不到满帧。
+        idleFrames_ = 0;
         if (! isTimerRunning())
             startTimerHz (60);
         else if (getTimerInterval() > 1000 / 55)      // 当前 ≤ ~50Hz → 提回满帧
@@ -878,6 +915,10 @@ private:
     juce::StringArray pendingParamIds_;
     /** R35（N4）：把待刷新的参数落到 popover / 抽屉 / Output 面板的副本上。 */
     void syncUiFromParams (bool fullSync);
+    /** R36（B6）：把该段的像素边界 + 真实频率范围推给二级菜单。 */
+    void pushPopoverBandRange (bool force = false);
+    float lastPopEdgeL_ = -1.0f, lastPopEdgeR_ = -1.0f;
+    int   lastPopEdgeBand_ = -1;
     std::array<float, Param::kNumBands> lastDrawnBandRangeParam_ {};
     std::array<float, Param::kNumBands> lastDrawnThreshold_ {};
     std::array<float, Param::kNumBands> lastDrawnMakeup_ {};
@@ -916,6 +957,11 @@ private:
     /** Phase D-4：把 OutputPanel 的设置应用到处理器。 */
     void applyOutputSettings();
     bool hitTestAnalyzerButton (juce::Point<float> p) const;
+    /** R36（B4）：两个底栏胶囊按钮的**唯一**几何来源。
+     *  历史上 drawGlobalBar / hitTest / 测试钩子各写一遍同样的数字，
+     *  改尺寸时必然漏改一处（T44.2 就是这么失败的）。 */
+    juce::Rectangle<float> analyzerButtonRect() const;
+    juce::Rectangle<float> outputButtonRect() const;
     /** Phase D：Analyzer 自绘面板（Pro-MB hover-open / click-sticky 语义）。 */
     std::unique_ptr<AnalyzerPanel> analyzerPanel_;
     /** Phase D-4：Output 自绘面板（同一套 sticky 语义）。 */
@@ -1008,6 +1054,8 @@ private:
     static constexpr float kPlotH = 548.0f;
     static constexpr float kTopStripH = 30.0f;
     static constexpr float kGlobalBarH = 32.0f;
+    /** R36（B3）：LINKED 标签页高度（常驻在 global bar 之上，绘图区要扣掉）。 */
+    static constexpr float kDrawerBtnH = 29.0f;
     // Phase B-4：增益刻度右缘 = IN/OUT 电平表左界(886) − 4px。
     // Pro-MB 的增益刻度与电平表紧邻，读压缩量时视线不用横跳。
     static constexpr float kGainScaleRightX = 882.0f;

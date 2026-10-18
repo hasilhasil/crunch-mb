@@ -35,19 +35,9 @@ void AnalyzerPanel::setHostBounds (juce::Rectangle<int> hostBounds)
 }
 
 // ---------------- 状态机（Phase D：Pro-MB sticky 语义）----------------
-void AnalyzerPanel::hoverButton (bool hovering)
-{
-    // 只有**非 sticky** 时才跟随悬停开合。
-    // sticky 面板已经"钉住"，悬停不影响它。
-    if (sticky_)
-        return;
-    if (hovering == open_)
-        return;
-    open_ = hovering;
-    tween_.start (juce::Time::getMillisecondCounter(), open_ ? 1.0f : 0.0f,
-                  Anim::kFadeMs, anim_);
-    animTarget_ = open_ ? 1.0f : 0.0f;
-}
+// R36（B2）：hoverButton() 已删除。用户实测"鼠标移到检测区域就展开"会误触，
+//   底栏按钮改为**纯点击**展开（clickButton 的 sticky 语义不变）。
+//   保留空实现会被误认为还有悬停开合路径，直接去掉。
 
 bool AnalyzerPanel::clickButton()
 {

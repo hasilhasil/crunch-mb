@@ -16,6 +16,11 @@ CrunchMBAudioProcessorEditor::CrunchMBAudioProcessorEditor (CrunchMBAudioProcess
     if (auto face = MBTheme::regular())
         juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypeface (face);
 
+    // R36（B4）：全局字号倍率。用户实测"整体按钮和 UI 都太小，不方便阅读"。
+    //   放在编辑器构造里而不是 DisplayView 里，是为了让离屏测试保持 1.0
+    //   ——否则 808+ 条像素/几何断言会跟着字号一起漂。
+    MBTheme::setTextScale (MBTheme::kUiTextScale);
+
     display = std::make_unique<DisplayView> (proc);
     addAndMakeVisible (*display);
 

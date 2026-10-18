@@ -94,11 +94,23 @@ namespace MBTheme
         return face;
     }
 
+    // ---- R36（B4）：全局字号倍率 ----
+    // 用户实测"整体的按钮和 UI 都太小了，不方便阅读"。
+    // 插件里所有文字都从 font() 出口出去，所以倍率放在这里 = 一处改动、全局生效；
+    // 各绘制点仍按设计稿写 px 字号，不必逐个去乘（也就不存在漏改的地方）。
+    // 默认 1.0：离屏测试不设它，像素/几何断言因此保持确定性；
+    // 编辑器构造时设成 kUiTextScale，用户看到的就是放大后的字号。
+    inline constexpr float kUiTextScale = 1.16f;
+    inline float& textScaleRef() { static float s = 1.0f; return s; }
+    inline void  setTextScale (float s) { textScaleRef() = juce::jlimit (0.5f, 3.0f, s); }
+    inline float textScale() { return textScaleRef(); }
+
     inline juce::Font font (juce::Typeface::Ptr face, float height, int style = juce::Font::plain)
     {
+        const float h = juce::jmax (6.0f, height * textScaleRef());
         // JUCE 8：FontOptions(Typeface::Ptr) 只收类型指针，高度/样式经 withXxx 链式附加
         if (face != nullptr)
-            return juce::Font (juce::FontOptions (height, style).withTypeface (face));
-        return juce::Font (juce::FontOptions (height, style));
+            return juce::Font (juce::FontOptions (h, style).withTypeface (face));
+        return juce::Font (juce::FontOptions (h, style));
     }
 } // namespace MBTheme

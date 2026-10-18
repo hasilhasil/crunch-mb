@@ -189,8 +189,33 @@ void DisplayView::openPopoverForBand (int band)
     bandEdgesPx (band, lx, rx);
     bandPopover_->setBand (band);
     bandPopover_->setBandEdges (lx, rx);
+    // R36（B6）：频率文本用真实 Hz、并且之后每次分频点变化都会重推（见 timerCallback）
+    pushPopoverBandRange (true);
     bandPopover_->setOpen (true);
     bandPopover_->syncFromParams();
+}
+
+// R36（B6）：把"该段的像素边界 + 真实频率范围"推给二级菜单。
+// 用户实测：面板左上角那段频率数字在拖动分频点时不跟着变（原来只在打开时算一次，
+// 而且塞进 fmtHzShort 的是像素坐标）。现在每帧比对，变了就推。
+void DisplayView::pushPopoverBandRange (bool force)
+{
+    if (bandPopover_ == nullptr || (! bandPopover_->isOpen() && ! force))
+        return;
+    const int b = juce::jlimit (0, Param::kNumBands - 1, bandPopover_->band());
+    float lx = 0.0f, rx = 0.0f;
+    bandEdgesPx (b, lx, rx);
+    if (! force && std::abs (lx - lastPopEdgeL_) < 0.5f && std::abs (rx - lastPopEdgeR_) < 0.5f
+        && b == lastPopEdgeBand_)
+        return;
+    lastPopEdgeL_    = lx;
+    lastPopEdgeR_    = rx;
+    lastPopEdgeBand_ = b;
+    bandPopover_->setBandEdges (lx, rx);
+    // 频率：绘图区右缘 = 22.1 kHz（20·1105），显示上按 20 kHz 收口更符合直觉
+    const float hzLo = juce::jlimit (20.0f, 20000.0f, xToFreq (lx));
+    const float hzHi = juce::jlimit (20.0f, 20000.0f, xToFreq (rx));
+    bandPopover_->setBandFreqRange (hzLo, hzHi);
 }
 
 void DisplayView::syncAllTweens()
@@ -651,7 +676,7 @@ float DisplayView::stateDotX (int band) const
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
     const float edge = (b < 3) ? nx[b]
                                : juce::jmin (W, sx (kMeterX) - sx (8.0f));
-    return edge - sx (28.0f);
+    return edge - sx (30.0f);       // R36（B4）：按钮列加宽到 28px 后圆点跟着左移
 }
 
 void DisplayView::drawBandHeaders (juce::Graphics& g)
@@ -691,10 +716,10 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
                 default: break;
             }
             g.setColour (lit ? pal_.accent : pal_.track);
-            g.fillEllipse (sxp, sy (42.0f + j * 9.0f) - 1.5f, 3.0f, 3.0f);
+            g.fillEllipse (sxp, sy (42.0f + j * 10.0f) - 1.75f, 3.5f, 3.5f);   // R36（B4）：3 → 3.5
         }
 
-        // C6–C9：S/M/BYP/Δ 按钮列（24×24，hover 或选中该段时淡入）
+        // C6–C9：S/M/BYP/Δ 按钮列（R36/B4：28×28，hover 或选中该段时淡入）
         //     band3 的右缘 = 电平表左边界−8 → 按钮在分区右侧且不压音量表
         // Phase A：UI_SPEC §4.2 原话"hover 该段时淡入、移出淡出"——用 hoverT_ 驱动 alpha。
         //         选中态常驻（selT_ 已含），hover 在上层叠加。
@@ -703,9 +728,6 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
         const float btnA   = juce::jmax (selK, hoverK);       // 选中常驻 / hover 淡入
         if (btnA > 0.01f)
         {
-            const float edge = (b < 3) ? nx[b]
-                                       : juce::jmin (W, sx (kMeterX) - sx (8.0f));
-            const float bx = edge - sx (40.0f);
             const juce::String labels[4] = { "S", "M", "B", juce::String::fromUTF8 ("\xCE\x94") };
             for (int j = 0; j < 4; ++j)
             {
@@ -719,7 +741,7 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
                     case 3: on = getParamBool ("band" + juce::String (b) + "Delta"); break;
                     default: break;
                 }
-                auto r = juce::Rectangle<float> (bx, sy (118.0f + j * 30.0f), sx (24.0f), sy (24.0f));
+                auto r = bandButtonRect (b, j);      // R36（B4）：几何单一来源
                 g.setColour (on ? pal_.accent.withMultipliedAlpha (btnA)
                                 : pal_.track.withAlpha (0.92f * btnA));
                 g.fillRoundedRectangle (r, sx (6.0f));
@@ -1036,15 +1058,20 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     //        → 点到离控件很远的地方也会弹菜单（用户实测"global 栏判定范围太大"）
     globalSelectorRects_.clear();
     globalSelectorIds_.clear();
-    g.setFont (MBTheme::font (MBTheme::regular(), 11.5f));
+    g.setFont (MBTheme::font (MBTheme::regular(), 12.0f));
     float x = sx (14.0f);
     globalBarY_ = y0;
-    auto item = [&] (const juce::String& label, const juce::String& paramId)
+    // R36（B4）：全局选择器改成**紧凑胶囊**。
+    //   原先每项「短标签 + 值 ▼」共占 180px，5 项 = 900px，而底栏右侧还要放
+    //   ANALYZER / OUT / BYPASS 三个胶囊 → 早在本次改动之前就已经互相覆盖
+    //   （ANALYZER 压在 Slope 的值上、OUT 压在 Oversmp 上，绘制顺序在后就盖住了）。
+    //   现在每项 110px 胶囊（"P:IIR ▼" 这种 1–2 字符前缀 + 值），5 项 550px，
+    //   右侧 3 个胶囊各就各位，既不再重叠，又都变大了。
+    auto item = [&] (const juce::String& shortLabel, const juce::String& paramId)
     {
-        g.setColour (pal_.dim);
-        g.drawText (label, juce::Rectangle<float> (x, y0 + sy (8.0f), sx (52.0f), sy (16.0f)),
-                    juce::Justification::centredLeft);
-        x += sx (52.0f);
+        const float rowY = y0 + sy (4.0f);
+        const float rowH = sy (24.0f);
+        const float rowW = sx (106.0f);
 
         // 当前值：Choice 型取选项表对应项（不再写死）
         juce::String value = "-";
@@ -1061,32 +1088,38 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
             break;
         }
 
-        globalSelectorRects_.add (juce::Rectangle<float> (
-            x, y0 + sy (8.0f), sx (110.0f), sy (16.0f)));
+        const juce::Rectangle<float> pill (x, rowY, rowW, rowH);
+        globalSelectorRects_.add (pill);
         globalSelectorIds_.add (paramId);
 
-        // 可点提示：hover 时提亮（与 Pro-MB 全局栏一致）
-        const bool hot = globalSelectorRects_.getLast().contains (lastMousePos_);
+        const bool hot = pill.contains (lastMousePos_);
+        g.setColour (hot ? pal_.accent.withAlpha (0.22f) : pal_.track.withAlpha (0.55f));
+        g.fillRoundedRectangle (pill, rowH * 0.28f);
+        if (hot)
+        {
+            g.setColour (pal_.accent.withAlpha (0.75f));
+            g.drawRoundedRectangle (pill, rowH * 0.28f, 1.0f);
+        }
+        g.setColour (pal_.dim);
+        g.drawText (shortLabel,
+                    pill.withTrimmedLeft (sx (7.0f)).withWidth (sx (20.0f)),
+                    juce::Justification::centredLeft);
         g.setColour (hot ? pal_.accent : pal_.text);
         g.drawText (value + " " + juce::String::fromUTF8 ("\xE2\x96\xBC"),
-                    juce::Rectangle<float> (x, y0 + sy (8.0f), sx (110.0f), sy (16.0f)),
+                    pill.withTrimmedLeft (sx (27.0f)).withTrimmedRight (sx (4.0f)),
                     juce::Justification::centredLeft);
-        x += sx (118.0f);
-        g.setColour (pal_.gridZ);
-        g.fillRect (x, y0 + sy (9.0f), 1.0f, sy (14.0f));
-        x += sx (10.0f);
+        x += sx (110.0f);
     };
-    item ("Phase:",    Param::ID::phaseMode);
-    item ("Slope:",    Param::ID::xoverSlope);
-    item ("Quality:",  Param::ID::linearQuality);
-    item ("Lookahead:", Param::ID::lookahead);
-    item ("Oversmp:",  Param::ID::oversampling);
+    item ("P",  Param::ID::phaseMode);
+    item ("S",  Param::ID::xoverSlope);
+    item ("Q",  Param::ID::linearQuality);
+    item ("LA", Param::ID::lookahead);
+    item ("OS", Param::ID::oversampling);
 
     // Analyzer 按钮（Pro-MB 底栏 Analyzer 对标）——占据原 IN 读数位置；
     // 点击弹出二级菜单（Resolution / Speed / Tilt / Freeze / Pre-Post）。
-    // 视觉样式（图标+高亮态）留到 global bar 流程统一做，这里先给可点的胶囊。
-    auto anBtn = juce::Rectangle<float> (W * 0.5f - sx (150.0f), y0 + sy (5.0f),
-                                         sx (104.0f), sy (22.0f));
+    // R36（B4）：几何收敛到 analyzerButtonRect()，字号加大后不再挤成一团。
+    auto anBtn = analyzerButtonRect();
     g.setColour (analyzerFreeze_ ? pal_.accent : pal_.track);
     g.fillRoundedRectangle (anBtn, sx (11.0f));
     g.setColour (analyzerFreeze_ ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
@@ -1096,17 +1129,19 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
                            : (analyzerFftSize_ == 2048) ? "2048"
                            : (analyzerFftSize_ == 4096) ? "4096" : "8192";
         static const char* kSpd[3] = { "FAST", "MED", "SLOW" };
-        g.drawText (juce::String ("ANALYZER ") + resTag + " " + kSpd[juce::jlimit (0, 2, analyzerSpeed_)]
-                    + (analyzerTilt_ > 0.01f ? " TILT" : "")
-                    + (analyzerFreeze_ ? " FRZ" : ""),
+        // R36（B4）：胶囊变高但右侧三个按钮要挤在 348px 内，文字改为紧凑写法
+        // （面板标题里已有完整 "ANALYZER" 字样，这里只是状态摘要）
+        g.drawText (juce::String ("ANZ ") + resTag + " " + kSpd[juce::jlimit (0, 2, analyzerSpeed_)]
+                    + (analyzerTilt_ > 0.01f ? " T" : "")
+                    + (analyzerFreeze_ ? " F" : ""),
                     anBtn, juce::Justification::centred);
     }
 
     // OUT 按钮（Phase D-4/D-6）
-    //   · 单击/悬停 → Output 面板（sticky 语义）
+    //   · 单击 → Output 面板（sticky 语义）
     //   · **Alt+拖 → 直接调 Output Gain**（Pro-MB Alt-drag Output = makeup gain）
-    auto outBtn = juce::Rectangle<float> (W - sx (196.0f), y0 + sy (5.0f),
-                                          sx (78.0f), sy (22.0f));
+    // R36（B4）：几何收敛到 outputButtonRect()
+    auto outBtn = outputButtonRect();
     const bool outHot = outputPanel_ != nullptr
                      && (outputPanel_->isSticky()
                          || outBtn.contains (lastMousePos_));
@@ -1134,7 +1169,8 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     }
 
     // BYPASS 胶囊（C10：可点按；命中区与绘制严格一致）
-    auto byp = juce::Rectangle<float> (W - sx (108.0f), y0 + sy (5.0f), sx (92.0f), sy (22.0f));
+    // R36（B4）：与 ANALYZER / OUT 胶囊同高（22 → 26）
+    auto byp = juce::Rectangle<float> (W - sx (114.0f), y0 + sy (3.0f), sx (94.0f), sy (26.0f));
     g.setColour (isAllBypassed() ? pal_.accent : pal_.track);
     g.fillRoundedRectangle (byp, sx (11.0f));
     g.setColour (isAllBypassed() ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
@@ -1439,16 +1475,25 @@ void DisplayView::timerCallback()
     snapshotDrawnParams();
     // ---- Phase 5.2 / 5.3：抽屉与 Popover 滑入/收起动画 ----
     // Phase A：两者均已拆为独立组件，这里只推进它们的 Tween。
+    //
+    // ⚠️ R36（K3）：`advance()` 的返回值是"仍在动画中"，**必须**收集起来。
+    //   此前四个面板的返回值全被丢弃，于是开着/关着面板的那 220~250ms 里
+    //   空闲判定仍认为"没事干"，定时器降到 4Hz（250ms/帧）——开合动画
+    //   可能只被画到 1 帧，用户看到的就是一顿一顿。
+    bool panelBusy = false;
     if (linkedDrawer_ != nullptr)
-        linkedDrawer_->advance (nowMs);
+        panelBusy |= linkedDrawer_->advance (nowMs);
     if (bandPopover_ != nullptr)
-        bandPopover_->advance (nowMs);
+        panelBusy |= bandPopover_->advance (nowMs);
     // Phase D：Analyzer 面板开合动画
     if (analyzerPanel_ != nullptr)
-        analyzerPanel_->advance (nowMs);
+        panelBusy |= analyzerPanel_->advance (nowMs);
     // Phase D-4：Output 面板开合动画
     if (outputPanel_ != nullptr)
-        outputPanel_->advance (nowMs);
+        panelBusy |= outputPanel_->advance (nowMs);
+
+    // R36（B6）：二级菜单开着时，分频点一变就把新的频率范围推下去
+    pushPopoverBandRange();
 
     // ---- Phase A：其余 Tween（选中/hover/BYP/分割线）推进 ----
     const bool tweensBusy = advanceTweens (nowMs);
@@ -1469,7 +1514,13 @@ void DisplayView::timerCallback()
     // ⚠️ 只在真实运行时生效：测试用的虚拟时钟下不动，否则 tickForTest 会失效。
     if (! useTestClock_)
     {
-        const bool idleNow = ! tweensBusy && ! spectrumHadNewFrame_ && ! uiStatePending_;
+        // R36（K2/K3）：旋钮的四态渐变与四个面板的开合动画都要算作"在动"。
+        //   此前 `advanceKnobStates()` 无返回值、面板 `advance()` 的返回值被丢弃，
+        //   120ms 的悬停渐变在 4Hz 巡检下只被采样 0~1 次 → 高亮"啪"地跳。
+        const bool knobsBusy = (linkedDrawer_  != nullptr && linkedDrawer_->isKnobAnimating())
+                            || (bandPopover_   != nullptr && bandPopover_->isKnobAnimating());
+        const bool idleNow = ! tweensBusy && ! panelBusy && ! knobsBusy
+                          && ! spectrumHadNewFrame_ && ! uiStatePending_;
         if (idleNow)
             ++idleFrames_;
         else
@@ -2037,23 +2088,32 @@ bool DisplayView::isBandBypassed (int band) const
 
 int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const
 {
-    // 每段按钮列 [缘−40, 缘−16]，y 从 118 起，4 个 24×24（间距 30）
-    // ⚠️ 2026-09-23：band3 的"右缘"取 **IN/OUT 电平表左边界 −8px**（不是窗口右缘），
-    //    这样按钮列在分区右侧、又完全不与音量表（x 886..918）重叠。
+    // R36（B4）：按钮列几何收敛到 bandButtonRect()，绘制 / 命中 / 测试共用一份。
+    // band3 的"右缘"取 **IN/OUT 电平表左边界 −8px**（不是窗口右缘），
+    // 这样按钮列在分区右侧、又完全不与音量表（x 886..918）重叠。
+    for (int b = 0; b < 4; ++b)
+        for (int j = 0; j < 4; ++j)
+            if (bandButtonRect (b, j).contains (p))
+            {
+                bandOut = b;
+                btnOut = j;
+                return 1;
+            }
+    return 0;
+}
+
+// R36（B4）：段内 S/M/B/Δ 按钮列。用户实测"按钮太小"：
+//   24×24 / 间距 30 → 28×28 / 间距 34；列右缘仍是"距分界线 16"，
+//   所以只向左变宽，不会压到 IN/OUT 电平表（在 kMeterX−8 处收口）。
+juce::Rectangle<float> DisplayView::bandButtonRect (int band, int btn) const
+{
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    for (int b = 0; b < 4; ++b)
-    {
-        const float edge = (b < 3) ? nx[b] : juce::jmin (W, sx (kMeterX) - sx (8.0f));
-        const float x0 = edge - sx (40.0f), x1 = edge - sx (16.0f);
-        if (p.x < x0 || p.x > x1) continue;
-        for (int j = 0; j < 4; ++j)
-        {
-            const float y0 = sy (118.0f + j * 30.0f), y1 = y0 + sy (24.0f);
-            if (p.y >= y0 && p.y <= y1) { bandOut = b; btnOut = j; return 1; }
-        }
-    }
-    return 0;
+    const float edge = (band < 3) ? nx[juce::jlimit (0, 2, band)]
+                                  : juce::jmin (W, sx (kMeterX) - sx (8.0f));
+    return juce::Rectangle<float> (edge - sx (44.0f),
+                                   sy (116.0f + (float) juce::jlimit (0, 3, btn) * 34.0f),
+                                   sx (28.0f), sy (28.0f));
 }
 
 int DisplayView::hitTestDivider (juce::Point<float> p) const
@@ -2194,12 +2254,12 @@ bool DisplayView::isAllBypassed() const
 
 bool DisplayView::hitTestGlobalBypass (juce::Point<float> p) const
 {
-    // global bar 的 BYPASS 胶囊：与 drawGlobalBar 绘制位置严格一致
-    // （W−108..W−16，y = H−32+5，高 22）
+    // global bar 的 BYPASS 胶囊：与 drawGlobalBar 绘制位置严格一致。
+    // R36（B4）：22 → 26 高、上移 2px，与 ANALYZER / OUT 胶囊同高同基线。
     const float W = (float) getWidth();
-    const float x0 = W - sx (108.0f), x1 = W - sx (16.0f);
-    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
-    const float y1 = y0 + sy (22.0f);
+    const float x0 = W - sx (114.0f), x1 = W - sx (20.0f);
+    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (3.0f);
+    const float y1 = y0 + sy (26.0f);
     return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 }
 
@@ -2272,15 +2332,16 @@ void DisplayView::togglePluginEnabled()
 
 bool DisplayView::hitTestOutputButton (juce::Point<float> p) const
 {
-    // Phase D-4：OUT 按钮（W−196..W−118，y = H−32+5，高 22），与 drawGlobalBar 一致。
-    // ⚠️ 不能依赖 outputBtnRect_——那个成员是在 drawGlobalBar 里赋值的，
-    //    而悬停命中发生在任何绘制之前（首次悬停时矩形还是空的）。
-    //    这正是 T44.2 失败的原因：悬停打不开面板。
+    return outputButtonRect().contains (p);
+}
+
+// R36（B4）：OUT 胶囊按钮的唯一几何来源（见 analyzerButtonRect 注释）
+juce::Rectangle<float> DisplayView::outputButtonRect() const
+{
     const float W = (float) getWidth();
-    const float x0 = W - sx (196.0f), x1 = W - sx (118.0f);
-    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
-    const float y1 = y0 + sy (22.0f);
-    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+    const float barTop = (float) getHeight() - sy (kGlobalBarH);
+    return juce::Rectangle<float> (W - sx (220.0f), barTop + sy (3.0f),
+                                   sx (90.0f), sy (26.0f));
 }
 
 // ---------------- Phase D-7：MIDI Learn ----------------
@@ -2565,20 +2626,15 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
     lastMousePos_ = p;
     if (bandPopover_ != nullptr)
         bandPopover_->setLastMousePos (p);
-
-    // Phase D：Analyzer 按钮悬停 → 面板打开（非 sticky 时）
-    // 这是 Pro-MB 的签名式交互：悬停即开，点击才钉住。
-    if (analyzerPanel_ != nullptr)
-        analyzerPanel_->hoverButton (hitTestAnalyzerButton (p)
-                                     || analyzerPanel_->panelRect().contains (p));
-    // Phase D-2：LINKED 抽屉按钮同样的悬停/sticky 语义
+    // R36（B3）：标签页与「锁定」按钮的 hover 态需要鼠标位置
     if (linkedDrawer_ != nullptr)
-        linkedDrawer_->hoverButton (linkedDrawer_->hitTestButton (p)
-                                     || linkedDrawer_->hitTestPanel (p));
-    // Phase D-4：OUT 按钮同样的悬停/sticky 语义
-    if (outputPanel_ != nullptr)
-        outputPanel_->hoverButton (hitTestOutputButton (p)
-                                   || outputPanel_->panelRect().contains (p));
+        linkedDrawer_->setLastMousePos (p);
+
+    // ---- R36（B2）：面板只由**点击**打开，取消"鼠标移进检测区就展开" ----
+    // 用户实测："底下 global 条的部分菜单检测到鼠标移到检测区域就展开，影响操作"。
+    // 原先 ANALYZER / LINKED / OUT 三个按钮走 hoverButton() → 鼠标划过整条底栏
+    // 会连续弹出三个面板，既挡视线又误触。Pro-MB 的底栏按钮是点击展开。
+    // 这里只停止**调用**，按钮的 sticky 点击语义（clickButton）保持不变。
 
     int b = -1, j = -1;
     const bool onBtn = hitTestButton (p, b, j) != 0;
@@ -2675,8 +2731,8 @@ juce::Rectangle<float> DisplayView::dropDownRect() const
     // R34（N6）：主题菜单锚在齿轮按钮下方（右上角，右对齐）
     if (dropDownThemeMode_)
     {
-        const float w = sx (120.0f);
-        const float rowH = sy (22.0f);
+        const float w = sx (132.0f);
+        const float rowH = sy (26.0f);            // R36（B4）：22 → 26
         const float h = rowH * (float) juce::jmax (1, dropDownCount_);
         const float x = (float) getWidth() - w - sx (8.0f);
         const float y = sy (30.0f);                 // 顶栏 30px 之下
@@ -2688,8 +2744,8 @@ juce::Rectangle<float> DisplayView::dropDownRect() const
         const float W = (float) getWidth();
         const float x = W - sx (218.0f);
         const float y = sy (27.0f);                 // 紧贴按钮下缘
-        const float w = sx (124.0f);
-        const float h = sy (22.0f) * (float) dropDownCount_;
+        const float w = sx (132.0f);
+        const float h = sy (26.0f) * (float) dropDownCount_;   // R36（B4）：22 → 26
         return juce::Rectangle<float> (x, y, w, h);
     }
 
@@ -2698,8 +2754,8 @@ juce::Rectangle<float> DisplayView::dropDownRect() const
     //   而底栏就在窗口最底部，于是整个菜单落在组件之外被裁掉：
     //   920×620 时只有约 8px 露出来，5 个选择器全部不可用，
     //   而且那 8px 正好压在下拉首项上 → 点一下就静默选中第一项。
-    const float w = sx (150.0f);
-    const float rowH = sy (19.0f);
+    const float w = sx (160.0f);
+    const float rowH = sy (22.0f);              // R36（B4）：19 → 22
     const float h = rowH * (float) juce::jmax (1, dropDownCount_);
     const float barTop = (float) getHeight() - sy (kGlobalBarH);
     float y = barTop - h - sy (6.0f);
@@ -2717,9 +2773,9 @@ bool DisplayView::hitTestDropDownItem (juce::Point<float> p, int& itemOut) const
     const auto r = dropDownRect();
     if (! r.contains (p))
         return false;
-    // R34（N6）：主题菜单与 Display Range 同为 22px 行高；仅全局参数用 19px
+    // R36（B4）：主题菜单与 Display Range 同为 26px 行高；仅全局参数用 22px
     const bool narrowRows = (! dropDownThemeMode_) && dropDownParamId_.isNotEmpty();
-    const float rowH = narrowRows ? sy (19.0f) : sy (22.0f);
+    const float rowH = narrowRows ? sy (22.0f) : sy (26.0f);
     const int idx = (int) ((p.y - r.getY()) / rowH);
     if (idx < 0 || idx >= dropDownCount_)
         return false;
@@ -3173,14 +3229,21 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             return;
     }
 
-    // 0) LINKED 抽屉梯形按钮（§5.2）：Phase D-2 sticky 语义
-    //    悬停打开（非 sticky）→ 点击变 sticky 钉住 → 再点收起并解除。
-    //    与 AnalyzerPanel（D-1）同一套状态机，对齐 Pro-MB 底栏按钮行为。
+    // 0) LINKED 抽屉标签页（§5.2）：R36（B2）改为**纯点击**展开。
+    //    点击 = 打开并钉住；再点 = 收起并解除。
     if (linkedDrawer_ != nullptr && linkedDrawer_->hitTestButton (p))
     {
         // O6 方案1：与 Popover 互斥
         togglePopover (false);
         linkedDrawer_->clickButton();
+        repaint();
+        return;
+    }
+    // 0b) 抽屉打开时的「锁定」按钮（R36/B3）：按下态 = 钉住，再点解除
+    if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen()
+        && linkedDrawer_->hitTestPin (p))
+    {
+        linkedDrawer_->setSticky (! linkedDrawer_->isSticky());
         repaint();
         return;
     }
@@ -3512,10 +3575,13 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
             rangePending_ = false;
             const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
             const float startRange = proc_.getBackend().getParamFast ("band" + juce::String (rangePendingBand_) + "Range");
-            const float newRange = juce::jlimit (-30.0f, 0.0f,
+            const float newRange = juce::jlimit (-30.0f, 30.0f,
                 startRange + (curveDownY_ - p.y) * dbPerPx);
+            // R36（K9）：Range 参数是 −30..+30（正 = 向上压缩），
+            //   这里原先把拖动钳在 [−30, 0] 且按 /30 归一化 —— 于是
+            //   "向上压缩"在图形区永远拖不出来，而旋钮却能转到正区间。
             setParamNorm ("band" + juce::String (rangePendingBand_) + "Range",
-                          (newRange + 30.0f) / 30.0f);
+                          (newRange + 30.0f) / 60.0f);
             drag_ = DragMode::Range;
             dragBand_ = rangePendingBand_;
             dragStartY_ = curveDownY_;
@@ -3542,11 +3608,12 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 
     if (drag_ == DragMode::Range)
     {
-        // Range 拖动：上拖 range 增大（向 0 dB 靠近）；用动态量程
+        // Range 拖动：上拖 range 增大（向上压缩），下拖为向下压缩；用动态量程
         const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
-        const float newRange = juce::jlimit (-30.0f, 0.0f, dragStartRange_ + (dragStartY_ - p.y) * dbPerPx);
+        const float newRange = juce::jlimit (-30.0f, 30.0f,
+                                             dragStartRange_ + (dragStartY_ - p.y) * dbPerPx);
         setParamNorm ("band" + juce::String (dragBand_) + "Range",
-                      (newRange + 30.0f) / 30.0f);
+                      (newRange + 30.0f) / 60.0f);      // R36（K9）：全量程 60 dB
         return;
     }
 
@@ -3665,11 +3732,19 @@ void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 // ============================================================
 bool DisplayView::hitTestAnalyzerButton (juce::Point<float> p) const
 {
-    // global bar 中部（原 IN 读数区域）
+    return analyzerButtonRect().contains (p);
+}
+
+// R36（B4）：底栏两个胶囊按钮的唯一几何来源（绘制 / 命中 / 测试钩子共用）。
+//   用户实测"按钮和 UI 都太小"：22px 胶囊 + 10px 字放大后需要更多空间，
+//   高度 22 → 26，宽度也跟着放宽。
+juce::Rectangle<float> DisplayView::analyzerButtonRect() const
+{
     const float W = (float) getWidth();
-    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (5.0f);
-    const float x = W * 0.5f - sx (150.0f);
-    return juce::Rectangle<float> (x, y0, sx (104.0f), sy (22.0f)).contains (p);
+    const float barTop = (float) getHeight() - sy (kGlobalBarH);
+    // R36（B4）：选择器压缩成胶囊后，三个按钮在右侧依次排开、互不重叠
+    return juce::Rectangle<float> (W - sx (348.0f), barTop + sy (3.0f),
+                                   sx (120.0f), sy (26.0f));
 }
 
 void DisplayView::syncSpectrumLayers()

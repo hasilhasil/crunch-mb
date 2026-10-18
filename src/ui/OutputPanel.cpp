@@ -39,17 +39,7 @@ void OutputPanel::setHostBounds (juce::Rectangle<int> hostBounds)
 }
 
 // ---------------- sticky 状态机（与 AnalyzerPanel / LinkedDrawer 同一套）----------------
-void OutputPanel::hoverButton (bool hovering)
-{
-    if (sticky_)
-        return;
-    if (hovering == open_)
-        return;
-    open_ = hovering;
-    tween_.start (juce::Time::getMillisecondCounter(), open_ ? 1.0f : 0.0f,
-                  Anim::kFadeMs, anim_);
-    animTarget_ = open_ ? 1.0f : 0.0f;
-}
+// R36（B2）：hoverButton() 已删除 —— 底栏按钮改为纯点击展开。
 
 bool OutputPanel::clickButton()
 {

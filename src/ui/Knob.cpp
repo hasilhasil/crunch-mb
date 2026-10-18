@@ -7,7 +7,48 @@ void Knob::setRange (double minValue, double maxValue, double interval)
     min_ = minValue; max_ = std::max (minValue, maxValue); interval_ = interval;
     value_ = juce::jlimit (min_, max_, value_);
     default_ = juce::jlimit (min_, max_, default_);
+    updateSkew();                          // R36：范围变了要按新的 span 重算指数
     repaint();
+}
+
+// ---------------- R36：刻度映射（与参数的 NormalisableRange 同式） ----------------
+// JUCE 的 setSkewForCentre(centre) 令 skew = ln(0.5)/ln((centre-min)/span)，
+// 归一化 = pow(prop, skew)、物理值 = min + pow(n, 1/skew)·span。
+// 这里原样复算，确保同一个物理值在"面板旋钮"和"宿主自动化车道"上是同一个位置。
+void Knob::updateSkew()
+{
+    skew_    = 1.0f;
+    hasSkew_ = false;
+    if (! skewSet_)
+        return;
+    const double span = max_ - min_;
+    const double c    = (span > 0.0) ? (skewCentre_ - min_) / span : 0.5;
+    if (c > 0.0 && c < 1.0)
+    {
+        skew_    = (float) (std::log (0.5) / std::log (c));
+        hasSkew_ = std::abs (skew_ - 1.0f) > 1.0e-4f;
+    }
+}
+
+float Knob::toNorm (double v) const
+{
+    const double span = max_ - min_;
+    if (span <= 0.0)
+        return 0.0f;
+    double prop = (v - min_) / span;
+    prop = juce::jlimit (0.0, 1.0, prop);
+    if (! hasSkew_)
+        return (float) prop;
+    return (float) std::pow (prop, (double) skew_);
+}
+
+double Knob::fromNorm (double n) const
+{
+    const double span = max_ - min_;
+    n = juce::jlimit (0.0, 1.0, n);
+    if (! hasSkew_)
+        return min_ + n * span;
+    return min_ + std::pow (n, 1.0 / (double) skew_) * span;
 }
 
 void Knob::setValue (double v, bool sendNotification)
@@ -32,11 +73,21 @@ juce::Rectangle<float> Knob::knobBounds() const
 // 角度约定统一为 JUCE addCentredArc 的"12 点钟起、顺时针"：
 //   point = (cx + r·sin(θ), cy − r·cos(θ))
 // 起点（最小）= 7:30 方向，终点（最大）= 4:30 方向，行程 270°，缺口在正下方。
+//
+// ⚠️ R36（用户实测"旋钮可以旋转一圈多，看不出指针位置"）：
+//   这里原写 `end = pi * 3.75`（675°），而起点是 `pi * 1.25`（225°），
+//   行程 = 450° —— 正好一圈（360°）再加 90°。于是：
+//     · 轨道弧自己盖住自己一整圈，刻度环的 11 根刻度绕回起点附近；
+//     · 归一化 0/1（最小/最大）在盘面上正好落在**同一方向**，指针转到头
+//       和转到尾看起来一样，用户无法从指针读出位置；
+//     · 两端读数在几何上重叠，中间值反而更"靠边"。
+//   Pro-MB 的指针是 θ = −135° + 270°·value，固定 270° 行程（底部 90° 缺口）。
+//   正确终点 = 225° + 270° = 495° = pi * 2.75。
 float Knob::valueToAngle (double v) const
 {
-    const float norm = (float) ((v - min_) / (max_ - min_));
-    const float start = juce::MathConstants<float>::pi * 1.25f;      // 7:30 方向
-    const float end   = juce::MathConstants<float>::pi * 3.75f;      // 4:30 方向
+    const float norm = toNorm (v);                                   // R36：含 skew
+    const float start = juce::MathConstants<float>::pi * 1.25f;      // 7:30 方向（= −135°）
+    const float end   = juce::MathConstants<float>::pi * 2.75f;      // 4:30 方向（= +135°）
     return start + juce::jlimit (0.0f, 1.0f, norm) * (end - start);  // 270° 行程
 }
 
@@ -60,6 +111,7 @@ void Knob::mouseDown (const juce::MouseEvent& e)
     if (editing_) { closeEditor (true); return; }
 
     dragStartValue_ = value_;
+    dragStartNorm_  = (double) toNorm (value_);      // R36：按归一化行程拖动
     dragging_ = true;
     mouseDownHeld_ = true;          // Phase C-2：DOWN 态
     slowAccum_ = 0.0f;
@@ -84,11 +136,13 @@ void Knob::mouseDrag (const juce::MouseEvent& e)
     if (span <= 0.0) return;
 
     // 垂直模式：上拖=增大。220px 走完全程；Shift 微调 ×0.1。
+    // R36：行程按**归一化**算（含 skew），否则 Attack/Release 这类对数参数
+    //      低端极敏感、高端拖不动——同一个 220px 在全行程上的手感必须一致。
     const float dy = (float) (e.getMouseDownY() - e.getPosition().getY());
     const float fine = e.mods.isShiftDown() ? 0.1f : 1.0f;
 
-    const double delta = (double) dy / 220.0 * span * (double) fine;
-    commitValue (dragStartValue_ + delta);
+    const double newNorm = dragStartNorm_ + (double) dy / 220.0 * (double) fine;
+    commitValue (fromNorm (newNorm));
 }
 
 void Knob::mouseUp (const juce::MouseEvent&)
@@ -107,6 +161,17 @@ void Knob::mouseDoubleClick (const juce::MouseEvent&)
 void Knob::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
     if (editing_) return;
+
+    // R36：有 skew 的旋钮按**归一化**步进，否则 1 个 interval 在低端等于跳掉半个行程。
+    if (hasSkew_)
+    {
+        double dn = (wheel.deltaY < 0) ? -0.02 : 0.02;
+        if (e.mods.isShiftDown()) dn *= 0.1;
+        if (e.mods.isCtrlDown() || e.mods.isCommandDown()) dn *= 5.0;
+        setValue (fromNorm ((double) toNorm (value_) + dn), true);
+        return;
+    }
+
     const double span = max_ - min_;
     double step = (interval_ > 0.0) ? interval_ : span * 0.02;
     if (wheel.deltaY < 0) step = -step;
@@ -138,6 +203,33 @@ void Knob::advanceStates (double nowMs)
     tweenTo (hoverT_,  nowMs, hovered_        ? 1.0f : 0.0f, ms);
     tweenTo (downT_,   nowMs, mouseDownHeld_  ? 1.0f : 0.0f, ms);
     tweenTo (rotateT_, nowMs, dragging_       ? 1.0f : 0.0f, ms);
+
+    // R36：把"还在动"上报给宿主，否则空闲降频会把 120ms 渐变切成跳变。
+    animating_ = ! (hoverT_.done (nowMs) && downT_.done (nowMs) && rotateT_.done (nowMs));
+
+    // R36：paint() 改用**宿主注入的时钟**，不再自取 juce::Time 实时钟。
+    //   原先 paint 读实时钟、advance 读宿主钟，两套时基在测试虚拟时钟下分叉，
+    //   实际运行也只是"恰好同源"，属于隐患不是保障。
+    lastNowMs_ = nowMs;
+}
+
+// R36 测试钩子：几何量必须与状态无关（Pro-MB 只有亮度/色相变化）。
+float Knob::arcThicknessForTest() const
+{
+    const float d = juce::jmin (knobDiameter_, (float) getWidth());
+    return juce::jmax (2.0f, d * 0.10f);
+}
+
+float Knob::arcRadiusForTest() const
+{
+    const float d = juce::jmin (knobDiameter_, (float) getWidth());
+    return d * 0.5f - arcThicknessForTest() * 0.5f;
+}
+
+float Knob::capRadiusForTest() const
+{
+    const float d = juce::jmin (knobDiameter_, (float) getWidth());
+    return d * 0.5f - arcThicknessForTest() - juce::jmax (1.0f, d * 0.05f);
 }
 
 // ---------------- 内嵌输入 ----------------
@@ -322,9 +414,13 @@ void Knob::paint (juce::Graphics& g)
     // ---- 标签（旋钮上方）----
     if (showLabel_ && label_.isNotEmpty())
     {
-        g.setFont (MBTheme::font (MBTheme::semiBold(), juce::jmin (10.5f, d * 0.22f)));
+        // R36（B4）：字号倍率放大后标签行也要跟着变高，否则文字被裁。
+        const auto labFont = MBTheme::font (MBTheme::semiBold(), juce::jmin (10.5f, d * 0.22f));
+        const float labH = labFont.getHeight() + 1.0f;
+        g.setFont (labFont);
         g.setColour (pal_.dim);
-        auto labelBox = juce::Rectangle<float> (0.0f, kb.getY() - juce::jmin (15.0f, d * 0.32f), w, 14.0f);
+        auto labelBox = juce::Rectangle<float> (0.0f, kb.getY() - juce::jmax (labH, juce::jmin (15.0f, d * 0.32f)),
+                                                w, labH);
         g.drawText (label_, labelBox, juce::Justification::centredTop);
 
         // §5.2：⊞ 联动标识（标签右侧小方块+加号，表示作用于四段）
@@ -352,43 +448,77 @@ void Knob::paint (juce::Graphics& g)
                                   (int) (cy - backLayer_.getHeight() * 0.5f));
 
     // ---- Phase C-2：四态合成（Pro-MB Overlay{NORMAL,ACTIVE,DOWN,ROTATE}）----
-    // 三个 Tween 取最大值作为"提亮量"，rotate 额外把帽转向暖色。
-    // 原实现是 dragging_ ? 1.35f : 1.0f 硬跳；现在 120ms 渐变。
-    const double nowMs = (double) juce::Time::getMillisecondCounter();
+    // ⚠️ R36 重做。旧实现有两个毛病（用户实测"旋钮动效不合理"）：
+    //   1) `glow = max(hover, down, rotate)` 把 DOWN 和 ACTIVE 压成同一个亮度，
+    //      而帽的提亮又是 `0.25*hover + 0.15*down`——按下时环一样亮、帽反而更暗，
+    //      自相矛盾，按下去没有"压下去"的观感；
+    //   2) glow 直接乘进 thick / 弧半径 / capR，于是悬停会让环变粗 35%、
+    //      帽半径缩 10%、指针缩短——旋钮在"呼吸"。Pro-MB 的 BACK 层只换
+    //      NORMAL/ACTIVE 两张纹理（亮度差），几何在任何状态下**不动**。
+    //
+    // 现在：几何只由直径决定（恒量），状态只改颜色。
+    //   优先级 ROTATE（暖）> DOWN（压暗）> ACTIVE（提亮）> NORMAL
+    const double nowMs = lastNowMs_;                 // R36：宿主注入的时钟
     const float hoverK  = hoverT_.value (nowMs);
     const float downK   = downT_.value (nowMs);
     const float rotateK = rotateT_.value (nowMs);
-    const float glow    = juce::jmax (hoverK, juce::jmax (downK, rotateK));
+    // 按下时 ACTIVE 让位给 DOWN（不是叠加），拖动时再让位给 ROTATE
+    const float activeK = juce::jmax (0.0f, hoverK * (1.0f - downK));
+    const float pressK  = downK * (1.0f - rotateK);
 
     // ---- OVERLAY：值弧（轨道 + 值）----
     const float a0 = valueToAngle (min_);
     const float a1 = valueToAngle (max_);
     const float av = valueToAngle (value_);
-    // 弧粗随 glow 渐变（1.0 → 1.35），不再是二态跳变
-    const float thick = juce::jmax (2.0f, d * 0.10f) * (1.0f + 0.35f * glow);
+    // R36：弧粗恒定（几何冻结）
+    const float thick = juce::jmax (2.0f, d * 0.10f);
+    const float arcR  = r - thick * 0.5f;
 
     juce::Path track;
-    track.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f, a0, a1, true);
+    track.addCentredArc (cx, cy, arcR, arcR, 0.0f, a0, a1, true);
     g.setColour (pal_.track.withAlpha (0.55f));   // BACK 已有圆体，轨道淡一点避免叠重
     g.strokePath (track, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
     juce::Path val;
-    const float from = bipolar_ ? valueToAngle (default_) : a0;
-    val.addCentredArc (cx, cy, r - thick * 0.5f, r - thick * 0.5f, 0.0f,
+    // R36：双极弧的原点是**零点**（bipolarOrigin_），不是默认值。
+    //   旧代码用 `valueToAngle (default_)`，Range 默认 −6 dB 时弧从 −6 起画，
+    //   而且 setBipolar 全仓库从未被调用 → 整段是死代码，所有旋钮都从最小值起画。
+    const float from = bipolar_ ? valueToAngle (bipolarOrigin_) : a0;
+    // R36：双极旋钮在零点处画一根短刻线 —— 否则值为 0 时弧长为零，
+    //   旋钮看起来"什么都没有"，用户读不出零点在哪一侧。
+    if (bipolar_)
+    {
+        const float tickR0 = arcR - thick * 0.75f;
+        const float tickR1 = arcR + thick * 0.75f;
+        g.setColour (pal_.dim.withAlpha (0.85f));
+        g.drawLine (cx + std::sin (from) * tickR0, cy - std::cos (from) * tickR0,
+                    cx + std::sin (from) * tickR1, cy - std::cos (from) * tickR1,
+                    juce::jmax (1.0f, d * 0.02f));
+    }
+    val.addCentredArc (cx, cy, arcR, arcR, 0.0f,
                        juce::jmin (from, av), juce::jmax (from, av), true);
-    // 弧色随 glow 变亮（accent → accent.brighter(0.30)）
-    g.setColour (pal_.accent.interpolatedWith (pal_.accent.brighter (0.30f), glow));
+    // 弧色：NORMAL → 悬停提亮 → 拖动转"暖色"（Pro-MB OverlayRotate 的暖辉光）
+    // R36：暖色固定为金色，而不是主题 accent 的提亮版——否则 Blue 主题下
+    //   ROTATE 只是"更亮的蓝"，和 ACTIVE 分不开（快照 06 里两者几乎一样）。
+    const juce::Colour warmCol (0xFFFFC86B);
+    juce::Colour arcCol = pal_.accent.brighter (0.10f * activeK);
+    if (pressK > 0.001f)
+        arcCol = arcCol.darker (0.32f * pressK);
+    if (rotateK > 0.001f)
+        arcCol = arcCol.interpolatedWith (warmCol.brighter (0.10f), rotateK * 0.85f);
+    g.setColour (arcCol);
     g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
 
     // ---- 帽（近白）+ 深色指针 ----
-    // 四态：NORMAL = knob；ACTIVE/DOWN = 逐级提亮；ROTATE = 转向暖色（accent 方向）
-    const float capR = r - thick - juce::jmax (1.0f, d * 0.05f);
+    // NORMAL / ACTIVE（略亮）/ DOWN（压暗）/ ROTATE（转暖）
+    const float capR = r - thick - juce::jmax (1.0f, d * 0.05f);   // R36：恒定
     juce::Colour capCol = pal_.knob;
+    capCol = capCol.brighter (0.16f * activeK);                    // ACTIVE：提亮
+    capCol = capCol.darker   (0.26f * pressK);                     // DOWN：压暗（要能与 ACTIVE 分辨）
     if (rotateK > 0.001f)
-        capCol = capCol.interpolatedWith (pal_.accent.brighter (0.45f), rotateK * 0.55f);
-    capCol = capCol.brighter (0.25f * hoverK + 0.15f * downK);
+        capCol = capCol.interpolatedWith (juce::Colour (0xFFFFD79A), rotateK * 0.62f);
     juce::ColourGradient grad (capCol.brighter (0.12f), cx, cy - capR,
                                capCol.darker (0.15f), cx, cy + capR, false);
     g.setGradientFill (grad);
@@ -397,7 +527,7 @@ void Knob::paint (juce::Graphics& g)
     const float ang = av;
     // 指针：与弧同一角度约定 —— (cx + R·sin(ang), cy − R·cos(ang))
     const float pR0 = capR * 0.22f;
-    const float pR1 = r - thick * 0.5f;         // = 弧所在半径
+    const float pR1 = arcR;                     // = 弧所在半径（R36：恒定）
     const float px1 = cx + std::sin (ang) * pR0;
     const float py1 = cy - std::cos (ang) * pR0;
     const float px2 = cx + std::sin (ang) * pR1;
@@ -409,9 +539,11 @@ void Knob::paint (juce::Graphics& g)
     // ---- 数值读数（旋钮下方）----§5.2：偏移旋钮带 "Δ " 前缀
     juce::String txt = valuePrefix_ + juce::String (value_, decimals_);
     if (suffix_.isNotEmpty()) txt << " " << suffix_;
-    g.setFont (MBTheme::font (MBTheme::regular(), juce::jmin (11.0f, d * 0.24f)));
+    const auto valFont = MBTheme::font (MBTheme::regular(), juce::jmin (11.0f, d * 0.24f));
+    g.setFont (valFont);
     g.setColour (editing_ ? pal_.accent : pal_.text);
-    g.drawText (txt, juce::Rectangle<float> (0.0f, kb.getBottom() + 1.0f, w, 14.0f),
+    g.drawText (txt, juce::Rectangle<float> (0.0f, kb.getBottom() + 1.0f, w,
+                                             valFont.getHeight() + 2.0f),
                 juce::Justification::centredTop);
 
     // ---- 编辑框（自绘内嵌输入）----

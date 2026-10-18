@@ -31,7 +31,12 @@ class CrunchMBAudioProcessor;
 class BandPopover : public juce::Component
 {
 public:
-    static constexpr int kPopKnobs = 5;
+    // R36（B5）：6 个旋钮。Pro-MB 的分段面板里是
+    //   Range / Threshold / Attack / Ratio / Knee / Release / **Level**，
+    // 而我们此前把 **Mix**（全局 0–200% 语义）放进了带内、把等价于 Level 的
+    // Makeup(−36..+36 dB) 藏在面板外。按用户决定：**保留 Mix**，同时把
+    // OUTPUT（= Makeup，双极 ±dB）补成与其它旋钮同级的第 6 个旋钮。
+    static constexpr int kPopKnobs = 6;
 
     explicit BandPopover (CrunchMBAudioProcessor& processor);
     ~BandPopover() override;
@@ -47,6 +52,17 @@ public:
     void  setBand (int band);
     /** 传入该段的像素左右边界（用于水平居中）。 */
     void setBandEdges (float leftX, float rightX);
+    /**
+     * R36（B6）：该段的**真实频率范围**（Hz）。
+     *
+     * 事故：面板左上角那段 "LOW 20 - 200" 里，原先塞的是 setBandEdges 的
+     * **像素坐标**，被 fmtHzShort() 当成 Hz 打印；而且 setBandEdges 只在
+     * openPopoverForBand() 里调用一次 → 拖动分频点后数字永远不更新。
+     * 现在由 DisplayView 每帧/每次分频变更时把 Hz 推下来。
+     */
+    void setBandFreqRange (float hzLow, float hzHigh);
+    /** 测试钩子：当前显示的频率文本（"20 - 200"）。 */
+    juce::String bandFreqTextForTest() const { return freqText_; }
 
     /** 每帧推进动画。返回 true 表示仍在动画中。 */
     bool advance (double nowMs);
@@ -103,6 +119,14 @@ public:
     void tickEditCursors (juce::uint32 nowMs);
     /** Phase C-2：推进所有子旋钮的四态渐变（由宿主 60fps 定时器调用）。 */
     void advanceKnobStates (double nowMs);
+    /** R36：任一旋钮的四态渐变是否还在进行（宿主的空闲降频必须读它）。 */
+    bool isKnobAnimating() const
+    {
+        for (auto& kb : knobs_)
+            if (kb != nullptr && kb->isAnimating())
+                return true;
+        return false;
+    }
 
     /** 同步参数 → 控件（切段/外部改动后调用）。 */
     void syncFromParams();
@@ -226,6 +250,9 @@ private:
 
     int   band_ = -1;
     float bandLeftX_ = 0.0f, bandRightX_ = 0.0f;
+    /** R36（B6）：该段频率范围（Hz）与预格式化的顶部文本。 */
+    float bandHzLow_ = 0.0f, bandHzHigh_ = 0.0f;
+    juce::String freqText_;
     juce::Rectangle<int> hostBounds_;
     juce::Point<float> lastMousePos_;
 
@@ -236,7 +263,7 @@ private:
 
     std::array<std::unique_ptr<Knob>, kPopKnobs> knobs_;
     /** R35（D）：上次下发给 Knob 的直径（Knob 无 getter）。 */
-    std::array<float, kPopKnobs> knobDiameters_ { { 0, 0, 0, 0, 0 } };
+    std::array<float, kPopKnobs> knobDiameters_ { { 0, 0, 0, 0, 0, 0 } };
     bool knobsReady_ = false;
 
     std::array<double, kPopKnobs> values_ {};             // 物理值

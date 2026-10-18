@@ -49,14 +49,19 @@ public:
 
     /**
      * Phase D-2：Pro-MB sticky 语义（与 AnalyzerPanel 同一套状态机）。
-     *   hoverButton(true)  -> 非 sticky 时打开
-     *   hoverButton(false) -> 非 sticky 时自动收起；sticky 时不动
+     *   R36（B2）：hoverButton 已删除，底栏按钮改纯点击展开。
      *   clickButton()      -> 变 sticky 并保持打开；已 sticky 则收起并解除
      *   clickOutside()     -> 收起并解除 sticky
      */
-    void hoverButton (bool hovering);
     bool clickButton();
     void clickOutside();
+    /** R36（B3）：面板标题栏的「锁定」按钮 —— 钉住/解除钉住（带按下态）。 */
+    void setSticky (bool s);
+    /** 面板标题栏「锁定」按钮的矩形（命中测试与绘制共用）。 */
+    juce::Rectangle<float> pinRect() const;
+    bool hitTestPin (juce::Point<float> p) const;
+    /** R36（B3）：hover 态需要鼠标位置（标签页与锁定按钮都用它）。 */
+    void setLastMousePos (juce::Point<float> p) { lastMousePos_ = p; }
 
     /** 每帧推进动画。返回 true 表示仍在动画中（需要继续 repaint）。 */
     bool advance (double nowMs);
@@ -84,6 +89,14 @@ public:
     void tickEditCursors (juce::uint32 nowMs);
     /** Phase C-2：推进所有子旋钮的四态渐变（由宿主 60fps 定时器调用）。 */
     void advanceKnobStates (double nowMs);
+    /** R36：任一旋钮的四态渐变是否还在进行（宿主的空闲降频必须读它）。 */
+    bool isKnobAnimating() const
+    {
+        for (auto& kb : knobs_)
+            if (kb != nullptr && kb->isAnimating())
+                return true;
+        return false;
+    }
 
     /** 测试钩子：直接施加一次偏移（applyOffset 为 private）。 */
     void applyOffsetForTest (int k, double v) { applyOffset (k, v); }
@@ -115,6 +128,11 @@ private:
     // ---- 面板几何（依赖宿主 bounds）----
     juce::Rectangle<float> panelRect() const;
     juce::Rectangle<float> buttonRect() const;
+public:
+    /** R36 测试钩子：面板矩形（快照裁切 / 断言用）。 */
+    juce::Rectangle<float> panelRectForTest() const { return panelRect(); }
+    juce::Rectangle<float> buttonRectForTest() const { return buttonRect(); }
+private:
 
     void ensureKnobs();
     void layoutKnobs (bool force);
@@ -134,6 +152,8 @@ private:
     Tween tween_;
 
     juce::Rectangle<int> hostBounds_;
+    /** R36（B3）：hover 态来源（标签页 / 锁定按钮）。 */
+    juce::Point<float> lastMousePos_ { -1.0f, -1.0f };
 
     std::array<std::unique_ptr<Knob>, kLinkedKnobs> knobs_;
     std::array<double, kLinkedKnobs - 1> offset_ {};   // 4 个偏移旋钮的当前 Δ

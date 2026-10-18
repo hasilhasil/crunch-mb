@@ -78,13 +78,31 @@ void BandPopover::setBandEdges (float leftX, float rightX)
     repaint();
 }
 
+// R36（B6）：该段的真实频率范围（Hz）。由 DisplayView 在分频点变化时推送。
+// 顶部 "LOW 20 - 200" 一类文本必须在拖动分频点时实时更新——
+// 原先这里塞的是像素坐标（还只在打开面板时算一次），数字既不真实也不刷新。
+void BandPopover::setBandFreqRange (float hzLow, float hzHigh)
+{
+    if (std::abs (hzLow - bandHzLow_) < 1.0e-3f && std::abs (hzHigh - bandHzHigh_) < 1.0e-3f
+        && freqText_.isNotEmpty())
+        return;
+    bandHzLow_  = hzLow;
+    bandHzHigh_ = hzHigh;
+    freqText_   = fmtHzShort (hzLow) + " - " + fmtHzShort (hzHigh);
+    repaint();
+}
+
 // ---------------- 几何 ----------------
 juce::Rectangle<float> BandPopover::popoverRect() const
 {
     const float W = (float) hostBounds_.getWidth();
     const float H = (float) hostBounds_.getHeight();
-    const float pw = W * (472.0f / kDesignW);
-    const float ph = H * (200.0f / kDesignH);
+    // R36（B4/B5）：面板放大 472×200 → 510×216。
+    //   · 6 个旋钮（新增 OUTPUT）需要更多横向空间；
+    //   · 字号整体放大后 200px 高已经装不下「旋钮行 + 滑杆行 + EXPERT」。
+    //   内部所有比例仍按 472/200 的设计稿写，本函数只负责把设计盒放大。
+    const float pw = W * (510.0f / kDesignW);
+    const float ph = H * (216.0f / kDesignH);
 
     // 随分段居中：取该段左右边界的像素中点
     const float midX = (bandLeftX_ + bandRightX_) * 0.5f;
@@ -301,13 +319,16 @@ void BandPopover::ensureKnobs()
         return;
 
     // 参数范围与显示格式（§6.2：旋钮下显示范围标注）
-    struct Cfg { double mn, mx, iv, def; int dec; const char* suf; const char* label; };
+    // ⚠️ R36：这里的范围/中心必须与 Parameters.cpp 的声明**逐字一致**，
+    //   否则旋钮位置与宿主自动化车道的位置会互相矛盾（见 Knob::setSkew 注释）。
+    struct Cfg { double mn, mx, iv, def, skewCentre; int dec; const char* suf; const char* label; bool bipolar; };
     const Cfg cfgs[kPopKnobs] = {
-        { -60.0,    0.0, 0.1, -20.0, 1, "dB", "THRESHOLD" },
-        { -30.0,   30.0, 0.1,  -6.0, 1, "dB", "RANGE"     },
-        {   0.1,  200.0, 0.1,  10.0, 1, "ms", "ATTACK"    },
-        {  10.0, 1000.0, 0.1, 100.0, 1, "ms", "RELEASE"   },
-        {   0.0,  100.0, 1.0, 100.0, 0, "%",  "MIX"       },
+        { -60.0,    0.0, 0.1, -20.0,   0.0, 1, "dB", "THRESHOLD", false },
+        { -30.0,   30.0, 0.1,  -6.0,   0.0, 1, "dB", "RANGE",     true  },
+        {   0.1,  200.0, 0.1,  10.0,  10.0, 1, "ms", "ATTACK",    false },
+        {  10.0, 1000.0, 0.5, 100.0, 100.0, 1, "ms", "RELEASE",   false },
+        { -36.0,   36.0, 0.1,   0.0,   0.0, 1, "dB", "OUTPUT",    true  },   // B5：= Makeup
+        {   0.0,  100.0, 1.0, 100.0,   0.0, 0, "%",  "MIX",       false },
     };
 
     for (int k = 0; k < kPopKnobs; ++k)
@@ -322,6 +343,16 @@ void BandPopover::ensureKnobs()
         kb->setKnobDiameter (38.0f);
         kb->setShowLabel (true);
         kb->setPalette (pal_);
+        // R36（K7）：Attack / Release 参数用的是 setSkewForCentre，
+        //   旋钮必须用同一个 centre 复算刻度，否则默认值会落在行程 5% 处。
+        if (cfgs[k].skewCentre > 0.0)
+            kb->setSkew (cfgs[k].skewCentre);
+        // R36（K6）：双极弧（Range / Output）从 0 起画，不是从最小值起画。
+        if (cfgs[k].bipolar)
+        {
+            kb->setBipolar (true);
+            kb->setBipolarOrigin (0.0);
+        }
         const int kk = k;
         kb->onValueChange = [this, kk] (double v) { applyPopoverKnob (kk, v); };
         addAndMakeVisible (kb);
@@ -386,7 +417,7 @@ void BandPopover::applyPopoverKnob (int k, double v)
 {
     const int b = (band_ >= 0) ? band_ : 0;
     static const juce::String ids[kPopKnobs] = {
-        "Threshold", "Range", "Attack", "Release", "Mix"
+        "Threshold", "Range", "Attack", "Release", "Makeup", "Mix"   // B5：Makeup = OUTPUT
     };
     setParamPhysical ("band" + juce::String (b) + ids[juce::jlimit (0, kPopKnobs - 1, k)], (float) v);
     syncFromParams();
@@ -495,15 +526,15 @@ void BandPopover::syncFromParams()
 {
     const int b = (band_ >= 0) ? band_ : 0;
     static const juce::String ids[kPopKnobs] = {
-        "Threshold", "Range", "Attack", "Release", "Mix"
+        "Threshold", "Range", "Attack", "Release", "Makeup", "Mix"   // B5：Makeup = OUTPUT
     };
     for (int k = 0; k < kPopKnobs; ++k)
     {
         const juce::String id = "band" + juce::String (b) + ids[k];
         values_[(size_t) k] = getParamPhysical (id);
-        normValues_[(size_t) k] = juce::jlimit (0.0f, 1.0f,
-            (float) ((values_[(size_t) k] - paramRangeMinOf (id))
-                   / (double) juce::jmax (1.0e-6f, paramRangeMaxOf (id) - paramRangeMinOf (id))));
+        // R36（K7）：归一化必须走**参数自己的** NormalisableRange，
+        //   不能按 min/max 线性除——Attack/Release 是对数刻度。
+        normValues_[(size_t) k] = juce::jlimit (0.0f, 1.0f, getParamNorm (id));
     }
     for (int k = 0; k < kPopKnobs; ++k)
         if (knobs_[(size_t) k] != nullptr)
@@ -540,7 +571,7 @@ bool BandPopover::syncParam (const juce::String& paramId)
     const juce::String suffix = paramId.substring (prefix.length());
 
     static const char* kKnobSuffix[kPopKnobs] = {
-        "Threshold", "Range", "Attack", "Release", "Mix"
+        "Threshold", "Range", "Attack", "Release", "Makeup", "Mix"   // B5：Makeup = OUTPUT
     };
     for (int k = 0; k < kPopKnobs; ++k)
     {
@@ -548,10 +579,8 @@ bool BandPopover::syncParam (const juce::String& paramId)
             continue;
         const double v = getParamPhysical (paramId);
         values_[(size_t) k] = v;
-        normValues_[(size_t) k] = juce::jlimit (0.0f, 1.0f,
-            (float) ((v - paramRangeMinOf (paramId))
-                   / (double) juce::jmax (1.0e-6f,
-                                          paramRangeMaxOf (paramId) - paramRangeMinOf (paramId))));
+        // R36（K7）：归一化走参数自己的 NormalisableRange（对数刻度别再线性除）
+        normValues_[(size_t) k] = juce::jlimit (0.0f, 1.0f, getParamNorm (paramId));
         // ⚠️ sendNotification=false：这是"参数 → 控件"的回灌，
         //    再触发 onValueChange 会把值又写回参数（无限回环 + 与宿主打架）。
         if (knobs_[(size_t) k] != nullptr)
@@ -664,8 +693,11 @@ void BandPopover::paint (juce::Graphics& g)
         static const char* kNames[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
         g.setColour (pal_.text);
         g.setFont (MBTheme::font (MBTheme::semiBold(), 12.0f));
+        // R36（B6）：频率范围用 setBandFreqRange 推下来的真实 Hz 文本，
+        //   不再把像素坐标当 Hz 打印、也不再只在打开时算一次。
         g.drawText (juce::String (kNames[juce::jlimit (0, 3, band_)]) + "  "
-                    + fmtHzShort (bandLeftX_) + " - " + fmtHzShort (bandRightX_),
+                    + (freqText_.isNotEmpty() ? freqText_
+                                              : fmtHzShort (bandHzLow_) + " - " + fmtHzShort (bandHzHigh_)),
                     juce::Rectangle<float> (bolt.getRight() + r.getWidth() * (8.0f / 472.0f),
                                             r.getY() + r.getHeight() * (7.0f / 200.0f),
                                             r.getWidth() * (300.0f / 472.0f),
@@ -677,8 +709,16 @@ void BandPopover::paint (juce::Graphics& g)
                                                 r.getY() + r.getHeight() * (8.0f / 200.0f), cs, cs);
         g.setColour (pal_.track);
         g.fillRoundedRectangle (closeBtn, r.getWidth() * (6.0f / 472.0f));
-        g.setColour (pal_.text);
-        g.drawText ("\xE2\x9C\x95", closeBtn, juce::Justification::centred);
+        // R36：原来这里画的是 "✕"（U+2715）——Poppins 里没有这个字形，
+        //   实际渲染成两个方框（快照 03_popover_2x 右上也看到过同样的问题）。
+        //   改成两条线画出来的叉，字体缺字也不影响。
+        {
+            const float cx2 = closeBtn.getCentreX(), cy2 = closeBtn.getCentreY();
+            const float rr  = cs * 0.24f;
+            g.setColour (pal_.text);
+            g.drawLine (cx2 - rr, cy2 - rr, cx2 + rr, cy2 + rr, juce::jmax (1.2f, cs * 0.09f));
+            g.drawLine (cx2 + rr, cy2 - rr, cx2 - rr, cy2 + rr, juce::jmax (1.2f, cs * 0.09f));
+        }
 
         // 分隔线
         g.setColour (pal_.grid);
@@ -687,23 +727,18 @@ void BandPopover::paint (juce::Graphics& g)
                     r.getWidth() - r.getWidth() * (20.0f / 472.0f), 1.0f);
     }
 
-    // ---- 旋钮行底板 + 范围标注（弧/帽/指针由 Knob 子组件绘制）----
-    static const char* kRange[5] = { "-60..0 dB", "-30..30 dB", "0..200 ms", "10..1000 ms", "0..100 %" };
-    const float unitW = (r.getWidth() - r.getWidth() * (16.0f / 472.0f)) / (float) kPopKnobs;
+    // ---- 旋钮行底板（弧/帽/指针/数值由 Knob 子组件绘制）----
+    // ⚠️ R36：这里原来还会在每个旋钮下方画一行范围标注（"-60..0 dB" 之类）。
+    //   改成 6 个旋钮 + 字号放大之后，那行标注和 Knob 自己的数值读数**叠在一起**
+    //   （快照里能看到 "-20.0 dB" 压在 "-60..0 dB" 上）。Pro-MB 的分段面板
+    //   也只显示数值、不显示范围，所以直接去掉，退回干净的"标签 + 旋钮 + 数值"。
     for (int k = 0; k < kPopKnobs; ++k)
     {
         const auto kr = popKnobRect (k);
-        const float cx = kr.getCentreX();
         const bool hot = kr.contains (lastMousePos_);
         g.setColour (pal_.track.withAlpha ((hot ? 0.50f : 0.28f) * a));
         g.fillRoundedRectangle (kr.expanded (r.getWidth() * (2.0f / 472.0f)),
                                 r.getWidth() * (6.0f / 472.0f));
-        g.setColour (pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (MBTheme::regular(), 8.5f));
-        g.drawText (kRange[k],
-                    juce::Rectangle<float> (cx - unitW * 0.5f, kr.getBottom() - r.getHeight() * (12.0f / 200.0f),
-                                            unitW, 11.0f),
-                    juce::Justification::centredTop);
     }
 
     // ---- Phase C-6：Dynamics 分段按钮（Compress / Expand，Pro-MB segmented 对标）----
@@ -736,29 +771,46 @@ void BandPopover::paint (juce::Graphics& g)
     }
 
     // ---- 滑杆行：RATIO / KNEE(0-48dB) / EXT ----
+    // R36（B4）：原来是"整块深色胶囊 + 居中文字"，圆角半径 = 半高，
+    //   于是 frac 很小时填充块被画成一颗大蓝球（快照里那三个圆点就是它），
+    //   整行看起来像标签而不是控件。现在改成标准写法：
+    //   上排「名称 … 数值」，下排「细轨道 + accent 填充 + 圆点手柄」。
+    //   拖动热区仍是整行 popSliderRect()，手感不变。
     for (int k = 0; k < 3; ++k)
     {
         const auto sr = popSliderRect (k);
         const bool hot = (sliderDrag_ == k) || sr.contains (lastMousePos_);
-        g.setColour (pal_.track.withAlpha ((hot ? 0.75f : 0.50f) * a));
-        g.fillRoundedRectangle (sr, r.getWidth() * (11.0f / 472.0f));
 
-        float frac = 0.0f;
-        if (k == 0)      frac = (float) ((sliders_[0] - 1.0) / 19.0);
-        else if (k == 1) frac = (float) sliders_[1];
-        else             frac = (float) sliders_[2];
+        float frac = (k == 0) ? (float) ((sliders_[0] - 1.0) / 19.0)
+                   : (k == 1) ? (float) sliders_[1]
+                              : (float) sliders_[2];
         frac = juce::jlimit (0.0f, 1.0f, frac);
-        g.setColour (pal_.accent.withAlpha (0.30f * a));
-        g.fillRoundedRectangle (sr.withWidth (juce::jmax (2.0f, sr.getWidth() * frac)),
-                                r.getWidth() * (11.0f / 472.0f));
 
+        const float labelH = sr.getHeight() * 0.50f;
+        const juce::String name = (k == 0) ? "RATIO" : (k == 1) ? "KNEE" : "EXT";
+        const juce::String val  = (k == 0) ? juce::String (sliders_[0], 1) + " : 1"
+                                : (k == 1) ? juce::String (sliders_[1] * 48.0, 1) + " dB"
+                                           : ((sliders_[2] > 0.5) ? "SIDECHAIN" : "INTERNAL");
+        g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
         g.setColour (hot ? pal_.text.withMultipliedAlpha (a) : pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-        const juce::String kneeTxt = "KNEE  " + juce::String (sliders_[1] * 48.0, 1) + " dB";
-        const juce::String txt = (k == 0) ? ("RATIO  " + juce::String (sliders_[0], 1) + " : 1")
-                              : (k == 1) ? kneeTxt
-                                         : (sliders_[2] > 0.5 ? "EXT  SIDECHAIN" : "EXT  INTERNAL");
-        g.drawText (txt, sr, juce::Justification::centred);
+        g.drawText (name, sr.withHeight (labelH), juce::Justification::centredLeft);
+        g.setColour (hot ? pal_.accent.withMultipliedAlpha (a) : pal_.text.withMultipliedAlpha (a));
+        g.drawText (val, sr.withHeight (labelH), juce::Justification::centredRight);
+
+        const float trkH = juce::jmax (3.0f, sr.getHeight() * 0.16f);
+        const float trkY = sr.getY() + labelH + (sr.getHeight() - labelH - trkH) * 0.5f;
+        const float padX = trkH * 1.2f;
+        auto track = juce::Rectangle<float> (sr.getX() + padX, trkY,
+                                             juce::jmax (4.0f, sr.getWidth() - padX * 2.0f), trkH);
+        g.setColour (pal_.track.withAlpha ((hot ? 0.95f : 0.70f) * a));
+        g.fillRoundedRectangle (track, trkH * 0.5f);
+        g.setColour (pal_.accent.withAlpha ((hot ? 0.95f : 0.80f) * a));
+        g.fillRoundedRectangle (track.withWidth (juce::jmax (trkH, track.getWidth() * frac)),
+                                trkH * 0.5f);
+        const float hx = track.getX() + track.getWidth() * frac;
+        const float hr = trkH * 1.05f;
+        g.setColour (hot ? juce::Colours::white : pal_.knob);
+        g.fillEllipse (hx - hr, trkY + trkH * 0.5f - hr, hr * 2.0f, hr * 2.0f);
     }
 
     // ---- EXPERT 右缘竖排标签（Phase C-5，Pro-MB 对标）----
@@ -771,18 +823,19 @@ void BandPopover::paint (juce::Graphics& g)
                                  : pal_.dim.withMultipliedAlpha (a));
         g.setFont (MBTheme::font (expertOpen_ ? MBTheme::semiBold() : MBTheme::regular(), 9.0f));
 
-        // 竖排文字：逐字符往下排（JUCE 无竖排 drawText，手工排）
-        const juce::String txt = expertOpen_ ? "EXPERT \xE2\x96\xBC" : "EXPERT \xE2\x96\xB6";
-        const float lineH = 10.0f;
-        const float startY = er.getCentreY() - txt.length() * lineH * 0.5f + lineH * 0.5f;
-        for (int i = 0; i < txt.length(); ++i)
-        {
-            const juce::String ch = txt.substring (i, i + 1);
-            if (ch != " ")
-                g.drawText (ch, juce::Rectangle<float> (er.getX(), startY + i * lineH,
-                                                        er.getWidth(), lineH),
-                            juce::Justification::centred);
-        }
+        // R36（B4）：原来逐字符往下排（"E X P E R T"竖着一列），观感很差。
+        //   改为把「EXPERT ▸」整体旋转 −90°，沿右缘竖着读。
+        const juce::String txt = expertOpen_ ? juce::String::fromUTF8 ("EXPERT \xE2\x96\xBC")
+                                             : juce::String::fromUTF8 ("EXPERT \xE2\x96\xB6");
+        g.saveState();
+        const float ecx = er.getCentreX(), ecy = er.getCentreY();
+        g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, ecx, ecy));
+        g.drawText (txt,
+                    juce::Rectangle<float> (ecx - er.getHeight() * 0.5f,
+                                            ecy - er.getWidth() * 0.5f,
+                                            er.getHeight(), er.getWidth()),
+                    juce::Justification::centred);
+        g.restoreState();
     }
 
     // ---- EXPERT 展开内容已移到 ExpertLayer 子组件（R35/C-b）----

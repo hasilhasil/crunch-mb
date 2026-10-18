@@ -2123,9 +2123,11 @@ static void testStaticRenderPixels()
         { 640, 480, "13202C", "分区 HM 底（选中 accent 10% over bg）" },   // y=480 避开网格/曲线
         { 850, 480, "111920", "分区 H 底" },
         { 900, 300, "16181B", "电平表条带底" },
-        { 290, 569, "2A2E33", "交叉点手柄 1（底部）" },
-        { 492, 569, "2A2E33", "交叉点手柄 2（底部）" },
-        { 718, 569, "2A2E33", "交叉点手柄 3（底部）" },
+        // R36（B3）：绘图区底缘现在是 559（扣掉了 LINKED 标签页那 29px），
+        // 分频手柄 46×22 底缘贴 559 → 占 537..559，采样取 y=541（手柄上部）。
+        { 290, 541, "2A2E33", "交叉点手柄 1（底部）" },
+        { 492, 541, "2A2E33", "交叉点手柄 2（底部）" },
+        { 718, 541, "2A2E33", "交叉点手柄 3（底部）" },
         { 300, 600, "202429", "全局条玻璃（surfaceA 0.84 over 分区底）" },
     };
     int pass = 0, fail = 0;
@@ -3208,7 +3210,8 @@ static void testScaleNotOccluded()
     const float top = dv.testPlotTop();
     const float bottom = dv.testPlotBottom();
     std::cout << "  绘图区: y " << top << " .. " << bottom << std::endl;
-    check (top == 30.0f && bottom == 588.0f, "T31.0 绘图区完全贴合状态栏/global bar 边界",
+    check (top == 30.0f && bottom == 559.0f,
+           "T31.0 绘图区贴合状态栏 / LINKED 标签页上缘",
            juce::String (top) + " .. " + juce::String (bottom));
 
     // ① 频谱轴首行(0dB)/末行(−100dB)文字 y 不越界
@@ -3216,8 +3219,8 @@ static void testScaleNotOccluded()
         const float y0 = dv.testScaleTextY (0.0f, false);
         const float y100 = dv.testScaleTextY (-100.0f, false);
         std::cout << "  频谱轴 0dB 文字 y=" << y0 << "  -100dB 文字 y=" << y100 << std::endl;
-        check (y0 >= 30.0f && y100 <= 588.0f - 12.0f,
-               "T31.1 频谱轴首尾刻度在顶栏/global bar 之间", "");
+        check (y0 >= 30.0f && y100 <= 559.0f - 12.0f,
+               "T31.1 频谱轴首尾刻度在顶栏/底栏之间", "");
         // 且 0dB 文字不进入顶栏（y ≥ 30）
         check (y0 >= 30.0f, "T31.1b 首行刻度不被顶栏盖住", juce::String (y0));
     }
@@ -3909,9 +3912,11 @@ static void testAnalyzerSettings()
     for (int t = 0; t < 20; ++t) dv.tickForTest();
 
     {
-        const float bx = 920.0f * 0.5f - 150.0f + 52.0f;
-        const float by = 620.0f - 32.0f + 16.0f;
-        check (dv.hitTestAnalyzerButtonForTest (bx, by), "T38.1 Analyzer 按钮可命中", "");
+        // R36（B4）：用按钮矩形自己的中心点，而不是硬编码坐标
+        //   （胶囊从 104×22 加到 120×26 并右移，写死坐标会假失败）
+        const auto ar = dv.analyzerButtonRectForTest();
+        check (dv.hitTestAnalyzerButtonForTest (ar.getCentreX(), ar.getCentreY()),
+               "T38.1 Analyzer 按钮可命中", "");
         check (! dv.hitTestAnalyzerButtonForTest (10.0f, 300.0f), "T38.2 绘图区不误触 Analyzer 按钮", "");
     }
 
@@ -4330,7 +4335,7 @@ static void testPopoverControls()
     check (dv.isPopoverOpenForTest() && dv.getPopoverBandForTest() == 2,
            "T40.1 打开 band2 Popover", juce::String (dv.getPopoverBandForTest()));
 
-    // ① 5 旋钮：直接驱动 Knob 的 onValueChange（等价于用户拖动），参数应写入 APVTS
+    // ① 6 旋钮：直接驱动 Knob 的 onValueChange（等价于用户拖动），参数应写入 APVTS
     {
         const float thBefore = phys (Param::bandThreshold (2));
         const float rgBefore = phys (Param::bandRange (2));
@@ -4342,7 +4347,8 @@ static void testPopoverControls()
         dv.applyPopoverKnobForTest (1,  12.0);      // Range（正值 = 向上压缩）
         dv.applyPopoverKnobForTest (2,  45.0);      // Attack
         dv.applyPopoverKnobForTest (3, 320.0);      // Release
-        dv.applyPopoverKnobForTest (4,  60.0);      // Mix
+        dv.applyPopoverKnobForTest (4,   9.0);      // Output（R36/B5：新增，= Makeup）
+        dv.applyPopoverKnobForTest (5,  60.0);      // Mix（R36：索引 4 → 5）
 
         std::cout << "  Threshold " << thBefore << " -> " << phys (Param::bandThreshold (2))
                   << " | Range " << rgBefore << " -> " << phys (Param::bandRange (2))
@@ -4360,6 +4366,9 @@ static void testPopoverControls()
                "T40.5 Release 旋钮写入 APVTS", juce::String (phys (Param::bandRelease (2))));
         check (std::abs (phys (Param::bandMix (2)) - 60.0f) < 0.5f,
                "T40.6 Mix 旋钮写入 APVTS", juce::String (phys (Param::bandMix (2))));
+        // R36（B5）：第 6 个旋钮 OUTPUT 写入 Makeup
+        check (std::abs (phys (Param::bandMakeup (2)) - 9.0f) < 0.2f,
+               "T40.6b OUTPUT 旋钮写入 Makeup", juce::String (phys (Param::bandMakeup (2))));
     }
 
     // ② 旋钮只影响目标段（不串段）
@@ -4504,10 +4513,14 @@ static void testPopoverControls()
         const auto sr = dv.popSliderRectForTest (0);
         dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());   // 按下 RATIO
         dv.mouseUpForTest (sr.getCentreX(), sr.getCentreY());     // 松手 → 应复位
+        // R36：先把 Makeup 归零 —— 本测试验证的是"滑杆拖拽态是否复位"，
+        //   不应依赖前面若干次曲线拖动把 Makeup 累积到什么值（可能已顶到 +36 上限，
+        //   再上拖当然不动，失败信息会伪装成"拖拽被吞"）。
+        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
+        mb->setParamPhysicalForTest ("band2Makeup", 0.0f);
         // 之后拖曲线区域应正常改 Makeup（不再被滑杆分支吃掉）
         const float cy = dv.curveYAtFreqForTest (freqToXforTest (2449.0f));
         const float mkBefore = phys (Param::bandMakeup (2));
-        dv.closePopoverForTest();   // R35（N2）：面板实心化后，显示区手势前先收起
         dv.mouseDownForTest (freqToXforTest (2449.0f), cy);
         dv.mouseDragForTest (freqToXforTest (2449.0f), cy - 100.0f);
         dv.mouseUpForTest (freqToXforTest (2449.0f), cy - 100.0f);
@@ -4537,44 +4550,38 @@ static void testAnalyzerPanelSticky()
     DisplayView dv (*mb);
     dv.setSize (920, 620);
 
-    // Analyzer 按钮位置（与 DisplayView::hitTestAnalyzerButton 一致）
-    const float btnX = 920.0f * 0.5f - 150.0f + 52.0f;
-    const float btnY = 620.0f - 32.0f + 5.0f + 11.0f;
+    // Analyzer 按钮位置（R36/B4：用按钮矩形自己的中心，不再硬编码）
+    const auto abr = dv.analyzerButtonRectForTest();
+    const float btnX = abr.getCentreX();
+    const float btnY = abr.getCentreY();
 
     // ① 初始：关闭且非 sticky
     check (! dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
            "T41.1 Analyzer 面板初始关闭且非 sticky", "");
 
-    // ② 悬停按钮 → 打开，但**不** sticky
+    // ② R36（B2）行为变更：**悬停不再打开**（用户实测"鼠标移到检测区域就展开"会误触）
     dv.mouseMoveForTest (btnX, btnY);
-    check (dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
-           "T41.2 悬停按钮 → 面板打开且不 sticky", "");
-
-    // ③ 鼠标移开 → 非 sticky 面板自动收起
-    dv.mouseMoveForTest (80.0f, 90.0f);
     check (! dv.isAnalyzerOpenForTest(),
-           "T41.3 鼠标移开 → 非 sticky 面板自动收起", "");
+           "T41.2 悬停按钮 → 面板保持关闭（B2：改纯点击）", "");
 
-    // ④ 点击按钮 → 变 sticky 且保持打开
-    dv.mouseMoveForTest (btnX, btnY);
+    // ③ 点击按钮 → 打开且 sticky（第一次点击即钉住）
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (dv.isAnalyzerOpenForTest() && dv.isAnalyzerStickyForTest(),
-           "T41.4 点击按钮 → 面板变 sticky 并保持打开", "");
+           "T41.4 点击按钮 → 面板打开并 sticky", "");
 
-    // ⑤ 鼠标移开 → sticky 面板**不**收起（这正是 sticky 的意义）
+    // ④ 鼠标移开 → sticky 面板**不**收起（这正是 sticky 的意义）
     dv.mouseMoveForTest (80.0f, 90.0f);
     check (dv.isAnalyzerOpenForTest() && dv.isAnalyzerStickyForTest(),
            "T41.5 鼠标移开 → sticky 面板不收起", "");
 
-    // ⑥ 再点按钮 → 收起并解除 sticky
+    // ⑤ 再点按钮 → 收起并解除 sticky
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (! dv.isAnalyzerOpenForTest() && ! dv.isAnalyzerStickyForTest(),
            "T41.6 再点按钮 → 收起并解除 sticky", "");
 
-    // ⑦ sticky 打开时点面板外 → 收起（连 sticky 一起解除）
-    dv.mouseMoveForTest (btnX, btnY);
+    // ⑥ sticky 打开时点面板外 → 收起（连 sticky 一起解除）
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (dv.isAnalyzerStickyForTest(), "T41.7 前置：sticky 已打开", "");
@@ -4614,29 +4621,23 @@ static void testLinkedDrawerSticky()
     check (! dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
            "T42.1 抽屉初始关闭且非 sticky", "");
 
-    // ② 悬停按钮 → 打开，但不 sticky
+    // ② R36（B2）：悬停不再打开 —— 底栏按钮改为纯点击
     dv.mouseMoveForTest (btnX, btnY);
-    check (dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
-           "T42.2 悬停抽屉按钮 → 打开且不 sticky", "");
-
-    // ③ 鼠标移开 → 非 sticky 自动收起
-    dv.mouseMoveForTest (80.0f, 90.0f);
     check (! dv.isLinkedOpenForTest(),
-           "T42.3 鼠标移开 → 非 sticky 抽屉自动收起", "");
+           "T42.2 悬停抽屉按钮 → 保持关闭（B2：改纯点击）", "");
 
-    // ④ 点击 → 变 sticky 并保持打开
-    dv.mouseMoveForTest (btnX, btnY);
+    // ③ 点击 → 打开且 sticky
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
-           "T42.4 点击抽屉按钮 → 变 sticky 并保持打开", "");
+           "T42.4 点击抽屉按钮 → 打开并 sticky", "");
 
-    // ⑤ 鼠标移开 → sticky 不收起
+    // ④ 鼠标移开 → sticky 不收起
     dv.mouseMoveForTest (80.0f, 90.0f);
     check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
            "T42.5 鼠标移开 → sticky 抽屉不收起", "");
 
-    // ⑥ 再点 → 收起并解除 sticky
+    // ⑤ 再点 → 收起并解除 sticky
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (! dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
@@ -4793,37 +4794,32 @@ static void testOutputPanelSticky()
     DisplayView dv (*mb);
     dv.setSize (920, 620);
 
-    // OUT 按钮：W−196..W−118，y = H−32+5，高 22（与 drawGlobalBar 一致）
-    const float btnX = 920.0f - 196.0f + 39.0f;     // 胶囊中心
-    const float btnY = 620.0f - 32.0f + 5.0f + 11.0f;
+    // OUT 按钮（R36/B4：用按钮矩形自己的中心）
+    const auto obr = dv.outputButtonRectForTest();
+    const float btnX = obr.getCentreX();
+    const float btnY = obr.getCentreY();
 
     // ① 初始：关闭且非 sticky
     check (! dv.isOutputOpenForTest() && ! dv.isOutputStickyForTest(),
            "T44.1 Output 面板初始关闭且非 sticky", "");
 
-    // ② 悬停 → 打开，不 sticky
+    // ② R36（B2）：悬停不再打开
     dv.mouseMoveForTest (btnX, btnY);
-    check (dv.isOutputOpenForTest() && ! dv.isOutputStickyForTest(),
-           "T44.2 悬停 OUT 按钮 → 面板打开且不 sticky", "");
-
-    // ③ 鼠标移开 → 非 sticky 自动收起
-    dv.mouseMoveForTest (80.0f, 90.0f);
     check (! dv.isOutputOpenForTest(),
-           "T44.3 鼠标移开 → 非 sticky 面板自动收起", "");
+           "T44.2 悬停 OUT 按钮 → 保持关闭（B2：改纯点击）", "");
 
-    // ④ 点击 → 变 sticky 并保持打开
-    dv.mouseMoveForTest (btnX, btnY);
+    // ③ 点击 → 打开并 sticky
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (dv.isOutputOpenForTest() && dv.isOutputStickyForTest(),
-           "T44.4 点击 OUT 按钮 → 变 sticky 并保持打开", "");
+           "T44.4 点击 OUT 按钮 → 打开并 sticky", "");
 
-    // ⑤ 鼠标移开 → sticky 不收起
+    // ④ 鼠标移开 → sticky 不收起
     dv.mouseMoveForTest (80.0f, 90.0f);
     check (dv.isOutputOpenForTest() && dv.isOutputStickyForTest(),
            "T44.5 鼠标移开 → sticky 面板不收起", "");
 
-    // ⑥ 再点 → 收起并解除 sticky
+    // ⑤ 再点 → 收起并解除 sticky
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
     check (! dv.isOutputOpenForTest() && ! dv.isOutputStickyForTest(),
@@ -5291,10 +5287,10 @@ static void testSelfDrawnDropDown()
     dv.mouseUpForTest (btnX, btnY);
     check (dv.isDropDownOpenForTest(), "T50.2 点击按钮 → 下拉打开", "");
 
-    // ③ 下拉矩形：应在按钮正下方，且高度 = 5 行 × 22px
+    // ③ 下拉矩形：应在按钮下方，且高度 = 5 行 × 26px（R36/B4：行高 22 → 26）
     const auto dr = dv.dropDownRectForTest();
     check (dr.getY() >= btnY && dr.getWidth() > 80.0f
-           && std::abs (dr.getHeight() - 5.0f * 22.0f) < 1.0f,
+           && std::abs (dr.getHeight() - 5.0f * 26.0f) < 1.0f,
            "T50.3 下拉在按钮下方且高 5 行",
            juce::String (dr.getWidth()) + "x" + juce::String (dr.getHeight())
            + " y=" + juce::String (dr.getY()));
@@ -5783,21 +5779,34 @@ static void testGlobalSelectors()
     }
     for (int t = 0; t < 30; ++t) dv.tickForTest();
 
-    // 全局栏四个选择器的 x 起点（与 drawGlobalBar 的 item() 布局一致）：
-    //   第 i 项起点 = 14 + i*(52+118+10)，值区宽 110
-    const float barY = 620.0f - 32.0f;
-    auto selX = [] (int i) { return 14.0f + 52.0f + (float) i * (52.0f + 118.0f + 10.0f) + 55.0f; };
-    const float selY = barY + 8.0f + 8.0f;
+    // R36（B4）：选择器坐标不再硬编码（原来写死 14 + 52 + i*180 + 55）。
+    //   globalSelectorRectForTest(i) 就是为此存在的钩子——布局一改，
+    //   硬编码坐标必然假失败，而失败信息又指向"下拉打不开"，与布局无关。
+    auto selRect = [&] (int i) { return dv.globalSelectorRectForTest (i); };
+    auto selCx   = [&] (int i) { return selRect (i).getCentreX(); };
+    const float selY = selRect (0).getCentreY();
 
-    const char* ids[4] = { Param::ID::phaseMode, Param::ID::xoverSlope,
-                           Param::ID::linearQuality, Param::ID::lookahead };
+    // R36（B4）：选择器胶囊不得与被加大的 ANALYZER / OUT / BYPASS 按钮重叠。
+    //   这条以前从来没测过，而底栏其实早就压在一起了（ANALYZER 盖住 Slope 的值）。
+    {
+        bool overlap = false;
+        for (int i = 0; i < dv.globalSelectorCountForTest(); ++i)
+        {
+            const auto r = selRect (i);
+            if (r.isEmpty()) continue;
+            if (r.intersects (dv.analyzerButtonRectForTest())
+             || r.intersects (dv.outputButtonRectForTest()))
+                overlap = true;
+        }
+        check (! overlap, "T53.0b 选择器胶囊与底栏按钮不重叠", "");
+    }
 
     // ① 初始：下拉关闭
     check (! dv.isDropDownOpenForTest(), "T53.1 初始下拉关闭", "");
 
     // ② 点第一个选择器（Phase）→ 打开绑定到 phaseMode 的下拉
-    dv.mouseDownForTest (selX (0), selY);
-    dv.mouseUpForTest (selX (0), selY);
+    dv.mouseDownForTest (selCx (0), selY);
+    dv.mouseUpForTest (selCx (0), selY);
     check (dv.isDropDownOpenForTest(), "T53.2 点 Phase 选择器 → 下拉打开", "");
 
     // ③ 下拉应为 3 项（Natural / Minimal / Linear）
@@ -5825,8 +5834,8 @@ static void testGlobalSelectors()
 
     // ⑤ Slope 选择器：4 项，选 48 dB/oct（index 3）
     {
-        dv.mouseDownForTest (selX (1), selY);
-        dv.mouseUpForTest (selX (1), selY);
+        dv.mouseDownForTest (selCx (1), selY);
+        dv.mouseUpForTest (selCx (1), selY);
         check (dv.isDropDownOpenForTest() && dv.dropDownCountForTest() == 4,
                "T53.6 Slope 下拉 4 项", juce::String (dv.dropDownCountForTest()));
 
@@ -5846,8 +5855,8 @@ static void testGlobalSelectors()
 
     // ⑥ Lookahead 选择器：3 项，选 3 ms（index 2）
     {
-        dv.mouseDownForTest (selX (3), selY);
-        dv.mouseUpForTest (selX (3), selY);
+        dv.mouseDownForTest (selCx (3), selY);
+        dv.mouseUpForTest (selCx (3), selY);
         check (dv.isDropDownOpenForTest() && dv.dropDownCountForTest() == 3,
                "T53.8 Lookahead 下拉 3 项", juce::String (dv.dropDownCountForTest()));
 
@@ -5865,17 +5874,17 @@ static void testGlobalSelectors()
     }
 
     // ⑦ 再点同一选择器 → 收起（toggle）
-    dv.mouseDownForTest (selX (3), selY);
-    dv.mouseUpForTest (selX (3), selY);
+    dv.mouseDownForTest (selCx (3), selY);
+    dv.mouseUpForTest (selCx (3), selY);
     check (dv.isDropDownOpenForTest(), "T53.10 点 Lookahead → 打开", "");
-    dv.mouseDownForTest (selX (3), selY);
-    dv.mouseUpForTest (selX (3), selY);
+    dv.mouseDownForTest (selCx (3), selY);
+    dv.mouseUpForTest (selCx (3), selY);
     check (! dv.isDropDownOpenForTest(), "T53.11 再点同一选择器 → 收起", "");
 
     // ⑧ 打开时点外面 → 收起且不改值
     {
-        dv.mouseDownForTest (selX (0), selY);
-        dv.mouseUpForTest (selX (0), selY);
+        dv.mouseDownForTest (selCx (0), selY);
+        dv.mouseUpForTest (selCx (0), selY);
         const float before = mb->apvts.getRawParameterValue (Param::ID::phaseMode)->load();
         dv.mouseDownForTest (80.0f, 90.0f);
         dv.mouseUpForTest (80.0f, 90.0f);
@@ -9866,9 +9875,357 @@ static void testUiBatch2Fixes()
     }
 }
 
-int main()
+// ------------------------------------------------------------
+// T89 R36：旋钮刻度/行程/四态几何 + 二级菜单频率文本同步
+//   对应本轮用户实测的四类问题：
+//     · "旋钮可以旋转一圈多，看不出指针位置"     → 270° 行程
+//     · "旋钮动效不合理"                        → 几何冻结 / 状态优先级 / 忙状态上报
+//     · "默认位置看着不对"                      → 刻度与参数 skew 同源
+//     · "改分频时菜单左上角频率数字不跟着变"     → setBandFreqRange 实时推
+// ------------------------------------------------------------
+static void testKnobScaleAndStates()
+{
+    std::cout << "\n--- T89 R36 旋钮行程/刻度/四态 + 频率文本同步 ---\n";
+
+    // ① 行程：归一化 0 → 7:30，1 → 4:30，总行程必须恰好 270°（不是一圈多）
+    {
+        Knob k;
+        k.setRange (0.0, 100.0, 1.0);
+        k.setValue (0.0, false);
+        const float a0 = k.angleForTest();
+        k.setValue (100.0, false);
+        const float a1 = k.angleForTest();
+        k.setValue (50.0, false);
+        const float am = k.angleForTest();
+        const float sweep = (a1 - a0) * 180.0f / juce::MathConstants<float>::pi;
+        std::cout << "  sweep = " << sweep << " deg" << std::endl;
+        check (std::abs (sweep - 270.0f) < 0.5f,
+               "T89.1 旋钮行程恰好 270°（不再是一圈多）", juce::String (sweep));
+        check (std::abs (am - (a0 + a1) * 0.5f) < 0.01f,
+               "T89.2 中间值落在行程中点", juce::String (am));
+        // 端点不能在几何上重合（450° 行程时 0 与 1 视觉重叠的根因）
+        const float dx = std::sin (a1) - std::sin (a0);
+        const float dy = std::cos (a1) - std::cos (a0);
+        check (std::sqrt (dx * dx + dy * dy) > 0.5f,
+               "T89.3 最小/最大指针方向不重合（可辨认位置）", juce::String (std::sqrt (dx * dx + dy * dy)));
+    }
+
+    // ② 刻度与参数 skew 同源：Attack 中心 10 ms 必须落在归一化 0.5
+    {
+        Knob k;
+        k.setRange (0.1, 200.0, 0.1);
+        k.setValue (10.0, false);
+        const double nLinear = (10.0 - 0.1) / (200.0 - 0.1);
+        const double nBefore = k.valueToNormForTest (10.0);
+        check (std::abs (nBefore - nLinear) < 1.0e-6,
+               "T89.4 未设 skew 时按线性归一化", juce::String (nBefore));
+        k.setSkew (10.0);                     // 与 Parameters.cpp 的 skewed(0.1,200,centre 10) 一致
+        const double nAfter = k.valueToNormForTest (10.0);
+        std::cout << "  Attack 10ms: linear=" << nLinear << " skew=" << nAfter
+                  << " skewExp=" << k.getSkewForTest() << std::endl;
+        check (std::abs (nAfter - 0.5) < 0.01,
+               "T89.5 设 skew 后默认值回到行程中点（T40 对照参数声明）", juce::String (nAfter));
+        // 往返一致
+        const double back = k.normToValueForTest (0.5);
+        check (std::abs (back - 10.0) < 0.05,
+               "T89.6 归一化 ↔ 物理值 往返一致", juce::String (back));
+        // 两端仍严格夹在参数范围内
+        check (std::abs (k.normToValueForTest (0.0) - 0.1) < 1.0e-6
+            && std::abs (k.normToValueForTest (1.0) - 200.0) < 0.05,
+               "T89.7 skew 不改变端点", "");
+    }
+
+    // ③ 几何冻结：四态之间弧粗/弧半径/帽半径必须**完全相同**
+    {
+        Knob k;
+        k.setRange (0.0, 100.0, 1.0);
+        k.setKnobDiameter (48.0f);
+        k.setSize (60, 90);
+        k.setValue (50.0, false);
+        k.setStateForTest (false, false, false);
+        k.advanceStates (1000.0);
+        k.advanceStates (2000.0);              // 推到稳定
+        const float t0 = k.arcThicknessForTest(), r0 = k.arcRadiusForTest(), c0 = k.capRadiusForTest();
+        const float g0 = k.stateGlowForTest();
+
+        // ACTIVE（悬停）：把渐变推到终点
+        k.setStateForTest (true, false, false);
+        for (int i = 0; i < 40; ++i) k.advanceStates (2000.0 + i * 16.0);
+        const float t1 = k.arcThicknessForTest(), r1 = k.arcRadiusForTest(), c1 = k.capRadiusForTest();
+        const float g1 = k.stateGlowForTest();
+
+        // DOWN（按下）
+        k.setStateForTest (true, true, false);
+        for (int i = 0; i < 40; ++i) k.advanceStates (3000.0 + i * 16.0);
+        const float t2 = k.arcThicknessForTest(), r2 = k.arcRadiusForTest(), c2 = k.capRadiusForTest();
+
+        // ROTATE（拖动）
+        k.setStateForTest (true, true, true);
+        for (int i = 0; i < 40; ++i) k.advanceStates (4000.0 + i * 16.0);
+        const float t3 = k.arcThicknessForTest(), r3 = k.arcRadiusForTest(), c3 = k.capRadiusForTest();
+
+        std::cout << "  thick " << t0 << "/" << t1 << "/" << t2 << "/" << t3
+                  << "  arcR " << r0 << "/" << r1 << "/" << r2 << "/" << r3
+                  << "  capR " << c0 << "/" << c1 << "/" << c2 << "/" << c3
+                  << "  glow " << g0 << " -> " << g1 << std::endl;
+        check (g1 > 0.9f, "T89.8 悬停渐变确实推进到 1.0", juce::String (g1));
+        check (std::abs (t1 - t0) < 1.0e-4f && std::abs (t2 - t0) < 1.0e-4f
+            && std::abs (t3 - t0) < 1.0e-4f,
+               "T89.9 四态弧粗不变（几何冻结）", juce::String (t1));
+        check (std::abs (r1 - r0) < 1.0e-4f && std::abs (r3 - r0) < 1.0e-4f,
+               "T89.10 四态弧半径不变", juce::String (r1));
+        check (std::abs (c1 - c0) < 1.0e-4f && std::abs (c2 - c0) < 1.0e-4f
+            && std::abs (c3 - c0) < 1.0e-4f,
+               "T89.11 四态帽半径不变（不再'呼吸'）", juce::String (c1));
+    }
+
+    // ④ 忙状态上报：渐变期间 isAnimating() 必须为 true，稳定后 false
+    {
+        Knob k;
+        k.setRange (0.0, 1.0, 0.0);
+        k.setSize (60, 90);
+        k.setStateForTest (false, false, false);
+        k.advanceStates (0.0);
+        k.advanceStates (1000.0);
+        check (! k.isAnimating(), "T89.12 稳定态 isAnimating() = false", "");
+        k.setStateForTest (true, false, false);
+        k.advanceStates (1000.0);                 // 目标变化 → 起跳
+        check (k.isAnimating(), "T89.13 悬停渐变期间 isAnimating() = true（宿主的空闲降频必须看到）", "");
+        for (int i = 0; i < 20; ++i) k.advanceStates (1000.0 + i * 16.0);
+        check (! k.isAnimating(), "T89.14 渐变结束后回到 false", "");
+    }
+
+    // ⑤ 双极弧原点：Range 的弧从 0 dB 起画，不是从最小值起画
+    {
+        Knob k;
+        k.setRange (-30.0, 30.0, 0.1);
+        k.setBipolar (true);
+        k.setBipolarOrigin (0.0);
+        k.setValue (0.0, false);
+        const float az = k.angleForTest();
+        k.setValue (30.0, false);
+        const float aMax = k.angleForTest();
+        k.setValue (0.0, false);
+        std::cout << "  bipolar zero angle = " << az << " (max " << aMax << ")" << std::endl;
+        check (std::abs (az - (juce::MathConstants<float>::pi * 2.0f)) < 0.02f,
+               "T89.15 Range=0 的指针在正上方（12 点钟）", juce::String (az));
+    }
+
+    // ⑥ Range 拖动可达正值（K9：曾把拖动钳在 [−30, 0]）
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+        mb->setParamPhysicalForTest (Param::bandRange (2), 0.0f);
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+
+        // 直接对 Range 参数做"向上"写入，验证 UI 侧的归一化不再把正区间压成 0
+        // R36：用 findRangeEdgePointForTest 找一个**真实命中 Range 缘**的点
+        //   （它排除同时命中曲线的位置），不要自己猜 y——绘图区底缘变了会假失败。
+        float ex = 0.0f, ey = 0.0f;
+        const bool found = dv.findRangeEdgePointForTest (2, ex, ey);
+        check (found, "T89.16a 找到 Range 缘的可拖点", "");
+        dv.mouseDownForTest (ex, ey);
+        dv.mouseDragForTest (ex, ey - 80.0f);      // 向上拖 → Range 变正
+        dv.mouseUpForTest (ex, ey - 80.0f);
+        const float rg = mb->apvts.getRawParameterValue (Param::bandRange (2))->load();
+        std::cout << "  Range after upward drag = " << rg << " dB" << std::endl;
+        check (rg > 0.5f, "T89.16 向上拖 Range 边缘可达正值", juce::String (rg));
+    }
+
+    // ⑦ 二级菜单顶部频率文本随分频点实时更新
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+
+        dv.openPopoverForBandForTest (2);
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        const juce::String before = dv.bandFreqTextForTest();
+        std::cout << "  popover band2 freq text (before) = " << before << std::endl;
+        check (before.contains ("-"), "T89.17 顶部频率文本非空且有范围分隔符", before);
+        check (! before.contains ("0 - 0"), "T89.18 频率文本不是像素/零值", before);
+
+        // 改 xover3（band2 的右边界）→ 文本必须跟着变
+        mb->setParamPhysicalForTest (Param::ID::xover3, 9000.0f);
+        for (int t = 0; t < 10; ++t) dv.tickForTest();
+        const juce::String after = dv.bandFreqTextForTest();
+        std::cout << "  popover band2 freq text (after xover3=9k) = " << after << std::endl;
+        check (after != before, "T89.19 改分频点后频率文本实时更新", before + " -> " + after);
+    }
+
+    // ⑧ LINKED 抽屉：锁定按钮存在且可点（B3）
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        DisplayView dv (*mb);
+        dv.setSize (920, 620);
+        for (int t = 0; t < 20; ++t) dv.tickForTest();
+
+        dv.clickLinkedButtonForTest();
+        for (int t = 0; t < 40; ++t) dv.tickForTest();
+        check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
+               "T89.20 点击 LINKED 标签页 → 打开并锁定", "");
+
+        // 点锁定按钮 → 解除 sticky（面板仍开）
+        const auto pr = dv.pinRectForTest();
+        std::cout << "  pin rect: " << pr.getX() << "," << pr.getY()
+                  << " " << pr.getWidth() << "x" << pr.getHeight() << std::endl;
+        check (! pr.isEmpty(), "T89.21 锁定按钮矩形有效", "");
+        dv.mouseDownForTest (pr.getCentreX(), pr.getCentreY());
+        dv.mouseUpForTest (pr.getCentreX(), pr.getCentreY());
+        check (! dv.isLinkedStickyForTest(), "T89.22 点锁定按钮 → 解除锁定", "");
+        check (dv.isLinkedOpenForTest(), "T89.23 解除锁定后面板仍打开（不误关）", "");
+    }
+}
+
+// ------------------------------------------------------------
+// R36 开发工具：把若干 UI 状态渲染成 PNG，供人工核对观感
+//   （无头环境下唯一可靠的"看得见"的方式；也便于往后每轮 UI 改动对比）
+//   用法：CrunchMBTests --snapshot [输出目录]
+// ------------------------------------------------------------
+static bool writePng (const juce::Image& img, const juce::File& out)
+{
+    out.deleteFile();
+    std::unique_ptr<juce::FileOutputStream> os (out.createOutputStream());
+    if (os == nullptr)
+        return false;
+    juce::PNGImageFormat png;
+    return png.writeImageToStream (img, *os);
+}
+
+static int runUiSnapshots (const juce::String& dirPath)
+{
+    const juce::File dir (dirPath);
+    dir.createDirectory();
+
+    // 与真实编辑器一致的字号倍率（编辑器构造里设的就是这个）
+    MBTheme::setTextScale (MBTheme::kUiTextScale);
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+
+    // 喂一点音频：静音时曲线是平的、电平表也是空的，看不出层次
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int blk = 0; blk < 12; ++blk)
+    {
+        for (int i = 0; i < 512; ++i)
+        {
+            const float t = (float) (blk * 512 + i) / 48000.0f;
+            const float v = 0.25f * std::sin (6.283185f * 120.0f * t)
+                          + 0.12f * std::sin (6.283185f * 1200.0f * t);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        proc->processBlock (buf, midi);
+    }
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+
+    int ok = 0;
+    auto shot = [&] (const juce::String& name, float scale)
+    {
+        const auto img = dv.createComponentSnapshot (dv.getLocalBounds(), true, scale);
+        const auto f = dir.getChildFile (name);
+        if (writePng (img, f)) { ++ok; std::cout << "  写了 " << f.getFullPathName() << std::endl; }
+        else std::cout << "  [失败] " << f.getFullPathName() << std::endl;
+    };
+
+    shot ("01_main.png", 1.0f);
+
+    // 二级菜单（band2 = HIGH MID）。
+    // ⚠️ 面板 tween 的起点是**真实时间**，而 tickForTest 走虚拟时钟 →
+    //    必须 snap 到目标态，否则 anim_ 一直是 0、整块面板画成全透明。
+    dv.openPopoverForBandForTest (2);
+    dv.snapPanelsForTest();
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    shot ("02_popover.png", 1.0f);
+    {   // 面板局部 2x：看 6 个旋钮 + 读数 + 顶部频率文本
+        const auto pr = dv.popoverRectForTest().expanded (8.0f)
+                          .getIntersection (dv.getLocalBounds().toFloat());
+        writePng (dv.createComponentSnapshot (pr.toNearestInt(), true, 2.0f),
+                  dir.getChildFile ("03_popover_2x.png"));
+    }
+    dv.closePopoverForTest();
+    dv.snapPanelsForTest();
+
+    // LINKED 抽屉（打开 + 锁定态）
+    dv.clickLinkedButtonForTest();
+    dv.snapPanelsForTest();
+    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    shot ("04_linked.png", 1.0f);
+    {
+        const auto lr = dv.linkedPanelRectForTest().expanded (10.0f)
+                          .getIntersection (dv.getLocalBounds().toFloat());
+        writePng (dv.createComponentSnapshot (lr.toNearestInt(), true, 2.0f),
+                  dir.getChildFile ("05_linked_2x.png"));
+    }
+
+    // 旋钮四态对照条：直接摆 4 个 Knob，避免依赖真实鼠标事件
+    {
+        const int cellW = 108, cellH = 132;
+        juce::Image strip (juce::Image::ARGB, cellW * 4, cellH, true);
+        {
+            // ⚠️ Graphics 必须在 writePng 之前析构：软件渲染器会缓冲，
+            //    不刷新就写出"全透明"的 PNG（第一次快照 317 字节就是这个坑）。
+            juce::Graphics sg (strip);
+            sg.fillAll (MBTheme::palette (MBTheme::Theme::Blue).bg);
+            const char* names[4] = { "NORMAL", "ACTIVE", "DOWN", "ROTATE" };
+            for (int i = 0; i < 4; ++i)
+            {
+                Knob k;
+                k.setRange (-30.0, 30.0, 0.1);
+                k.setBipolar (true);
+                k.setBipolarOrigin (0.0);
+                k.setValue (i == 0 ? 0.0 : 6.0, false);
+                k.setLabel (names[i]);
+                k.setValueSuffix ("dB");
+                k.setKnobDiameter (56.0f);
+                k.setPalette (MBTheme::palette (MBTheme::Theme::Blue));
+                k.setBounds (0, 0, cellW, cellH);
+                k.setStateForTest (i >= 1, i >= 2, i >= 3);
+                for (int f = 0; f < 40; ++f) k.advanceStates (f * 16.0);
+                const auto ki = k.createComponentSnapshot (k.getLocalBounds(), true, 1.0f);
+                sg.drawImageAt (ki, i * cellW, 0);
+            }
+        }
+        writePng (strip, dir.getChildFile ("06_knob_states.png"));
+    }
+
+    std::cout << "\n快照写到 " << dir.getFullPathName() << std::endl;
+    return 0;
+}
+
+int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    // R36：UI 快照模式（不参与断言套件）
+    for (int i = 1; i < argc; ++i)
+        if (juce::String (argv[i]) == "--snapshot")
+        {
+            const juce::String dir = (i + 1 < argc)
+                ? juce::String (argv[i + 1])
+                : juce::File::getCurrentWorkingDirectory().getChildFile ("ui_snapshots").getFullPathName();
+            return runUiSnapshots (dir);
+        }
+
     std::cout << "Crunch MB — Phase 3 DSP 离线断言（含 Phase 2 全量 + DAW 链路回归）\n";
 
     testParamSystem();
@@ -9960,6 +10317,7 @@ int main()
     testChildrenDoNotSwallowMouse();  // T86 Phase 全屏子组件不得拦截鼠标
     testUiBatch1Fixes();              // T87 Phase UI 第一批修复（R34）
     testUiBatch2Fixes();              // T88 Phase UI 第二批修复（R35）
+    testKnobScaleAndStates();         // T89 R36 旋钮行程/刻度/四态 + 频率文本同步
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 
