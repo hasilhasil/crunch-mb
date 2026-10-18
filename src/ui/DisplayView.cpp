@@ -538,6 +538,19 @@ juce::String DisplayView::fmtHzShort (float hz)
     return juce::String ((int) std::round (hz));
 }
 
+// R34（N7）：状态圆点 x —— 与 drawBandHeaders 的按钮列共用同一条右缘。
+//   b<3 用该段右侧分割线；b==3 用 kMeterX−8（电平表左边界−8），
+//   与 hitTestButton / 按钮列绘制完全一致。圆点再往里收 28px。
+float DisplayView::stateDotX (int band) const
+{
+    const float W = (float) getWidth();
+    const int b = juce::jlimit (0, 3, band);
+    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float edge = (b < 3) ? nx[b]
+                               : juce::jmin (W, sx (kMeterX) - sx (8.0f));
+    return edge - sx (28.0f);
+}
+
 void DisplayView::drawBandHeaders (juce::Graphics& g)
 {
     const float W = (float) getWidth();
@@ -555,7 +568,11 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
                     juce::Justification::centredLeft);
 
         // 状态点列（S/M/BYP/Δ，4 个 3px 圆点，右缘）——实时反映参数
-        const float sxp = (b < 3 ? nx[b] : W) - sx (28.0f);
+        // R34（N7）：band3 的右缘必须与**按钮列**用同一条边界（kMeterX−8）。
+        //   原先这里用的是窗口右缘 W，算出 x≈892 正好压在 IN/OUT 音量表
+        //   （886..918）上；而同一段的按钮列右缘是 kMeterX−8 → 圆点与按钮
+        //   也对不齐。统一由 stateDotX() 决定（绘制与测试共用）。
+        const float sxp = stateDotX (b);
         for (int j = 0; j < 4; ++j)
         {
             bool lit = false;
@@ -827,13 +844,11 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
                     powerBtnRect_, juce::Justification::centred);
     }
 
-    // CURVE 开关 + ⚙（Phase 4.4/5 接交互）
-    auto curveBtn = juce::Rectangle<float> (W - sx (124.0f), sy (3.0f), sx (86.0f), sy (24.0f));
-    g.setColour (pal_.track);
-    g.fillRoundedRectangle (curveBtn, sx (12.0f));
-    g.setColour (pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.5f));
-    g.drawText ("CURVE", curveBtn, juce::Justification::centred);
+    // R34（N6）：删除顶栏的 CURVE 胶囊。
+    //   它从 Phase 4.4 起就是纯装饰——全仓没有任何命中判断或 mouseDown 分支，
+    //   注释写着"接交互"但从未接上，用户点它毫无反应。
+    //   curveVisible_ 也恒为 true（DisplayView.h 初值），没有可切换的状态。
+    //   与其留一个死按钮，不如去掉（用户决定：去掉 CURVE，齿轮接真功能）。
 
     // P1：Display Range 档位按钮（#4：从 global bar 移到顶栏，避免与 IN 读数冲突）
     //     点击弹出二级菜单（Auto / ±3 / ±6 / ±12 / ±30）
@@ -908,6 +923,16 @@ void DisplayView::drawGlobalBar (juce::Graphics& g)
     // 现在每项都可点，弹出与 Display Range 同一套的自绘下拉（Pro-MB drop-down 对标）。
     // Phase（R24）：补 Oversampling —— 2026-10-14 新增的参数，全局栏此前漏了它，
     //   用户只能靠宿主自动化切换（教训 33：功能要包含"用户能碰到它"）。
+    //
+    // ⚠️ R34（B）：这两份列表必须在**每次重建前清空**。
+    //   此前的写法只在下面 add()，全函数没有任何 clear——而本函数由 paint()
+    //    每帧调用，于是 60fps 下每秒 +5 条、永不回收：
+    //      · 内存持续增长（矩形 + String 都有堆分配）
+    //      · 命中测试 O(n) 越来越慢（见 mouseDown 里的遍历）
+    //      · **窗口 resize 后旧尺寸的矩形仍留在表里并优先匹配**
+    //        → 点到离控件很远的地方也会弹菜单（用户实测"global 栏判定范围太大"）
+    globalSelectorRects_.clear();
+    globalSelectorIds_.clear();
     g.setFont (MBTheme::font (MBTheme::regular(), 11.5f));
     float x = sx (14.0f);
     globalBarY_ = y0;
@@ -2340,8 +2365,12 @@ bool DisplayView::keyPressed (const juce::KeyPress& key)
         }
         if (key == juce::KeyPress::returnKey || key == juce::KeyPress::spaceKey)
         {
+            // R34（N5）：没有 hover 时回落到**当前项**，而不是第 0 项。
+            // 原先取 0：当前是 Linear（索引 2）时按回车会被静默改成 Natural。
             const int item = (dropDownHover_ >= 0 && dropDownHover_ < dropDownCount_)
-                                 ? dropDownHover_ : 0;
+                                 ? dropDownHover_
+                                 : juce::jlimit (0, juce::jmax (0, dropDownCount_ - 1),
+                                                 dropDownCurrentIndex());
             clickDropDownItem (item);
             return true;
         }
@@ -2523,6 +2552,17 @@ void DisplayView::drawHairlineV (juce::Graphics& g, float x, float y0, float y1,
 //     ——选项表从 APVTS 的 AudioParameterChoice 取（RESEARCH_UI §五 P1）
 juce::Rectangle<float> DisplayView::dropDownRect() const
 {
+    // R34（N6）：主题菜单锚在齿轮按钮下方（右上角，右对齐）
+    if (dropDownThemeMode_)
+    {
+        const float w = sx (120.0f);
+        const float rowH = sy (22.0f);
+        const float h = rowH * (float) juce::jmax (1, dropDownCount_);
+        const float x = (float) getWidth() - w - sx (8.0f);
+        const float y = sy (30.0f);                 // 顶栏 30px 之下
+        return juce::Rectangle<float> (x, y, w, h);
+    }
+
     if (dropDownParamId_.isEmpty())
     {
         const float W = (float) getWidth();
@@ -2550,7 +2590,9 @@ bool DisplayView::hitTestDropDownItem (juce::Point<float> p, int& itemOut) const
     const auto r = dropDownRect();
     if (! r.contains (p))
         return false;
-    const float rowH = dropDownParamId_.isEmpty() ? sy (22.0f) : sy (19.0f);
+    // R34（N6）：主题菜单与 Display Range 同为 22px 行高；仅全局参数用 19px
+    const bool narrowRows = (! dropDownThemeMode_) && dropDownParamId_.isNotEmpty();
+    const float rowH = narrowRows ? sy (19.0f) : sy (22.0f);
     const int idx = (int) ((p.y - r.getY()) / rowH);
     if (idx < 0 || idx >= dropDownCount_)
         return false;
@@ -2577,6 +2619,59 @@ void DisplayView::closeDropDown()
     dropDownHover_ = -1;
     dropDownParamId_.clear();
     dropDownChoices_.clear();
+    dropDownThemeMode_ = false;      // R34（N6）
+    repaint();
+}
+
+// R34（N5）：当前下拉的"当前项"。绘制高亮与键盘回车共用。
+// 原先键盘回车在 dropDownHover_ < 0 时直接取 item = 0：
+//   当前值是 Linear（索引 2）时，打开下拉按回车 → 被静默改成第 0 项 Natural。
+int DisplayView::dropDownCurrentIndex() const
+{
+    if (dropDownThemeMode_)
+        return juce::jlimit (0, 2, (int) theme_);
+
+    if (! dropDownParamId_.isEmpty())
+    {
+        // ⚠️ Choice 参数：getParamFast 返回的实际值**就是选项索引**，
+        //    不是 normalized，不能再乘 (count−1)。
+        const float idx = proc_.getBackend().getParamFast (dropDownParamId_);
+        return juce::jlimit (0, juce::jmax (0, dropDownCount_ - 1),
+                             juce::roundToInt (idx));
+    }
+
+    // Display Range 档位
+    return juce::jlimit (0, 4, displayRangeMode_);
+}
+
+// R34（N6）：齿轮按钮命中——与 drawTopStrip 的绘制矩形严格一致
+//   （W−30..W−6，y 3..27）。原先齿轮只是个画上去的符号，点了没有任何反应。
+bool DisplayView::hitTestGearButton (juce::Point<float> p) const
+{
+    const float W = (float) getWidth();
+    const float x0 = W - sx (30.0f), x1 = W - sx (6.0f);
+    const float y0 = sy (3.0f),      y1 = y0 + sy (24.0f);
+    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+}
+
+// R34（N6）：齿轮 → 设置下拉。当前提供主题切换（Blue / Red / Cream）。
+// 主题选择的落点是已有的 DisplayView::setTheme()——它此前没有任何 UI 入口，
+// 三个调色板等于白写。
+void DisplayView::openThemeMenu()
+{
+    if (dropDownOpen_ && dropDownThemeMode_)
+    {
+        closeDropDown();             // 再点一次 = 收起
+        return;
+    }
+    dropDownParamId_.clear();
+    dropDownChoices_.clear();
+    dropDownThemeMode_ = true;
+    dropDownCount_     = 3;          // Blue / Red / Cream
+    dropDownHover_     = -1;
+    dropDownOpen_      = true;
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
     repaint();
 }
 
@@ -2584,6 +2679,17 @@ void DisplayView::clickDropDownItem (int item)
 {
     if (item < 0 || item >= dropDownCount_)
     {
+        closeDropDown();
+        return;
+    }
+
+    // R34（N6）：主题菜单
+    if (dropDownThemeMode_)
+    {
+        const MBTheme::Theme t = (item == 1) ? MBTheme::Theme::Red
+                               : (item == 2) ? MBTheme::Theme::Cream
+                                             : MBTheme::Theme::Blue;
+        setTheme (t);
         closeDropDown();
         return;
     }
@@ -2647,27 +2753,30 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     if (! dropDownOpen_)
         return;
     const auto r = dropDownRect();
-    const bool globalMode = ! dropDownParamId_.isEmpty();
+    const bool themeMode  = dropDownThemeMode_;                    // R34（N6）
+    const bool globalMode = (! themeMode) && dropDownParamId_.isNotEmpty();
     const float rowH = globalMode ? sy (19.0f) : sy (22.0f);
 
-    // 当前选中索引（两种模式各自的来源）
-    int curIdx = 0;
+    // 当前选中索引（三种模式统一经 dropDownCurrentIndex()，
+    // 与键盘回车共用同一份推导 —— R34（N5））
+    const int curIdx = juce::jlimit (0, juce::jmax (0, dropDownCount_ - 1),
+                                     dropDownCurrentIndex());
     juce::StringArray labels;
-    if (globalMode)
+    if (themeMode)
+    {
+        labels.add ("Blue");
+        labels.add ("Red");
+        labels.add ("Cream");
+    }
+    else if (globalMode)
     {
         labels = dropDownChoices_;
-        // ⚠️ Choice 参数：getParamFast 返回的实际值**就是选项索引**，
-        //    不是 normalized，不能再乘 (count-1)。乘了会把索引放大
-        //    （1 → 2，显示错项；2 → 4，靠 clamp 碰巧对）。
-        const float idx = proc_.getBackend().getParamFast (dropDownParamId_);
-        curIdx = juce::jlimit (0, dropDownCount_ - 1, juce::roundToInt (idx));
     }
     else
     {
         const char* dr[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB",
                               "+/- 12 dB", "+/- 30 dB" };
         for (int i = 0; i < dropDownCount_; ++i) labels.add (dr[i]);
-        curIdx = juce::jlimit (0, 4, displayRangeMode_);
     }
 
     // 多层投影（与弹层面板同一套深度语言）
@@ -2822,6 +2931,14 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     if (bandPopover_ != nullptr && bandPopover_->isOpen() && bandPopover_->hitTestClose (p))
     {
         togglePopover (false);
+        return;
+    }
+
+    // -2) R34（N6）：顶栏齿轮 = 设置（主题切换）。
+    //     放在很前面：它是顶栏按钮，任何情况下点击都该先响应。
+    if (hitTestGearButton (p))
+    {
+        openThemeMenu();
         return;
     }
 

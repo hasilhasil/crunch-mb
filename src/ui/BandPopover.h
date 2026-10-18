@@ -135,6 +135,33 @@ public:
     /** 测试钩子：EXPERT 是否展开（T40 用）。 */
     bool isPopoverExpertOpenForTest() const { return expertOpen_; }
 
+    // ---- R34 测试钩子 ----
+    /** N1：子组件（5 个 Knob）是否可被点击。必须为 true，否则旋钮点不动。 */
+    bool acceptsChildClicksForTest() const
+    {
+        bool onThis = false, onChildren = false;
+        getInterceptsMouseClicks (onThis, onChildren);
+        return onChildren;
+    }
+    /** A：第 k 个旋钮的实际 bounds（验证不随动画滑动）。 */
+    juce::Rectangle<int> popKnobBoundsForTest (int k) const
+    {
+        const int i = juce::jlimit (0, kPopKnobs - 1, k);
+        const auto* kb = knobs_[(size_t) i].get();
+        return kb != nullptr ? kb->getBounds() : juce::Rectangle<int>();
+    }
+    /** A：第 k 个旋钮的**目标槽位**（与动画无关，由 popKnobRect 决定）。 */
+    juce::Rectangle<float> popKnobSlotForTest (int k) const
+    {
+        return popKnobRect (juce::jlimit (0, kPopKnobs - 1, k));
+    }
+    /** A：第 k 个旋钮的透明度（跟随 anim_ 淡入）。 */
+    float popKnobAlphaForTest (int k) const
+    {
+        const auto* kb = knobs_[(size_t) juce::jlimit (0, kPopKnobs - 1, k)].get();
+        return kb != nullptr ? kb->getAlpha() : 0.0f;
+    }
+
 private:
     juce::Rectangle<float> popoverRect() const;
     juce::Rectangle<float> popKnobRect (int k) const;

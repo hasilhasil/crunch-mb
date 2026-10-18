@@ -130,6 +130,73 @@ public:
     }
     /** R33 测试钩子：子组件数量（确认上面真的遍历到了）。 */
     int childCountForTest() const { return getNumChildComponents(); }
+
+    // ---- R34 测试钩子 ----
+    /** N1：popover / 抽屉的 Knob 子组件是否可被点击（必须都 true）。 */
+    bool popoverAcceptsChildClicksForTest() const
+    {
+        return bandPopover_ != nullptr && bandPopover_->acceptsChildClicksForTest();
+    }
+    bool drawerAcceptsChildClicksForTest() const
+    {
+        return linkedDrawer_ != nullptr && linkedDrawer_->acceptsChildClicksForTest();
+    }
+    /** A：popover 第 k 个旋钮的实际 bounds 与目标槽位（验证不滑动）。 */
+    juce::Rectangle<int>   popKnobBoundsForTest (int k) const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->popKnobBoundsForTest (k)
+                                       : juce::Rectangle<int>();
+    }
+    juce::Rectangle<float> popKnobSlotForTest (int k) const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->popKnobSlotForTest (k)
+                                       : juce::Rectangle<float>();
+    }
+    float popKnobAlphaForTest (int k) const
+    {
+        return bandPopover_ != nullptr ? bandPopover_->popKnobAlphaForTest (k) : 0.0f;
+    }
+    /** N5：下拉"当前项"索引。 */
+    int dropDownCurrentIndexForTest() const { return dropDownCurrentIndex(); }
+    /** N6：齿轮命中 / 主题下拉状态。 */
+    bool hitTestGearButtonForTest (float x, float y) const
+    {
+        return hitTestGearButton (juce::Point<float> (x, y));
+    }
+    bool isThemeMenuOpenForTest() const { return dropDownOpen_ && dropDownThemeMode_; }
+    void openThemeMenuForTest() { openThemeMenu(); }
+    /** R34（A）测试钩子：打开/收起 popover（绕开鼠标，直接驱动开合）。 */
+    void openPopoverForBandForTest (int band) { openPopoverForBand (juce::jlimit (0, 3, band)); }
+    void closePopoverForTest()                { togglePopover (false); }
+    /** R34（A）测试钩子：把 popover 动画直接吸附到目标态。
+     *  ⚠️ 必须提供：`BandPopover::setOpen` 里 Tween 的起点用**真实时间**，
+     *  而测试的 tickForTest 用虚拟时钟求值 → t 为负、动画永远停在起点，
+     *  无法在测试里把 anim 推到 1。真实运行时由 60Hz 定时器推进。 */
+    void snapPopoverForTest() { if (bandPopover_ != nullptr) bandPopover_->snapToCurrent(); }
+    /** R34（A）测试钩子：popover 当前动画值（0..1）。 */
+    float popoverAnimForTest() const { return bandPopover_ != nullptr ? bandPopover_->anim() : 0.0f; }
+    juce::Rectangle<float> gearButtonRectForTest() const
+    {
+        const float W = (float) getWidth();
+        return juce::Rectangle<float> (W - sx (30.0f), sy (3.0f), sx (24.0f), sy (24.0f));
+    }
+    /** N6：顶栏 CURVE 胶囊应已移除 —— 该区域不再有可点控件。 */
+    juce::Rectangle<float> curveButtonRectForTest() const
+    {
+        const float W = (float) getWidth();
+        return juce::Rectangle<float> (W - sx (124.0f), sy (3.0f), sx (86.0f), sy (24.0f));
+    }
+    /** N7：第 b 段状态圆点的 x（应与该段按钮列同边界）。 */
+    float stateDotXForTest (int band) const { return stateDotX (band); }
+    /** N7：第 b 段按钮列左缘 x（与 hitTestButton 同一几何）。 */
+    float buttonColumnXForTest (int band) const
+    {
+        const float W = (float) getWidth();
+        const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+        const float edge = (band < 3) ? nx[juce::jlimit (0, 2, band)]
+                                     : juce::jmin (W, sx (kMeterX) - sx (8.0f));
+        return edge - sx (40.0f);
+    }
     // 测试钩子：直接派发鼠标事件（mouseXxx 为 protected；内部经 Desktop 取 MouseInputSource）
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);
@@ -565,6 +632,10 @@ private:
     void refreshCurvePaths();            // 曲线/Range 几何变化时
     float bellWeight (int band, float freq) const;   // 段内 sin² 钟型
     float bandCenterFreq (int band) const;           // 段几何中心频率
+    /** R34（N7）：第 b 段状态圆点（S/M/BYP/Δ）的 x。
+     *  与按钮列共用同一条右缘（b<3 用分割线，b==3 用 kMeterX−8），
+     *  避免 band3 的圆点落到 IN/OUT 音量表上。 */
+    float stateDotX (int band) const;
     float freqDotScreenY (int band) const;           // 频点屏幕 y（#7 输入框定位）
     float curveDbAtFreq (float freq) const;          // 主曲线上最接近 freq 处的 dB（测试钩子）
     float curveDbAtFreqBase (float freq) const;      // base 曲线上最接近 freq 处的 dB
@@ -703,8 +774,10 @@ private:
     bool  dropDownOpen_ = false;
     int   dropDownHover_ = -1;
     int   dropDownCount_ = 0;
-    /** 当前下拉绑定到哪个全局参数（空 = Display Range 档位）。 */
+    /** 当前下拉绑定到哪个全局参数（空 = Display Range 档位 或 主题菜单）。 */
     juce::String dropDownParamId_;
+    /** R34（N6）：下拉是否为"设置/主题"模式（齿轮按钮触发）。 */
+    bool  dropDownThemeMode_ = false;
     /** 该参数是 Choice 型时的选项表（Display Range 用内置档位，不用它）。 */
     juce::StringArray dropDownChoices_;
     /** 全局选择器下拉的锚点（global bar 内被点项的位置）。 */
@@ -724,6 +797,14 @@ private:
     /** 打开绑定到某个全局 Choice 参数的下拉。 */
     void openGlobalParamDropDown (const juce::String& paramId,
                                   juce::Rectangle<float> anchorRect);
+    /** R34（N6）：齿轮按钮命中（顶栏右上角，W−30..W−6 / y 3..27）。
+     *  原先齿轮和 CURVE 都是纯装饰，点了没反应。 */
+    bool hitTestGearButton (juce::Point<float> p) const;
+    /** R34（N6）：齿轮 → 打开"设置"下拉（当前提供主题切换 Blue/Red/Cream）。 */
+    void openThemeMenu();
+    /** R34（N5）：当前下拉的"当前项"索引。
+     *  绘制高亮与键盘回车共用同一个推导，避免两处各算一遍而不一致。 */
+    int dropDownCurrentIndex() const;
 
     // ---- Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）----
     // 玻璃条背后的内容做一次下采样 + 盒模糊，缓存成 Image，15Hz 更新。

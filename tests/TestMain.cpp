@@ -9504,6 +9504,145 @@ static void testChildrenDoNotSwallowMouse()
     check (true, "T86.6 键盘事件可达 DisplayView（不抛异常）", "");
 }
 
+// ------------------------------------------------------------
+// T87 Phase：第一批 UI 修复回归（R34）
+//   N1 popover/抽屉的 Knob 子组件必须可点（此前 (false,false) 让整棵子树失效）
+//   A  popover 旋钮只淡入、不滑动
+//   B  global 栏选择器列表不得随重绘增长
+//   N5 下拉按回车默认选"当前项"而不是第 0 项
+//   N6 齿轮接主题切换；CURVE 胶囊已移除
+//   N7 band3 的状态圆点与按钮列同边界（不再压 IN/OUT 电平表）
+// ------------------------------------------------------------
+static void testUiBatch1Fixes()
+{
+    std::cout << "\n--- T87 Phase UI 第一批修复（R34）---\n";
+
+    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+    proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+    proc->prepareToPlay (48000.0, 512);
+    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+    check (mb != nullptr, "T87.0 处理器实例可访问", "");
+
+    DisplayView dv (*mb);
+    dv.setSize (920, 620);
+    for (int t = 0; t < 30; ++t) dv.tickForTest();
+
+    // ---- N1：Knob 子组件必须可点击 ----
+    check (dv.popoverAcceptsChildClicksForTest(),
+           "T87.1 popover 的 5 个旋钮可被点击（intercepts 第 2 参必须 true）", "");
+    check (dv.drawerAcceptsChildClicksForTest(),
+           "T87.2 LINKED 抽屉的 5 个旋钮可被点击", "");
+
+    // ---- B：global 栏列表不随重绘增长 ----
+    {
+        // 先画几帧让列表建立
+        juce::Image img (juce::Image::ARGB, 920, 620, true);
+        { juce::Graphics g (img); dv.paintForTest (g); }
+        const int n1 = dv.globalSelectorCountForTest();
+        for (int i = 0; i < 12; ++i)
+        { juce::Graphics g (img); dv.paintForTest (g); }
+        const int n2 = dv.globalSelectorCountForTest();
+        std::cout << "  重绘 12 帧后 global 选择器条目数: " << n1 << " -> " << n2 << std::endl;
+        check (n1 == 5, "T87.3 global 选择器恰好 5 项", juce::String (n1));
+        check (n2 == 5, "T87.4 重绘多帧后不增长（原先每帧 +5 永不回收）",
+               juce::String (n2));
+    }
+
+    // ---- A：popover 旋钮只淡入，不滑动 ----
+    {
+        dv.openPopoverForBandForTest (1);
+        dv.tickForTest (16.0);
+        const auto slot = dv.popKnobSlotForTest (2);
+        const auto bnds = dv.popKnobBoundsForTest (2);
+        std::cout << "  动画起点：槽位 y=" << slot.getY() << "  实际 y=" << bnds.getY()
+                  << "  anim=" << dv.popoverAnimForTest() << std::endl;
+        check (std::abs ((float) bnds.getY() - slot.getY()) <= 1.0f,
+               "T87.5 动画起点旋钮位置 = 最终槽位（不滑动）",
+               juce::String (bnds.getY()) + " vs " + juce::String (slot.getY()));
+        // 透明度必须与面板动画值一致（= 淡入）
+        check (std::abs (dv.popKnobAlphaForTest (2) - dv.popoverAnimForTest()) <= 0.02f,
+               "T87.6 旋钮透明度 == 面板动画值（同一份淡入）",
+               juce::String (dv.popKnobAlphaForTest (2)) + " vs "
+               + juce::String (dv.popoverAnimForTest()));
+
+        // 吸附到完全打开：位置仍在槽位、alpha == 1
+        dv.snapPopoverForTest();
+        const auto slot2 = dv.popKnobSlotForTest (2);
+        const auto bnds2 = dv.popKnobBoundsForTest (2);
+        check (std::abs ((float) bnds2.getY() - slot2.getY()) <= 1.0f,
+               "T87.7 完全打开后旋钮仍在槽位", "");
+        check (dv.popKnobAlphaForTest (2) > 0.99f,
+               "T87.8 完全打开后旋钮完全不透明", juce::String (dv.popKnobAlphaForTest (2)));
+        dv.closePopoverForTest();
+        for (int t = 0; t < 40; ++t) dv.tickForTest (16.0);
+    }
+
+    // ---- N5：下拉回车默认当前项 ----
+    {
+        // Phase 参数设为 Linear（索引 2）
+        mb->setParamPhysicalForTest (Param::ID::phaseMode, 2.0f);
+        dv.tickForTest();
+        // 打开 Phase 下拉
+        const auto r0 = dv.globalSelectorRectForTest (0);
+        dv.mouseDownForTest (r0.getCentreX(), r0.getCentreY());
+        dv.mouseUpForTest (r0.getCentreX(), r0.getCentreY());
+        check (dv.isDropDownOpenForTest(), "T87.9 Phase 下拉已打开", "");
+        std::cout << "  下拉当前项索引 = " << dv.dropDownCurrentIndexForTest() << std::endl;
+        check (dv.dropDownCurrentIndexForTest() == 2,
+               "T87.10 下拉当前项 = 2（Linear）", juce::String (dv.dropDownCurrentIndexForTest()));
+        // 直接按回车（不移动鼠标 → dropDownHover_ 仍为 -1）
+        dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey));
+        const float after = mb->apvts.getRawParameterValue (Param::ID::phaseMode)->load();
+        std::cout << "  按回车后 phaseMode = " << after << std::endl;
+        check (std::abs (after - 2.0f) < 0.01f,
+               "T87.11 回车保持当前项（原先会静默改成第 0 项）", juce::String (after));
+        mb->setParamPhysicalForTest (Param::ID::phaseMode, 0.0f);
+        dv.tickForTest();
+    }
+
+    // ---- N6：齿轮 → 主题切换；CURVE 已移除 ----
+    {
+        const auto gear = dv.gearButtonRectForTest();
+        check (dv.hitTestGearButtonForTest (gear.getCentreX(), gear.getCentreY()),
+               "T87.12 齿轮按钮可命中", "");
+        dv.mouseDownForTest (gear.getCentreX(), gear.getCentreY());
+        dv.mouseUpForTest (gear.getCentreX(), gear.getCentreY());
+        check (dv.isThemeMenuOpenForTest(), "T87.13 齿轮打开主题菜单", "");
+        check (dv.dropDownCountForTest() == 3, "T87.14 主题菜单 3 项（Blue/Red/Cream）",
+               juce::String (dv.dropDownCountForTest()));
+        // 选 Red（第 2 项）
+        const auto dr = dv.dropDownRectForTest();
+        const float rowH = dr.getHeight() / 3.0f;
+        const float iy = dr.getY() + rowH * 1.5f;
+        dv.mouseDownForTest (dr.getCentreX(), iy);
+        dv.mouseUpForTest (dr.getCentreX(), iy);
+        std::cout << "  选 Red 后 theme = " << (int) dv.getTheme() << std::endl;
+        check (dv.getTheme() == MBTheme::Theme::Red,
+               "T87.15 选 Red 后主题已切换", juce::String ((int) dv.getTheme()));
+        check (! dv.isThemeMenuOpenForTest(), "T87.16 选择后菜单收起", "");
+        dv.setTheme (MBTheme::Theme::Blue);
+
+        // CURVE 区域不再可点：点它不应打开任何下拉、也不改参数
+        const auto curve = dv.curveButtonRectForTest();
+        dv.mouseDownForTest (curve.getCentreX(), curve.getCentreY());
+        dv.mouseUpForTest (curve.getCentreX(), curve.getCentreY());
+        check (! dv.isDropDownOpenForTest(),
+               "T87.17 原 CURVE 区域点击不再有任何下拉（按钮已移除）", "");
+    }
+
+    // ---- N7：band3 状态圆点与按钮列同边界 ----
+    {
+        const float dot3 = dv.stateDotXForTest (3);
+        const float btn3 = dv.buttonColumnXForTest (3);
+        std::cout << "  band3 圆点 x=" << dot3 << "  按钮列左缘 x=" << btn3 << std::endl;
+        // 圆点应落在按钮列范围内（按钮列宽 sx(24)=24px），且不再落到电平表 886..918
+        check (dot3 > btn3 && dot3 < btn3 + 30.0f,
+               "T87.18 band3 圆点落在按钮列内", juce::String (dot3) + " vs " + juce::String (btn3));
+        check (dot3 < 886.0f,
+               "T87.19 band3 圆点不再压在 IN/OUT 电平表（x=886..918）", juce::String (dot3));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -9596,6 +9735,7 @@ int main()
     testHostEnvironmentAdaptation();  // T84 Phase 宿主环境适配
     testUiNeverGetsStuck();           // T85 Phase UI 停表自恢复
     testChildrenDoNotSwallowMouse();  // T86 Phase 全屏子组件不得拦截鼠标
+    testUiBatch1Fixes();              // T87 Phase UI 第一批修复（R34）
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
 

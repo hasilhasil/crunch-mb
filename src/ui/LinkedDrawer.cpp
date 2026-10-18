@@ -16,7 +16,14 @@ namespace
 LinkedDrawer::LinkedDrawer (CrunchMBAudioProcessor& processor)
     : juce::Component ("CrunchMBLinkedDrawer"), proc_ (processor)
 {
-    setInterceptsMouseClicks (false, false);   // 命中由 DisplayView 统一分发
+    // R34（N1）：必须是 (false, true)。
+    //   · 第 1 个 false = 抽屉自身不拦截 → 点空白仍由 DisplayView 分发；
+    //   · 第 2 个**必须 true** = 允许子组件（5 个 Knob）接收点击。
+    // 原先写的是 (false, false)，而 JUCE 文档（juce_Component.h:969-973）明确：
+    //   "if this is false and allowClicksOnThisComponent is false, then neither
+    //    this component nor any child components can be clicked on"
+    // 即整棵子树都点不动 → 用户实测"二级菜单里的旋钮完全没法操作"。
+    setInterceptsMouseClicks (false, true);
 }
 
 LinkedDrawer::~LinkedDrawer() = default;
@@ -24,6 +31,12 @@ LinkedDrawer::~LinkedDrawer() = default;
 void LinkedDrawer::setTheme (MBTheme::Theme t)
 {
     pal_ = MBTheme::palette (t);
+    // R34（N6/N8）：必须把新调色板下发给 5 个 Knob。
+    // Knob 是独立子组件、自带 pal_，只 repaint() 自己是刷不动它们的——
+    // 齿轮接上主题切换后，抽屉旋钮会停留在旧配色。
+    // 对照 BandPopover::setTheme，那里一直是循环设置的。
+    for (auto& kb : knobs_)
+        if (kb != nullptr) kb->setPalette (pal_);
     repaint();
 }
 

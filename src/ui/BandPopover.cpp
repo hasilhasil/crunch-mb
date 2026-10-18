@@ -19,7 +19,15 @@ namespace
 BandPopover::BandPopover (CrunchMBAudioProcessor& processor)
     : juce::Component ("CrunchMBBandPopover"), proc_ (processor)
 {
-    setInterceptsMouseClicks (false, false);   // 命中由 DisplayView 统一分发
+    // R34（N1）：必须是 (false, true)。
+    //   · 第 1 个 false = Popover 自身不拦截 → 点空白仍由 DisplayView 分发；
+    //   · 第 2 个**必须 true** = 允许子组件（5 个 Knob）接收点击。
+    // 原先写的是 (false, false)，而 JUCE 文档（juce_Component.h:969-973）明确：
+    //   "if this is false and allowClicksOnThisComponent is false, then neither
+    //    this component nor any child components can be clicked on"
+    // 且 DisplayView::mouseDown 里从来没有分发到 popKnobRect 的分支
+    // → THRESHOLD/RANGE/ATTACK/RELEASE/MIX 五个旋钮鼠标完全无效（用户实测）。
+    setInterceptsMouseClicks (false, true);
     buildParamCache();
 }
 
@@ -329,12 +337,18 @@ void BandPopover::layoutKnobs (bool force)
         if (knobs_[(size_t) k] == nullptr)
             continue;
         const auto rc = popKnobRect (k);
-        const float y = rc.getY() + (1.0f - a) * rc.getHeight();
-        const int nx = (int) rc.getX(), ny = (int) y;
+        // R34（A）：去掉纵向滑入，只保留淡入。
+        // 原先这里是 `rc.getY() + (1.0f - a) * rc.getHeight()`——把旋钮下移最多
+        // 一整个旋钮行高（默认 74px），而 paint() 只对**面板**做 alpha 淡入、
+        // 不做位移，于是动画期间旋钮跑到面板下缘之外滑上来，
+        // 用户实测"弹出二级菜单时里面的旋钮跟菜单窗口不同步"。
+        // 现在位置恒等于最终槽位，透明度跟随面板 anim_ 一起淡入淡出。
+        const int nx = (int) rc.getX(), ny = (int) rc.getY();
         auto* kb = knobs_[(size_t) k].get();
         if (force || kb->getX() != nx || kb->getY() != ny
                  || kb->getWidth() != (int) rc.getWidth() || kb->getHeight() != (int) rc.getHeight())
             kb->setBounds (nx, ny, (int) rc.getWidth(), (int) rc.getHeight());
+        kb->setAlpha (a);
         kb->setVisible (open_ || anim_ > 0.001f);
     }
     if (! open_ && anim_ <= 0.001f)

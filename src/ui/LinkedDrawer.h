@@ -92,6 +92,15 @@ public:
                  ? knobs_[(size_t) k]->getBounds() : juce::Rectangle<int>();
     }
 
+    /** R34（N1）测试钩子：子组件（5 个 Knob）是否可被点击。
+     *  必须为 true —— 否则抽屉旋钮点不动（见 .cpp 里 setInterceptsMouseClicks 注释）。 */
+    bool acceptsChildClicksForTest() const
+    {
+        bool onThis = false, onChildren = false;
+        getInterceptsMouseClicks (onThis, onChildren);
+        return onChildren;
+    }
+
 private:
     // ---- 面板几何（依赖宿主 bounds）----
     juce::Rectangle<float> panelRect() const;
