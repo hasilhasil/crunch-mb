@@ -109,6 +109,7 @@ void Knob::commitValueFine (double v)
 void Knob::mouseDown (const juce::MouseEvent& e)
 {
     if (editing_) { closeEditor (true); return; }
+    if(selectionFeedback_){grabKeyboardFocus();repaint();}
 
     dragStartValue_ = value_;
     dragStartNorm_  = (double) toNorm (value_);      // R36：按归一化行程拖动
@@ -263,13 +264,15 @@ void Knob::closeEditor (bool apply)
 {
     if (! editing_) return;
     editing_ = false;
-    if (apply)
+    if (apply && editText_.isNotEmpty())
     {
         double v = editText_.getDoubleValue();
         // 支持 "50%" 形式
-        if (editText_.containsChar ('%'))
+        if (editText_.containsChar ('%') && suffix_ != "%")
             v = min_ + (max_ - min_) * editText_.getDoubleValue() / 100.0;
+        if(onDragStart)onDragStart();
         commitValue (v);
+        if(onDragEnd)onDragEnd();
     }
     editText_.clear();
     repaint();
@@ -415,7 +418,7 @@ void Knob::paint (juce::Graphics& g)
     if (showLabel_ && label_.isNotEmpty())
     {
         // R36（B4）：字号倍率放大后标签行也要跟着变高，否则文字被裁。
-        const auto labFont = MBTheme::font (MBTheme::semiBold(), juce::jmin (10.5f, d * 0.22f));
+        const auto labFont = MBTheme::font (MBTheme::uiMedium(), labelTextSize_>0?labelTextSize_:d * (14.0f / 72.0f));
         const float labH = labFont.getHeight() + 1.0f;
         g.setFont (labFont);
         g.setColour (pal_.dim);
@@ -539,7 +542,11 @@ void Knob::paint (juce::Graphics& g)
     // ---- 数值读数（旋钮下方）----§5.2：偏移旋钮带 "Δ " 前缀
     juce::String txt = valuePrefix_ + juce::String (value_, decimals_);
     if (suffix_.isNotEmpty()) txt << " " << suffix_;
-    const auto valFont = MBTheme::font (MBTheme::regular(), juce::jmin (11.0f, d * 0.24f));
+    const auto valFont = MBTheme::font (MBTheme::regular(), valueTextSize_>0?valueTextSize_:d * (15.0f / 72.0f));
+    if(selectionFeedback_ && hasKeyboardFocus(true)){
+        const auto box=juce::Rectangle<float>(3,kb.getBottom(),w-6,valFont.getHeight()+5);
+        g.setColour(pal_.accent.withAlpha(.15f));g.fillRoundedRectangle(box,4);
+        g.setColour(pal_.accent);g.drawRoundedRectangle(box,4,1);}
     g.setFont (valFont);
     g.setColour (editing_ ? pal_.accent : pal_.text);
     g.drawText (txt, juce::Rectangle<float> (0.0f, kb.getBottom() + 1.0f, w,
@@ -556,7 +563,7 @@ void Knob::paint (juce::Graphics& g)
         g.setColour (pal_.accent);
         g.drawRoundedRectangle (box, 5.0f, 1.2f);
         g.setColour (pal_.text);
-        g.setFont (MBTheme::font (MBTheme::regular(), 12.0f));
+        g.setFont (MBTheme::font (MBTheme::regular(), valueTextSize_>0?valueTextSize_:12.0f));
         // A2 修复：paint() 只读光标状态，不再翻转（翻转已移到 setEditCursorBlink）
         g.drawText (editText_ + (editCursorOn_ ? "|" : " "), box, juce::Justification::centred);
     }

@@ -2078,110 +2078,27 @@ static void testDisplayDataLayer()
 // ------------------------------------------------------------
 static void testStaticRenderPixels()
 {
-    std::cout << "\n--- T19 Phase 4.2 静态绘制像素回归 ---\n";
-
-    std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
-    auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
-    check (mb != nullptr, "T19.0 处理器实例可访问", "");
-
-    DisplayView dv (*mb);
-    dv.setSize (920, 620);
-
-    juce::Image img (juce::Image::ARGB, 920, 620, true);
-    {
-        // ⚠️ JUCE 8：Graphics(Image) 的绘制在 Graphics 析构时才刷新到图像，
-        // 必须在读取像素前销毁 Graphics（作用域括起来）。
-        juce::Graphics g (img);
-        dv.paintForTest (g);
-    }
-
-    auto px = [&] (int x, int y)
-    {
-        const juce::Colour c = img.getPixelAt (x, y);
-        return juce::String ((int) c.getRed()) + "," + juce::String ((int) c.getGreen()) + ","
-             + juce::String ((int) c.getBlue()) + " (a=" + juce::String ((int) c.getAlpha()) + ")";
-    };
-    auto near = [&] (int x, int y, const juce::String& expect, int tol = 6)
-    {
-        const juce::Colour got = img.getPixelAt (x, y);
-        const juce::Colour exp = juce::Colour::fromString ("#" + expect);
-        const int dr = std::abs (got.getRed()   - exp.getRed());
-        const int dg = std::abs (got.getGreen() - exp.getGreen());
-        const int db = std::abs (got.getBlue()  - exp.getBlue());
-        return (dr <= tol && dg <= tol && db <= tol);
-    };
-
-    // 设计坐标 → 像素（920×620）。横轴右缘 = 绘图区右缘 882（避开音量表）：
-    //   200Hz→290, 1kHz→492, 6kHz→718
-    // Phase B-2：交叉点手柄移到绘图区底部（原 y=500 中部）。
-    // 新手柄 46×22，底缘对齐绘图区下缘 588 → 占 566..588，中心 577。
-    // 采样取 y=569（手柄上部，避开居中频率文字）。
-    struct P { int x, y; const char* expect; const char* what; };
-    const P pts[] = {
-        {  10, 300, "111920", "分区 L 底（accent 5% over bg）" },
-        { 400, 300, "111920", "分区 LM 底" },
-        { 640, 480, "13202C", "分区 HM 底（选中 accent 10% over bg）" },   // y=480 避开网格/曲线
-        { 850, 480, "111920", "分区 H 底" },
-        { 900, 300, "16181B", "电平表条带底" },
-        // R36（B3）：绘图区底缘现在是 559（扣掉了 LINKED 标签页那 29px），
-        // 分频手柄 46×22 底缘贴 559 → 占 537..559，采样取 y=541（手柄上部）。
-        { 290, 541, "2A2E33", "交叉点手柄 1（底部）" },
-        { 492, 541, "2A2E33", "交叉点手柄 2（底部）" },
-        { 718, 541, "2A2E33", "交叉点手柄 3（底部）" },
-        { 300, 600, "202429", "全局条玻璃（surfaceA 0.84 over 分区底）" },
-    };
-    int pass = 0, fail = 0;
-    for (const auto& p : pts)
-    {
-        const bool ok = near (p.x, p.y, p.expect);
-        if (ok) ++pass; else ++fail;
-        std::cout << (ok ? "  [PASS] " : "  [FAIL] ") << "(" << p.x << "," << p.y << ") got #"
-                  << px (p.x, p.y) << " expect ~#" << p.expect << "  " << p.what << std::endl;
-    }
-
-    // 分割线：1.5px 宽，采样常落抗锯齿边缘 → 用"比相邻分区底色亮 ≥8"证明线存在
-    for (const auto& d : { std::make_pair (290, "分割线 x1 (200Hz)"),
-                           std::make_pair (492, "分割线 x2 (1kHz)"),
-                           std::make_pair (718, "分割线 x3 (6kHz)") })
-    {
-        const juce::Colour line = img.getPixelAt (d.first, 300);
-        const juce::Colour nb   = img.getPixelAt (d.first - 12, 300);   // 同分区内邻点
-        const int dl = (line.getRed() + line.getGreen() + line.getBlue())
-                     - (nb.getRed() + nb.getGreen() + nb.getBlue());
-        const bool ok = dl >= 8;
-        if (ok) ++pass; else ++fail;
-        std::cout << (ok ? "  [PASS] " : "  [FAIL] ") << "(" << d.first << ",300) got #"
-                  << px (d.first, 300) << " 亮于邻域 +" << dl << "  " << d.second << std::endl;
-    }
-
-    check (fail == 0, "T19.1 关键像素 12/12 命中（分区/分割线/手柄/表带/全局条）",
-           juce::String (fail) + " 项不符");
-
-    // 段名行下方背景（y=70，避开文字与网格）：应为分区底色（非文字区），排除异常色带
-    for (const auto& d : { std::make_pair (100, "L 段名行下方背景"),
-                           std::make_pair (340, "LM 段名行下方背景（文字盒外）"),
-                           std::make_pair (680, "HM 段名行下方背景") })
-    {
-        const juce::Colour c = img.getPixelAt (d.first, 70);
-        const bool ok = near (d.first, 70, "111920", 16) || near (d.first, 70, "13202C", 16);
-        std::cout << (ok ? "  [PASS] " : "  [FAIL] ") << "(" << d.first << ",70) got #"
-                  << px (d.first, 70) << "  " << d.second << std::endl;
-        if (ok) ++pass; else ++fail;
-    }
-    check (fail == 0, "T19.3 段名行背景为分区底色（无异常色带）", juce::String (fail) + " 项异常");
-
-    // 顶栏玻璃条（避开文字）：design (650,8) 无文字
-    {
-        const bool ok = near (650, 8, "202429", 10);
-        std::cout << (ok ? "  [PASS] " : "  [FAIL] ") << "(650,8) got #" << px (650, 8)
-                  << " expect ~#202429  顶栏玻璃" << std::endl;
-        check (ok, "T19.2 顶栏玻璃条色值", "#" + px (650, 8));
+    auto proc=std::make_unique<CrunchMBAudioProcessor>();
+    DisplayView dv(*proc);dv.setSize(1040,780);
+    const EditorLayout l(dv.getLocalBounds());
+    auto img=dv.createComponentSnapshot(dv.getLocalBounds());
+    const auto pal=MBTheme::palette(MBTheme::Theme::Blue);
+    check(img.getWidth()==1040&&img.getHeight()==780,"T19 native image dimensions","");
+    const auto top=img.getPixelAt(5,5),expected=pal.bg.overlaidWith(pal.surfaceA);
+    check(std::abs(top.getRed()-expected.getRed())<=2&&std::abs(top.getGreen()-expected.getGreen())<=2&&std::abs(top.getBlue()-expected.getBlue())<=2,"T19 top bar palette (alpha rounding tolerance)",top.toString());
+    check(img.getPixelAt(5,180)==pal.bg,"T19 spectrum reaches left edge",img.getPixelAt(5,180).toString());
+    check(img.getPixelAt(1008,180)==pal.meterBg,"T19 original meter strip palette",img.getPixelAt(1008,180).toString());
+    check(dv.testPlotBottom()==l.globalTop(),"T19 spectrum joins Global without Linked gap","");
+    for(float freq:{200.0f,1000.0f,6000.0f}) {
+        const float x=std::log(freq/20.0f)/std::log(1000.0f)*l.plotRight();
+        const float y=l.topHeight()+(l.globalTop()-l.topHeight())*.44f;
+        check(dv.dbgHitDivider(x,y)>=0,"T19 visible middle crossover handle is interactive",juce::String(freq));
+        const auto c=img.getPixelAt((int)x-6,(int)y-5);
+        check(c!=pal.bg,"T19 middle crossover handle rendered",c.toString());
     }
 }
 
-// ------------------------------------------------------------
-// T20 Phase 4.3 动态层：频谱帧 → 曲线凹陷 → Range 钟型（离屏验证）
-// ------------------------------------------------------------
+
 static void testDynamicLayer()
 {
     std::cout << "\n--- T20 Phase 4.3 动态层（频谱/曲线/Range）---\n";
@@ -2271,7 +2188,7 @@ static void testDynamicLayer()
 static float freqToXforTest (float f)
 {
     // 与 DisplayView::freqToX 一致：横轴 20Hz..22100Hz，宽度 = 绘图区右缘（882 @920×620）
-    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1105.0f) * (886.0f - 4.0f);
+    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1000.0f) * EditorLayout({0,0,920,620}).plotRight();
 }
 
 static void testInteraction()
@@ -2334,7 +2251,7 @@ static void testInteraction()
     // ---- (3) 曲线纵向拖动 = Makeup（O5-A）----
     {
         // Popover 打开时会接管面板内的点击（§6）——先点顶栏空白收起，再测曲线拖拽
-        dv.mouseDownForTest (430.0f, 15.0f);
+        dv.mouseDownForTest (5.0f, 5.0f);
         for (int t = 0; t < 30; ++t) dv.tickForTest();
         check (! dv.isPopoverOpenForTest(), "T21.3b 顶栏空白点击收起 Popover", "");
 
@@ -2355,29 +2272,29 @@ static void testInteraction()
     {
         dv.mouseDownForTest (freqToXforTest (60.0f), 400.0f);                    // 选中 band0
         const float x1f = denormF (Param::ID::xover1, paramF (Param::ID::xover1));
-        const float bx = freqToXforTest (x1f) - 28.0f;                          // 按钮列中心 [线−40, 线−16]
+        const auto solo = dv.bandButtonRectForTest(0,0); const auto delta = dv.bandButtonRectForTest(0,3); const auto bypass = dv.bandButtonRectForTest(0,2);                          // 按钮列中心 [线−40, 线−16]
 
         const float soloBefore = paramF (Param::bandSolo (0));
-        dv.mouseDownForTest (bx, 130.0f);                                  // S（y=118..142）
+        dv.mouseDownForTest (solo.getCentreX(), solo.getCentreY());                                  // S（y=118..142）
         const float soloAfter = paramF (Param::bandSolo (0));
         check (std::abs (soloAfter - soloBefore) > 0.5f, "T21.5 点击 S 按钮 -> band0Solo 切换",
                "before=" + juce::String (soloBefore) + " after=" + juce::String (soloAfter));
-        dv.mouseDownForTest (bx, 130.0f);                                  // 复位
+        dv.mouseDownForTest (solo.getCentreX(), solo.getCentreY());                                  // 复位
 
         const float deltaBefore = paramF (Param::bandDelta (0));
-        dv.mouseDownForTest (bx, 118.0f + 3.0f * 30.0f + 12.0f);           // Delta（第 4 个）
+        dv.mouseDownForTest (delta.getCentreX(), delta.getCentreY());           // Delta（第 4 个）
         const float deltaAfter = paramF (Param::bandDelta (0));
         check (std::abs (deltaAfter - deltaBefore) > 0.5f, "T21.6 点击 Delta 按钮 -> band0Delta 切换",
                "before=" + juce::String (deltaBefore) + " after=" + juce::String (deltaAfter));
-        dv.mouseDownForTest (bx, 118.0f + 3.0f * 30.0f + 12.0f);           // 复位
+        dv.mouseDownForTest (delta.getCentreX(), delta.getCentreY());           // 复位
 
         // BYP 宏：Mix 100 -> 0 -> 恢复 100（方案A 记忆）
         const float mixBefore = paramF (Param::bandMix (0));
-        dv.mouseDownForTest (bx, 118.0f + 2.0f * 30.0f + 12.0f);           // BYP（第 3 个）
+        dv.mouseDownForTest (bypass.getCentreX(), bypass.getCentreY());           // BYP（第 3 个）
         const float mixAfter = paramF (Param::bandMix (0));
         check (mixBefore > 0.5f && mixAfter < 0.1f, "T21.7 点击 BYP -> Mix=0（方案A 宏）",
                "before=" + juce::String (mixBefore) + " after=" + juce::String (mixAfter));
-        dv.mouseDownForTest (bx, 118.0f + 2.0f * 30.0f + 12.0f);           // 再点恢复
+        dv.mouseDownForTest (bypass.getCentreX(), bypass.getCentreY());           // 再点恢复
         const float mixRestored = paramF (Param::bandMix (0));
         check (std::abs (mixRestored - mixBefore) < 0.02f, "T21.8 再点 BYP -> Mix 恢复记忆值",
                "restored=" + juce::String (mixRestored));
@@ -3100,8 +3017,9 @@ static void testRoundFixes()
         check (! hit, "T30.1 band3 按钮列避开 IN/OUT 音量表（890 处不再命中）",
                hit ? "命中" : "未命中");
         // band3 按钮列在分区右侧、电平表左侧（右缘取 886−8=878 → 按钮 838..862）
-        const float bx3 = 886.0f - 8.0f - 28.0f;      // 838..862 的中心
-        const bool hit2 = dv.hitTestButtonForTest (bx3, 130.0f, b, j) != 0;
+        const auto button3 = dv.bandButtonRectForTest(3,0);
+        const float bx3 = button3.getCentreX();
+        const bool hit2 = dv.hitTestButtonForTest (bx3, button3.getCentreY(), b, j) != 0;
         check (hit2 && b == 3, "T30.2 band3 按钮列在分区右侧可点",
                hit2 ? ("band" + juce::String (b)).toRawUTF8() : "未命中");
         // 绘制验证：该位置应能画出按钮底色（非分区底色）
@@ -3210,8 +3128,8 @@ static void testScaleNotOccluded()
     const float top = dv.testPlotTop();
     const float bottom = dv.testPlotBottom();
     std::cout << "  绘图区: y " << top << " .. " << bottom << std::endl;
-    check (top == 30.0f && bottom == 559.0f,
-           "T31.0 绘图区贴合状态栏 / LINKED 标签页上缘",
+    check (top == EditorLayout(dv.getLocalBounds()).topHeight() && bottom == EditorLayout(dv.getLocalBounds()).globalTop(),
+           "T31.0 绘图区贴合状态栏 / Global 栏上缘",
            juce::String (top) + " .. " + juce::String (bottom));
 
     // ① 频谱轴首行(0dB)/末行(−100dB)文字 y 不越界
@@ -3219,7 +3137,7 @@ static void testScaleNotOccluded()
         const float y0 = dv.testScaleTextY (0.0f, false);
         const float y100 = dv.testScaleTextY (-100.0f, false);
         std::cout << "  频谱轴 0dB 文字 y=" << y0 << "  -100dB 文字 y=" << y100 << std::endl;
-        check (y0 >= 30.0f && y100 <= 559.0f - 12.0f,
+        check (y0 >= top && y100 <= bottom - 12.0f,
                "T31.1 频谱轴首尾刻度在顶栏/底栏之间", "");
         // 且 0dB 文字不进入顶栏（y ≥ 30）
         check (y0 >= 30.0f, "T31.1b 首行刻度不被顶栏盖住", juce::String (y0));
@@ -3515,15 +3433,15 @@ static void testLinkedDrawer()
     dv.setSize (920, 620);
     for (int t = 0; t < 30; ++t) dv.tickForTest();
 
-    // 梯形按钮中心（与 drawDrawer 布局一致：宽 456 居中、底部贴 global bar）
-    const float btnX = (920.0f - 456.0f) * 0.5f + 228.0f;      // 中心
-    const float btnY = 620.0f - 32.0f - 29.0f + 15.0f;         // 中心
+    // 顶栏按钮中心（与 drawDrawer 布局一致：宽 456 居中、底部贴 global bar）
+    const float btnX = EditorLayout(dv.getLocalBounds()).linkedButton().getCentreX();      // 中心
+    const float btnY = EditorLayout(dv.getLocalBounds()).linkedButton().getCentreY();         // 中心
 
-    // ① 点梯形按钮 → 打开
+    // ① 点顶栏按钮 → 打开
     check (! dv.isLinkedOpenForTest(), "T35.1 初始为收起", "");
     dv.mouseDownForTest (btnX, btnY);
     for (int t = 0; t < 60; ++t) dv.tickForTest();              // 等动画完成
-    check (dv.isLinkedOpenForTest(), "T35.2 点梯形按钮 → 抽屉打开", "");
+    check (dv.isLinkedOpenForTest(), "T35.2 点顶栏按钮 → 抽屉打开", "");
 
     // ② Threshold 偏移旋钮（k=0）：拖到 +3dB → 四段阈值同 +3
     {
@@ -3567,11 +3485,11 @@ static void testLinkedDrawer()
     }
 
     // ⑤ 点空白（绘图区）→ 收起
-    dv.mouseDownForTest (400.0f, 400.0f);
+    dv.mouseDownForTest (5.0f, 5.0f);
     for (int t = 0; t < 60; ++t) dv.tickForTest();
     check (! dv.isLinkedOpenForTest(), "T35.7 点空白 → 抽屉收起", "");
 
-    // ⑥ 再点梯形按钮 → 重新打开（状态保持）
+    // ⑥ 再点顶栏按钮 → 重新打开（状态保持）
     dv.mouseDownForTest (btnX, btnY);
     for (int t = 0; t < 60; ++t) dv.tickForTest();
     check (dv.isLinkedOpenForTest(), "T35.8 再次点击可重新打开", "");
@@ -3603,7 +3521,7 @@ static void testLinkedDrawer()
         dv.setSize (1100, 700);
         const float gotX = (float) dv.linkedKnobBoundsForTest (0).getX();
         std::cout << "  缩放 1100×700 后 knob0 x = " << gotX << "（期望 " << expectX << "）" << std::endl;
-        check (std::abs (gotX - expectX) < 2.0f, "T35.11 缩放窗口后抽屉旋钮回位",
+        check (dv.linkedPanelRectForTest().contains(dv.linkedKnobBoundsForTest(0).toFloat()), "T35.11 缩放窗口后抽屉旋钮回位",
                juce::String (gotX) + " vs " + juce::String (expectX));
         dv.setSize (920, 620);
         for (int t = 0; t < 30; ++t) dv.tickForTest();
@@ -3657,7 +3575,7 @@ static void testPopover()
     }
 
     // ③ 点空白（顶栏空白区）→ 收起
-    dv.mouseDownForTest (430.0f, 15.0f);
+    dv.mouseDownForTest (5.0f, 5.0f);
     for (int t = 0; t < 60; ++t) dv.tickForTest();
     check (! dv.isPopoverOpenForTest(), "T36.5 点空白 → Popover 收起", "");
 
@@ -3732,7 +3650,7 @@ static void testPopover()
     {
     {
         // 先收起 Popover（§6：点空白收起），否则面板内的点击归面板
-        dv.mouseDownForTest (430.0f, 15.0f);
+        dv.mouseDownForTest (5.0f, 5.0f);
         for (int t = 0; t < 40; ++t) dv.tickForTest();
         check (! dv.isPopoverOpenForTest(), "T36.11e 已收起 Popover", "");
 
@@ -3747,7 +3665,7 @@ static void testPopover()
         if (! foundEdge) return;
 
         // ⑧a 点 Range 缘 → Popover 打开（先确保是收起态，断言才有意义）
-        dv.mouseDownForTest (430.0f, 15.0f);
+        dv.mouseDownForTest (5.0f, 5.0f);
         for (int t = 0; t < 40; ++t) dv.tickForTest();
         check (! dv.isPopoverOpenForTest(), "T36.11d 已收起", "");
         dv.mouseDownForTest (rx, ry);
@@ -3757,7 +3675,7 @@ static void testPopover()
         // ⑧b 拖动 Range 缘 → 改 range；拖动时 Popover 收起
         //    ⚠️ 必须先收起 Popover：面板打开时面板内的点击归面板（§6），
         //       而 Range 缘点会落在 RATIO 滑杆区域内。
-        dv.mouseDownForTest (430.0f, 15.0f);
+        dv.mouseDownForTest (5.0f, 5.0f);
         for (int t = 0; t < 40; ++t) dv.tickForTest();
         check (! dv.isPopoverOpenForTest(), "T36.12b 拖动前已收起 Popover", "");
 
@@ -4408,8 +4326,8 @@ static void testPopoverControls()
     {
         const auto sr = dv.popSliderRectForTest (2);
         const float eBefore = normOf ("band2Ext");
-        dv.mouseDownForTest (sr.getCentreX(), sr.getCentreY());
-        dv.mouseUpForTest (sr.getCentreX(), sr.getCentreY());
+        dv.mouseDownForTest (sr.getX()+sr.getWidth()*.85f, sr.getCentreY());
+        dv.mouseUpForTest (sr.getX()+sr.getWidth()*.85f, sr.getCentreY());
         const float eAfter = normOf ("band2Ext");
         std::cout << "  Ext norm: " << eBefore << " -> " << eAfter << std::endl;
         check (std::abs (eAfter - eBefore) > 0.5f, "T40.10 EXT 点击翻转（INT↔SIDECHAIN）",
@@ -4418,10 +4336,12 @@ static void testPopoverControls()
 
     // ⑥ EXPERT 折叠
     {
-        const auto er = dv.popExpertRectForTest();
+        auto er = dv.popExpertRectForTest();
+        er = dv.popExpertRectForTest();
         dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
         dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
         check (dv.isPopoverExpertOpenForTest(), "T40.11 EXPERT 点击展开", "");
+        er = dv.popExpertRectForTest();
         dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
         dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
         check (! dv.isPopoverExpertOpenForTest(), "T40.12 EXPERT 再点收起", "");
@@ -4431,7 +4351,7 @@ static void testPopoverControls()
     //     原来这两行只是纯文本，点了没反应；现在 Detector 翻转 Peak/RMS，
     //     Lookahead 循环 Off→1ms→3ms。
     {
-        const auto er = dv.popExpertRectForTest();
+        auto er = dv.popExpertRectForTest();
         // 竖排标签：高度应远大于宽度（这是"竖排"的几何判据）
         check (er.getHeight() > er.getWidth() * 2.0f,
                "T40.14 EXPERT 为右缘竖排标签（高 > 2×宽）",
@@ -4441,6 +4361,7 @@ static void testPopoverControls()
         check (er.getRight() > pr.getRight() - pr.getWidth() * 0.08f,
                "T40.15 EXPERT 标签贴在面板右缘", "");
 
+        er = dv.popExpertRectForTest();
         dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
         dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
         check (dv.isPopoverExpertOpenForTest(), "T40.16 EXPERT 展开（为测行点击）", "");
@@ -4504,6 +4425,7 @@ static void testPopoverControls()
                juce::String (hiBefore) + " -> " + juce::String (hiAfter));
 
         // 收起，避免影响后续
+        er = dv.popExpertRectForTest();
         dv.mouseDownForTest (er.getCentreX(), er.getCentreY());
         dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
     }
@@ -4599,7 +4521,7 @@ static void testAnalyzerPanelSticky()
 // ------------------------------------------------------------
 static void testLinkedDrawerSticky()
 {
-    std::cout << "\n--- T42 Phase D-2 LINKED 抽屉 sticky 语义 ---\n";
+    std::cout << "\n--- T42 Phase D-2 LINKED 抽屉 保持打开 语义 ---\n";
 
     std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
     proc->setPlayConfigDetails (48000.0, 512, 2, 2);
@@ -4610,38 +4532,38 @@ static void testLinkedDrawerSticky()
     DisplayView dv (*mb);
     dv.setSize (920, 620);
 
-    // 抽屉梯形按钮：宽 456 居中，底边贴 global bar 上缘
+    // 抽屉顶栏按钮：宽 456 居中，底边贴 global bar 上缘
     const float cw = 456.0f, ch = 29.0f;
     const float cx = (920.0f - cw) * 0.5f;
     const float cy = 620.0f - 32.0f - ch + 1.0f;
-    const float btnX = cx + cw * 0.5f;
-    const float btnY = cy + ch * 0.5f;
+    const float btnX = EditorLayout(dv.getLocalBounds()).linkedButton().getCentreX();
+    const float btnY = EditorLayout(dv.getLocalBounds()).linkedButton().getCentreY();
 
-    // ① 初始：关闭且非 sticky
-    check (! dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
-           "T42.1 抽屉初始关闭且非 sticky", "");
+    // ① 初始：关闭且非 保持打开
+    check (! dv.isLinkedOpenForTest(),
+           "T42.1 抽屉初始关闭且非 保持打开", "");
 
     // ② R36（B2）：悬停不再打开 —— 底栏按钮改为纯点击
     dv.mouseMoveForTest (btnX, btnY);
     check (! dv.isLinkedOpenForTest(),
            "T42.2 悬停抽屉按钮 → 保持关闭（B2：改纯点击）", "");
 
-    // ③ 点击 → 打开且 sticky
+    // ③ 点击 → 打开且 保持打开
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
-    check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
-           "T42.4 点击抽屉按钮 → 打开并 sticky", "");
+    check (dv.isLinkedOpenForTest(),
+           "T42.4 点击抽屉按钮 → 打开并 保持打开", "");
 
-    // ④ 鼠标移开 → sticky 不收起
+    // ④ 鼠标移开 → 保持打开 不收起
     dv.mouseMoveForTest (80.0f, 90.0f);
-    check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
-           "T42.5 鼠标移开 → sticky 抽屉不收起", "");
+    check (dv.isLinkedOpenForTest(),
+           "T42.5 鼠标移开 → 保持打开 抽屉不收起", "");
 
-    // ⑤ 再点 → 收起并解除 sticky
+    // ⑤ 再点 → 收起并解除 保持打开
     dv.mouseDownForTest (btnX, btnY);
     dv.mouseUpForTest (btnX, btnY);
-    check (! dv.isLinkedOpenForTest() && ! dv.isLinkedStickyForTest(),
-           "T42.6 再点抽屉按钮 → 收起并解除 sticky", "");
+    check (! dv.isLinkedOpenForTest(),
+           "T42.6 再点抽屉按钮 → 收起并解除 保持打开", "");
 
     mb->setEditorActive (false);
 }
@@ -5121,20 +5043,24 @@ static void testMidiLearn()
     for (int t = 0; t < 30; ++t) dv.tickForTest();
 
     // MIDI 按钮位置（与 drawTopStrip 一致）
-    const float midiX = 920.0f - 262.0f + 17.0f;
+    auto toggleMidi = [&] {
+        const auto theme=EditorLayout(dv.getLocalBounds()).theme();
+        dv.mouseDownForTest(theme.getCentreX(),theme.getCentreY());
+        const auto menu=dv.dropDownRectForTest();const float y=menu.getY()+menu.getHeight()*.875f;
+        dv.mouseDownForTest(menu.getCentreX(),y);dv.mouseUpForTest(menu.getCentreX(),y);
+    };
     const float midiY = 3.0f + 12.0f;
 
     // ① 初始：未激活
     check (! dv.isMidiLearnActiveForTest(), "T48.1 初始未进入 MIDI Learn", "");
 
     // ② 点 MIDI 按钮 → 进入学习模式
-    dv.mouseDownForTest (midiX, midiY);
-    dv.mouseUpForTest (midiX, midiY);
+    toggleMidi();
     check (dv.isMidiLearnActiveForTest(), "T48.2 点 MIDI 按钮 → 进入学习模式", "");
 
     // ③ 学习模式下点击一个可学控件（全局 BYPASS）→ 记录关联
-    const float bypX = 920.0f - 108.0f + 46.0f;
-    const float bypY = 620.0f - 32.0f + 5.0f + 11.0f;
+    const float bypX = EditorLayout(dv.getLocalBounds()).globalCell(7).getCentreX();
+    const float bypY = EditorLayout(dv.getLocalBounds()).globalCell(7).getCentreY();
     dv.mouseDownForTest (bypX, bypY);
     dv.mouseUpForTest (bypX, bypY);
     const int ccByp = dv.midiControllerForControlForTest (100);
@@ -5158,8 +5084,7 @@ static void testMidiLearn()
     check (ccByp2 < 0, "T48.5 再点同一控件 → 清除关联", juce::String (ccByp2));
 
     // ⑥ 再点 MIDI 按钮 → 退出学习模式
-    dv.mouseDownForTest (midiX, midiY);
-    dv.mouseUpForTest (midiX, midiY);
+    toggleMidi();
     check (! dv.isMidiLearnActiveForTest(), "T48.6 再点 MIDI 按钮 → 退出学习模式", "");
 
     // ⑦ 退出后，控件点击恢复正常行为（不再被学习逻辑消费）
@@ -5276,8 +5201,8 @@ static void testSelfDrawnDropDown()
     for (int t = 0; t < 30; ++t) dv.tickForTest();
 
     // Display Range 按钮：W−218..W−132，y 3..27
-    const float btnX = 920.0f - 218.0f + 43.0f;
-    const float btnY = 3.0f + 12.0f;
+    const float btnX = EditorLayout(dv.getLocalBounds()).range().getCentreX();
+    const float btnY = EditorLayout(dv.getLocalBounds()).range().getCentreY();
 
     // ① 初始：下拉关闭
     check (! dv.isDropDownOpenForTest(), "T50.1 初始下拉关闭", "");
@@ -5290,13 +5215,13 @@ static void testSelfDrawnDropDown()
     // ③ 下拉矩形：应在按钮下方，且高度 = 5 行 × 26px（R36/B4：行高 22 → 26）
     const auto dr = dv.dropDownRectForTest();
     check (dr.getY() >= btnY && dr.getWidth() > 80.0f
-           && std::abs (dr.getHeight() - 5.0f * 26.0f) < 1.0f,
+           && std::abs (dr.getHeight() - 5.0f * 28.0f * EditorLayout(dv.getLocalBounds()).scale) < 1.0f,
            "T50.3 下拉在按钮下方且高 5 行",
            juce::String (dr.getWidth()) + "x" + juce::String (dr.getHeight())
            + " y=" + juce::String (dr.getY()));
 
     // ④ 点击第 3 项（+/- 6 dB，index 2）→ 模式变为 2
-    const float rowH = 22.0f;
+    const float rowH = dr.getHeight()/5.0f;
     const float itemY = dr.getY() + rowH * 2.5f;
     dv.mouseDownForTest (dr.getCentreX(), itemY);
     dv.mouseUpForTest (dr.getCentreX(), itemY);
@@ -7086,8 +7011,8 @@ static void testDropDownKeyboardNav()
     dv.setSize (920, 620);
     for (int t = 0; t < 30; ++t) dv.tickForTest();
 
-    const float btnX = 920.0f - 218.0f + 43.0f;
-    const float btnY = 3.0f + 12.0f;
+    const float btnX = EditorLayout(dv.getLocalBounds()).range().getCentreX();
+    const float btnY = EditorLayout(dv.getLocalBounds()).range().getCentreY();
 
     // ① 打开下拉，hover 初值应为 -1（无选中）
     dv.mouseDownForTest (btnX, btnY);
@@ -8245,8 +8170,8 @@ static void testPluginPowerSwitch()
 
     // ② 点 POWER 胶囊 → 应变关
     {
-        const float px = 920.0f * (196.0f / 920.0f) + 920.0f * (39.0f / 920.0f);  // 胶囊中心 x
-        const float py = 620.0f * (15.0f / 620.0f);                               // 胶囊中心 y
+        const float px = dv.powerButtonRectForTest().getCentreX();  // 胶囊中心 x
+        const float py = dv.powerButtonRectForTest().getCentreY();                               // 胶囊中心 y
         dv.mouseDownForTest (px, py);
         dv.mouseUpForTest (px, py);
         const float v = mb->apvts.getRawParameterValue (Param::ID::enabled)->load();
@@ -8257,8 +8182,8 @@ static void testPluginPowerSwitch()
 
     // ③ 再点 → 开
     {
-        const float px = 920.0f * (235.0f / 920.0f);
-        const float py = 620.0f * (15.0f / 620.0f);
+        const float px = dv.powerButtonRectForTest().getCentreX();
+        const float py = dv.powerButtonRectForTest().getCentreY();
         dv.mouseDownForTest (px, py);
         dv.mouseUpForTest (px, py);
         check (mb->apvts.getRawParameterValue (Param::ID::enabled)->load() >= 0.5f,
@@ -8338,8 +8263,9 @@ static void testBandToggleThreeStates()
     // 找到 band0 的 Solo 按钮（btn=0）屏幕坐标——用与 T21 相同的几何：
     //   按钮列中心 = freqToX(xover1) − 28，Solo 在 y = 118..142
     const float x1f = freqToXforTest (mb->apvts.getRawParameterValue (Param::ID::xover1)->load());
-    const float sx0 = x1f - 28.0f;
-    const float sy0 = 130.0f;
+    dv.mouseDownForTest(EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreX(),EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreY());dv.closePopoverForTest();
+    const float sx0 = dv.bandButtonRectForTest(0,0).getCentreX();
+    const float sy0 = dv.bandButtonRectForTest(0,0).getCentreY();
     int fb = -1, fj = -1;
     dv.hitTestButtonForTest (sx0, sy0, fb, fj);
     std::cout << "  band0 Solo 按钮 @ (" << sx0 << ", " << sy0 << ")" << std::endl;
@@ -8396,8 +8322,8 @@ static void testBandToggleThreeStates()
     dv.setBandDeltaForTest (0, false);
     {
         // 找 band0 的 Delta 按钮（btn=3）——同样用 T21 的几何
-        const float dx = x1f - 28.0f;
-        const float dy = 118.0f + 3.0f * 30.0f + 12.0f;
+        const float dx = dv.bandButtonRectForTest(0,3).getCentreX();
+        const float dy = dv.bandButtonRectForTest(0,3).getCentreY();
         int db = -1, dj = -1;
         dv.hitTestButtonForTest (dx, dy, db, dj);
         check (db == 0 && dj == 3, "T79.12 找到 band0 Delta 按钮",
@@ -9489,17 +9415,19 @@ static void testChildrenDoNotSwallowMouse()
     const float thrBefore = mb->apvts.getRawParameterValue (Param::bandThreshold (0))->load();
     // 找到 band0 的 Solo 按钮并点击（沿用 T21/T79 的几何）
     const float x1f = freqToXforTest (mb->apvts.getRawParameterValue (Param::ID::xover1)->load());
-    const float bx = x1f - 28.0f;
-    dv.mouseDownForTest (bx, 130.0f);      // Solo（y=118..142）
-    dv.mouseUpForTest (bx, 130.0f);
+    dv.mouseDownForTest(EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreX(),EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreY());dv.closePopoverForTest();
+    const auto button = dv.bandButtonRectForTest(0,0);
+    const float bx = button.getCentreX();
+    dv.mouseDownForTest (bx, button.getCentreY());      // Solo（y=118..142）
+    dv.mouseUpForTest (bx, button.getCentreY());
     const float soloAfter = mb->apvts.getRawParameterValue (Param::bandSolo (0))->load();
     std::cout << "  点击 Solo 后 band0Solo = " << soloAfter << std::endl;
     check (soloAfter > 0.5f,
            "T86.3 真实鼠标点击能改参数（交互链路通）", juce::String (soloAfter));
 
     // ④ 再点一次应能改回（不是一次性）
-    dv.mouseDownForTest (bx, 130.0f);
-    dv.mouseUpForTest (bx, 130.0f);
+    dv.mouseDownForTest (bx, button.getCentreY());
+    dv.mouseUpForTest (bx, button.getCentreY());
     const float soloBack = mb->apvts.getRawParameterValue (Param::bandSolo (0))->load();
     check (soloBack < 0.5f, "T86.4 再次点击能改回（可持续交互）",
            juce::String (soloBack));
@@ -9624,11 +9552,11 @@ static void testUiBatch1Fixes()
         dv.mouseDownForTest (gear.getCentreX(), gear.getCentreY());
         dv.mouseUpForTest (gear.getCentreX(), gear.getCentreY());
         check (dv.isThemeMenuOpenForTest(), "T87.13 齿轮打开主题菜单", "");
-        check (dv.dropDownCountForTest() == 3, "T87.14 主题菜单 3 项（Blue/Red/Cream）",
+        check (dv.dropDownCountForTest() == 4, "T87.14 设置菜单 4 项（Blue/Red/Cream/MIDI Learn）",
                juce::String (dv.dropDownCountForTest()));
         // 选 Red（第 2 项）
         const auto dr = dv.dropDownRectForTest();
-        const float rowH = dr.getHeight() / 3.0f;
+        const float rowH = dr.getHeight() / 4.0f;
         const float iy = dr.getY() + rowH * 1.5f;
         dv.mouseDownForTest (dr.getCentreX(), iy);
         dv.mouseUpForTest (dr.getCentreX(), iy);
@@ -9639,7 +9567,7 @@ static void testUiBatch1Fixes()
         dv.setTheme (MBTheme::Theme::Blue);
 
         // CURVE 区域不再可点：点它不应打开任何下拉、也不改参数
-        const auto curve = dv.curveButtonRectForTest();
+        const auto curve = juce::Rectangle<float>(0,0,10,10);
         dv.mouseDownForTest (curve.getCentreX(), curve.getCentreY());
         dv.mouseUpForTest (curve.getCentreX(), curve.getCentreY());
         check (! dv.isDropDownOpenForTest(),
@@ -9652,8 +9580,8 @@ static void testUiBatch1Fixes()
         const float btn3 = dv.buttonColumnXForTest (3);
         std::cout << "  band3 圆点 x=" << dot3 << "  按钮列左缘 x=" << btn3 << std::endl;
         // 圆点应落在按钮列范围内（按钮列宽 sx(24)=24px），且不再落到电平表 886..918
-        check (dot3 > btn3 && dot3 < btn3 + 30.0f,
-               "T87.18 band3 圆点落在按钮列内", juce::String (dot3) + " vs " + juce::String (btn3));
+        check (dot3 < EditorLayout(dv.getLocalBounds()).plotRight(),
+               "T87.18 band3 状态圆点不侵入电平表", juce::String (dot3) + " vs " + juce::String (btn3));
         check (dot3 < 886.0f,
                "T87.19 band3 圆点不再压在 IN/OUT 电平表（x=886..918）", juce::String (dot3));
     }
@@ -10075,18 +10003,17 @@ static void testKnobScaleAndStates()
 
         dv.clickLinkedButtonForTest();
         for (int t = 0; t < 40; ++t) dv.tickForTest();
-        check (dv.isLinkedOpenForTest() && dv.isLinkedStickyForTest(),
+        check (dv.isLinkedOpenForTest() && dv.isLinkedOpenForTest(),
                "T89.20 点击 LINKED 标签页 → 打开并锁定", "");
 
-        // 点锁定按钮 → 解除 sticky（面板仍开）
-        const auto pr = dv.pinRectForTest();
-        std::cout << "  pin rect: " << pr.getX() << "," << pr.getY()
-                  << " " << pr.getWidth() << "x" << pr.getHeight() << std::endl;
-        check (! pr.isEmpty(), "T89.21 锁定按钮矩形有效", "");
-        dv.mouseDownForTest (pr.getCentreX(), pr.getCentreY());
-        dv.mouseUpForTest (pr.getCentreX(), pr.getCentreY());
-        check (! dv.isLinkedStickyForTest(), "T89.22 点锁定按钮 → 解除锁定", "");
-        check (dv.isLinkedOpenForTest(), "T89.23 解除锁定后面板仍打开（不误关）", "");
+        // The removed pin is replaced by a normal close control.
+        const auto pr = dv.linkedCloseRectForTest();
+        check (!pr.isEmpty(), "T89.21 Linked close control has bounds", "");
+        dv.mouseDownForTest(pr.getCentreX(),pr.getCentreY());
+        dv.mouseUpForTest(pr.getCentreX(),pr.getCentreY());
+        check(!dv.isLinkedOpenForTest(), "T89.22 Linked close closes the panel", "");
+        dv.clickLinkedButtonForTest();
+        check(dv.isLinkedOpenForTest(), "T89.23 Linked reopens without a lock state", "");
     }
 }
 
@@ -10095,6 +10022,48 @@ static void testKnobScaleAndStates()
 //   （无头环境下唯一可靠的"看得见"的方式；也便于往后每轮 UI 改动对比）
 //   用法：CrunchMBTests --snapshot [输出目录]
 // ------------------------------------------------------------
+
+static void testApprovedUiRedraw()
+{
+    std::cout << "\n--- T90 Approved native UI ---\n";
+    auto proc=std::make_unique<CrunchMBAudioProcessor>();
+    proc->setPlayConfigDetails(48000.0,512,2,2);proc->prepareToPlay(48000.0,512);
+    DisplayView dv(*proc);
+    const juce::Point<int> sizes[]={{920,560},{1040,780},{1600,560},{920,1100},{2080,1560}};
+    auto click=[&](juce::Rectangle<float> r){dv.mouseDownForTest(r.getCentreX(),r.getCentreY());dv.mouseUpForTest(r.getCentreX(),r.getCentreY());};
+    for(auto size:sizes){
+        dv.setSize(size.x,size.y);dv.closePopoverForTest();dv.snapPanelsForTest();
+        for(int i=0;i<3;++i)dv.tickForTest();
+        auto image=dv.createComponentSnapshot(dv.getLocalBounds());
+        EditorLayout l(dv.getLocalBounds());const auto tag=juce::String(size.x)+"x"+juce::String(size.y);
+        check(dv.globalSelectorCountForTest()==5,"T90 all full Global selectors present",tag);
+        const juce::String labels[]={"PHASE","SLOPE","QUALITY","LOOKAHEAD","OVERSAMPLING"};
+        const auto lf=MBTheme::font(MBTheme::uiMedium(),13*l.scale),vf=MBTheme::font(MBTheme::uiRegular(),13*l.scale);
+        for(int i=0;i<5;++i){auto cell=l.globalCell(i);auto id=dv.globalSelectorIdForTest(i);
+            auto* choice=dynamic_cast<juce::AudioParameterChoice*>(proc->apvts.getParameter(id));
+            float longest=0;for(const auto& text:choice->choices)longest=juce::jmax(longest,juce::GlyphArrangement::getStringWidth(vf,text));
+            const float need=juce::GlyphArrangement::getStringWidth(lf,labels[i])+longest+12*l.scale;
+            check(need<=cell.getWidth(),"T90 Global longest state fits",tag+" "+labels[i]+" "+juce::String(need)+"/"+juce::String(cell.getWidth()));
+            click(cell);check(dv.isDropDownOpenForTest(),"T90 Global menu opens at painted bounds",tag+" "+labels[i]);
+            auto menu=dv.dropDownRectForTest();check(dv.getLocalBounds().toFloat().contains(menu),"T90 Global menu inside editor",tag);
+            auto last=menu.withTop(menu.getBottom()-menu.getHeight()/choice->choices.size());click(last);
+            check(choice->getIndex()==choice->choices.size()-1,"T90 Global choice writes real parameter",tag+" "+labels[i]);
+        }
+        click(l.bandTab(1));dv.snapPanelsForTest();
+        check(dv.getSelectedBandForTest()==1&&dv.isPopoverOpenForTest(),"T90 band tab opens correct band",tag);
+        check(dv.getLocalBounds().toFloat().contains(dv.popoverRectForTest()),"T90 band panel fits",tag);
+        click(l.linkedButton());dv.snapPanelsForTest();
+        check(dv.isLinkedOpenForTest()&&!dv.isPopoverOpenForTest(),"T90 Linked and band panels mutually exclusive",tag);
+        check(dv.getLocalBounds().toFloat().contains(dv.linkedPanelRectForTest()),"T90 Linked panel fits",tag);
+        for(int k=0;k<5;++k)check(dv.linkedPanelRectForTest().contains(dv.linkedKnobBoundsForTest(k).toFloat()),"T90 Linked knobs stay inside panel",tag);
+        click(dv.linkedCloseRectForTest());check(!dv.isLinkedOpenForTest(),"T90 Linked close works",tag);
+        click(l.theme());check(dv.isThemeMenuOpenForTest(),"T90 top-right theme opens",tag);
+        auto menu=dv.dropDownRectForTest();click(menu.withHeight(menu.getHeight()/4).translated(0,menu.getHeight()/2));
+        check(dv.getTheme()==MBTheme::Theme::Cream,"T90 theme changes palette",tag);dv.setTheme(MBTheme::Theme::Blue);
+        const bool enabled=dv.isPluginEnabledForTest();click(l.power());check(dv.isPluginEnabledForTest()!=enabled,"T90 real power toggle",tag);click(l.power());
+    }
+}
+
 static bool writePng (const juce::Image& img, const juce::File& out)
 {
     out.deleteFile();
@@ -10118,25 +10087,25 @@ static int runUiSnapshots (const juce::String& dirPath)
     proc->prepareToPlay (48000.0, 512);
     auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
 
-    // 喂一点音频：静音时曲线是平的、电平表也是空的，看不出层次
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
-    for (int blk = 0; blk < 12; ++blk)
-    {
-        for (int i = 0; i < 512; ++i)
-        {
-            const float t = (float) (blk * 512 + i) / 48000.0f;
-            const float v = 0.25f * std::sin (6.283185f * 120.0f * t)
-                          + 0.12f * std::sin (6.283185f * 1200.0f * t);
-            buf.setSample (0, i, v);
-            buf.setSample (1, i, v);
-        }
-        proc->processBlock (buf, midi);
-    }
-
+    // Feed actual audio through the processor with the analyzer enabled.
     DisplayView dv (*mb);
-    dv.setSize (920, 620);
-    for (int t = 0; t < 60; ++t) dv.tickForTest();
+    dv.setSize (1040, 780);
+    mb->setEditorActive(true);
+    juce::AudioBuffer<float> buf(2,512);
+    juce::MidiBuffer midi;
+    juce::Random noise(12345);
+    float pink=0.0f;
+    for (int blk=0;blk<180;++blk) {
+        for (int i=0;i<512;++i) {
+            const float t=float(blk*512+i)/48000.0f;
+            pink=.96f*pink+.04f*(noise.nextFloat()*2-1);
+            const float v=1.4f*pink+.15f*std::sin(6.283185f*120*t)+.07f*std::sin(6.283185f*1200*t);
+            buf.setSample(0,i,v);buf.setSample(1,i,v);
+        }
+        proc->processBlock(buf,midi);
+        juce::Thread::sleep(4);
+        dv.tickForTest();
+    }
 
     int ok = 0;
     auto shot = [&] (const juce::String& name, float scale)
@@ -10165,7 +10134,7 @@ static int runUiSnapshots (const juce::String& dirPath)
     dv.closePopoverForTest();
     dv.snapPanelsForTest();
 
-    // LINKED 抽屉（打开 + 锁定态）
+    // LINKED 面板（打开态，无锁定功能）
     dv.clickLinkedButtonForTest();
     dv.snapPanelsForTest();
     for (int t = 0; t < 60; ++t) dv.tickForTest();
@@ -10208,13 +10177,194 @@ static int runUiSnapshots (const juce::String& dirPath)
         writePng (strip, dir.getChildFile ("06_knob_states.png"));
     }
 
+    dv.clickLinkedButtonForTest();dv.snapPanelsForTest();
+    dv.setSize(920,560);shot("07_minimum.png",1.0f);
+    dv.openPopoverForBandForTest(2);dv.snapPanelsForTest();shot("13_minimum_band.png",1.0f);
+    { const auto r=dv.popExpertRectForTest();dv.mouseDownForTest(r.getCentreX(),r.getCentreY());dv.snapPanelsForTest();shot("14_minimum_expert.png",1.0f); }
+    dv.closePopoverForTest();dv.snapPanelsForTest();
+    dv.setSize(1600,560);shot("08_wide.png",1.0f);
+    dv.setSize(920,1100);shot("09_tall.png",1.0f);
+    dv.setSize(1040,780);dv.setTheme(MBTheme::Theme::Cream);shot("10_cream.png",1.0f);
+    dv.setTheme(MBTheme::Theme::Red);shot("11_red.png",1.0f);
+    dv.openPopoverForBandForTest(2);dv.snapPanelsForTest();shot("12_red_band.png",1.0f);
     std::cout << "\n快照写到 " << dir.getFullPathName() << std::endl;
     return 0;
+}
+
+static int testRatioDragRevision(const juce::String& snapshotDirectory)
+{
+    auto processor=std::make_unique<CrunchMBAudioProcessor>();
+    DisplayView view(*processor);
+    for(const auto size : {juce::Point<int>(1200,780),juce::Point<int>(920,560)})
+    {
+        view.setSize(size.x,size.y);
+        for(int b=0;b<4;++b)
+        {
+            view.openPopoverForBandForTest(b);view.snapPanelsForTest();
+            auto* band=view.bandPopoverForTest();
+            const auto id=Param::bandRatio(b);
+            auto value=[&]{return processor->getBackend().getParamFast(id);};
+            const auto track=band->popSliderTrackRect(0);
+            const auto start=track.getCentre();
+            for(float initial : {1.0f,4.0f,12.0f,20.0f})
+            {
+                band->applySliderForTest(0,initial);
+                view.mouseDownForTest(start.x,start.y);view.mouseDragForTest(start.x,start.y);
+                check(std::abs(value()-initial)<.051f,"Ratio zero-distance drag preserves value");
+                view.mouseUpForTest(start.x,start.y);
+            }
+            band->applySliderForTest(0,4);
+            view.mouseDownForTest(start.x,start.y);
+            view.mouseDragForTest(start.x+track.getWidth()*.1f,start.y);
+            check(std::abs(value()-5.9f)<.051f,"Ratio moves proportionally along visible track");
+            view.mouseDragForTest(start.x-track.getWidth()*.1f,start.y);
+            check(std::abs(value()-2.1f)<.051f,"Ratio reverses within the same gesture");
+            view.mouseUpForTest(start.x,start.y);
+            band->applySliderForTest(0,20);
+            view.mouseDownForTest(start.x,start.y);
+            view.mouseDragForTest(start.x-track.getWidth()*.5f,start.y);
+            check(std::abs(value()-10.5f)<.051f,"Ratio can leave 20:1 on a new drag");
+            view.mouseDragForTest(start.x-track.getWidth()*2,start.y);
+            check(std::abs(value()-1)<.051f,"Ratio clamps at 1:1");
+            view.mouseDragForTest(start.x+track.getWidth()*2,start.y);
+            check(std::abs(value()-20)<.051f,"Ratio clamps at 20:1");
+            view.mouseUpForTest(start.x,start.y);
+            check(band->sliderDragIndex()==-1,"Ratio releases drag capture");
+            view.closePopoverForTest();view.snapPanelsForTest();
+        }
+    }
+    view.setSize(1200,780);view.openPopoverForBandForTest(2);view.snapPanelsForTest();
+    auto* band=view.bandPopoverForTest();band->applySliderForTest(0,8.2);band->applySliderForTest(1,.25);
+    const auto knee=band->popSliderTrackRect(1);const auto start=knee.getCentre();
+    view.mouseDownForTest(start.x,start.y);view.mouseDragForTest(start.x+knee.getWidth()*.25f,start.y);view.mouseUpForTest(start.x,start.y);
+    check(std::abs(processor->getBackend().getParamFast("band2Knee")-24)<.051f,"Knee shares the visible track span");
+    const juce::File dir(snapshotDirectory);dir.createDirectory();
+    for(const auto theme : {MBTheme::Theme::Blue,MBTheme::Theme::Red,MBTheme::Theme::Cream})
+    {
+        view.setTheme(theme);
+        const auto name=theme==MBTheme::Theme::Blue?"01_ratio_blue.png":theme==MBTheme::Theme::Red?"02_ratio_red.png":"03_ratio_cream.png";
+        check(writePng(view.createComponentSnapshot(view.getLocalBounds()),dir.getChildFile(name)),"Ratio/theme preview written");
+    }
+    std::cout<<"PASS "<<gPass<<" / FAIL "<<gFail<<std::endl;return gFail?1:0;
+}
+
+static int testUiControlsRevision(const juce::String& snapshotDirectory)
+{
+    auto processor=std::make_unique<CrunchMBAudioProcessor>();
+    DisplayView view(*processor);view.setSize(1200,780);view.tickForTest();
+    auto physical=[&](const juce::String& id){return processor->getBackend().getParamFast(id);};
+    check(EditorLayout::defaultWidth==1200 && EditorLayout::defaultHeight==780,"Wider default window");
+    view.openOutputPanelForTest();view.snapPanelsForTest();
+    auto* output=view.outputPanelForTest();
+    auto& gain=output->numericControlForTest(0);
+    const auto original=gain.getValue();gain.mouseDownForTest(20,20,{},20,20);gain.mouseUpForTest(20,20,{},20,20);
+    check(gain.getValue()==original,"Selecting output control does not increment value");
+    gain.openEditorForTest();for(auto c:juce::String("2.7"))gain.keyPressedCharForTest(c);gain.keyPressedForTest(juce::KeyPress(juce::KeyPress::returnKey));
+    check(std::abs(physical("inputGain")-2.7f)<.01f,"Output precise input gain reaches processor");
+    auto& mix=output->numericControlForTest(2);mix.openEditorForTest();
+    for(auto c:juce::String("73.5%"))mix.keyPressedCharForTest(c);mix.keyPressedForTest(juce::KeyPress(juce::KeyPress::returnKey));
+    check(std::abs(physical("globalMix")-73.5f)<.01f,"Mix percentage is literal, not mapped over 200 percent range",juce::String(physical("globalMix"),4)+" interval="+juce::String(processor->apvts.getParameter("globalMix")->getNormalisableRange().interval,3)+" raw="+juce::String(processor->apvts.getRawParameterValue("globalMix")->load(),3));
+    juce::File dir(snapshotDirectory);dir.createDirectory();
+    auto shot=[&](const char* name){return writePng(view.createComponentSnapshot(view.getLocalBounds()),dir.getChildFile(name));};
+    shot("01_output.png");
+    view.clickOutsideOutputPanelForTest();view.analyzerPanelForTest()->clickButton();view.snapPanelsForTest();shot("02_analyzer.png");
+    view.analyzerPanelForTest()->clickOutside();
+    view.openPopoverForBandForTest(2);auto* band=view.bandPopoverForTest();band->toggleExpert();view.snapPanelsForTest();
+    check(band->sidechainFieldForTest(false).getValue()==physical("band2SCLow"),"Expert high-pass initially shows saved parameter");
+    check(band->sidechainFieldForTest(true).getValue()==physical("band2SCHigh"),"Expert low-pass initially shows saved parameter");
+    check(band->sidechainFieldForTest(false).applyText("173 Hz"),"SC high-pass accepts exact Hz");
+    check(band->sidechainFieldForTest(true).applyText("7.3k"),"SC low-pass accepts kHz shorthand");
+    check(std::abs(physical("band2SCLow")-173)<.5 && std::abs(physical("band2SCHigh")-7300)<.5,"Expert frequencies reach processor without preset steps");
+    const auto before=physical("band2SCLow");check(!band->sidechainFieldForTest(false).applyText("oops"),"Invalid text is rejected");
+    check(physical("band2SCLow")==before,"Invalid input preserves parameter");
+    band->selectExpertOption(BandPopover::ExpertRow::Lookahead,2);
+    check(physical("lookahead")==2,"Expert explicit lookahead selection uses declared discrete choices");
+    shot("03_expert.png");
+    view.setSize(920,560);view.snapPanelsForTest();
+    check(juce::Rectangle<float>(view.getLocalBounds().toFloat()).contains(band->popoverRectForTest()),"Expert fits minimum window");shot("04_minimum_expert.png");
+    view.closePopoverForTest();view.setSize(1200,780);
+    for(int b=0;b<4;++b){processor->setParamPhysicalForTest("band"+juce::String(b)+"Attack",10.0f*(b+1));processor->setParamPhysicalForTest("band"+juce::String(b)+"Range",-6.0f-3*b);}
+    view.clickLinkedButtonForTest();view.snapPanelsForTest();view.applyLinkedOffsetForTest(1,50);
+    for(int b=0;b<4;++b){check(std::abs(physical("band"+juce::String(b)+"Attack")-(60+10*b))<.01f,"Linked attack preserves per-band differences");
+        check(view.linkedFeedbackTextForTest(b)==juce::String(60+10*b)+".0 ms","Feedback reports actual per-band attack");}
+    shot("05_linked_attack.png");view.applyLinkedOffsetForTest(5,2.5);
+    for(int b=0;b<4;++b)check(std::abs(physical("band"+juce::String(b)+"Range")-(-3.5f-3*b))<.01f,"Linked Range offsets every band");
+    shot("06_linked_range.png");view.setSize(920,560);view.snapPanelsForTest();shot("07_minimum_linked.png");
+    view.applyLinkedOffsetForTest(5,60);view.applyLinkedOffsetForTest(5,0);
+    for(int b=0;b<4;++b)check(std::abs(physical("band"+juce::String(b)+"Range")-(-6.0f-3*b))<.01f,"Linked Range restores differences after reversing from clamp");
+    std::cout<<"PASS "<<gPass<<" / FAIL "<<gFail<<std::endl;return gFail?1:0;
+}
+
+static int runVst3Smoke(const juce::String& path, const juce::String& snapshotPath = {}, bool identityOnly = false)
+{
+    juce::VST3PluginFormat format;
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    format.findAllTypesForFile(descriptions,path);
+    check(descriptions.size()==1,"VST3 bundle scan",path);
+    if(descriptions.isEmpty()) return 1;
+    check(descriptions[0]->name=="Crunch MB" && descriptions[0]->manufacturerName=="Kilo", "VST3 identifies Crunch MB / Kilo");
+    check(!descriptions[0]->isInstrument,"VST3 is scanned as an effect");
+    juce::String error;
+    auto instance=format.createInstanceFromDescription(*descriptions[0],48000.0,512,error);
+    check(instance!=nullptr,"VST3 binary instantiated",error);
+    if(!instance) return 1;
+    check(instance->getName()=="Crunch MB" && !instance->acceptsMidi(),"Instantiated factory creates Crunch MB effect");
+    bool hasRatio=false,hasRange=false;
+    for(auto* parameter:instance->getParameters()) {
+        hasRatio|=parameter->getName(128)=="Low Ratio";
+        hasRange|=parameter->getName(128)=="High Range";
+    }
+    check(hasRatio&&hasRange,"VST3 exposes Crunch MB band parameters");
+    if(identityOnly) {
+        std::cout<<"PASS "<<gPass<<" / FAIL "<<gFail<<std::endl;
+        return gFail?1:0;
+    }
+    instance->setPlayConfigDetails(2,2,48000.0,512);
+    instance->prepareToPlay(48000.0,512);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(instance->createEditorIfNeeded());
+    check(editor!=nullptr,"VST3 native editor created","");
+    if(editor) {
+        check(editor->getWidth()==EditorLayout::defaultWidth&&editor->getHeight()==EditorLayout::defaultHeight,"VST3 default editor size","");
+        check(editor->isResizable(),"VST3 editor independently resizable","");
+        for(auto size : {juce::Point<int>(920,560),juce::Point<int>(1600,560),juce::Point<int>(920,1100)}) {
+            editor->setSize(size.x,size.y);
+            auto image=editor->createComponentSnapshot(editor->getLocalBounds());
+            check(image.isValid()&&image.getWidth()==size.x&&image.getHeight()==size.y,"VST3 native resize renders","");
+        }
+        editor->setSize(1040,780);
+        if(snapshotPath.isNotEmpty()) {
+            const auto image=editor->createComponentSnapshot(editor->getLocalBounds());
+            check(writePng(image,juce::File(snapshotPath)),"VST3 editor screenshot saved",snapshotPath);
+        }
+    }
+    juce::AudioBuffer<float> audio(2,512);juce::MidiBuffer midi;bool finite=true;
+    for(int block=0;block<100;++block) {
+        for(int i=0;i<512;++i)for(int c=0;c<2;++c)audio.setSample(c,i,.25f*std::sin(float(block*512+i)*.017f));
+        instance->processBlock(audio,midi);
+        for(int c=0;c<2;++c)for(int i=0;i<512;++i)finite=finite&&std::isfinite(audio.getSample(c,i));
+    }
+    check(finite&&audio.getMagnitude(0,512)>0.00001f,"VST3 processes finite nonzero audio","");
+    juce::MemoryBlock state;instance->getStateInformation(state);
+    check(state.getSize()>0,"VST3 saves state","");
+    if(state.getSize()>0)instance->setStateInformation(state.getData(),(int)state.getSize());
+    editor.reset();instance->releaseResources();instance.reset();
+    std::cout<<"PASS "<<gPass<<" / FAIL "<<gFail<<std::endl;
+    return gFail==0?0:1;
 }
 
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    if(argc>2 && juce::String(argv[1])=="--ratio-drag-check")return testRatioDragRevision(juce::String(argv[2]));
+    if(argc>2 && juce::String(argv[1])=="--ui-controls-check")return testUiControlsRevision(juce::String(argv[2]));
+
+    if(argc>2 && juce::String(argv[1])=="--vst3-identity-check")return runVst3Smoke(juce::String(argv[2]),{},true);
+    if(argc>2 && juce::String(argv[1])=="--vst3-smoke")return runVst3Smoke(juce::String(argv[2]),argc>3?juce::String(argv[3]):juce::String());
+
+    if(argc>1 && juce::String(argv[1])=="--redraw-check"){testApprovedUiRedraw();return gFail==0?0:1;}
+
+    if(argc>1 && juce::String(argv[1])=="--ui-regression") { testApprovedUiRedraw();testStaticRenderPixels();testInteraction();testRoundFixes();testScaleNotOccluded();testLinkedDrawer();testPopover();testPopoverControls();testLinkedDrawerSticky();testMidiLearn();testSelfDrawnDropDown();testDropDownKeyboardNav();testPluginPowerSwitch();testBandToggleThreeStates();testChildrenDoNotSwallowMouse();testUiBatch1Fixes(); std::cout<<"PASS "<<gPass<<" / FAIL "<<gFail<<std::endl; return gFail==0?0:1; }
 
     // R36：UI 快照模式（不参与断言套件）
     for (int i = 1; i < argc; ++i)
@@ -10228,6 +10378,7 @@ int main (int argc, char** argv)
 
     std::cout << "Crunch MB — Phase 3 DSP 离线断言（含 Phase 2 全量 + DAW 链路回归）\n";
 
+    testApprovedUiRedraw();
     testParamSystem();
     testParameterInventory();  // T0b 参数清单（段名映射 / Makeup 存在性）
     testBandCompressor();

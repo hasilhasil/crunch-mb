@@ -100,7 +100,19 @@ namespace MBTheme
     // 各绘制点仍按设计稿写 px 字号，不必逐个去乘（也就不存在漏改的地方）。
     // 默认 1.0：离屏测试不设它，像素/几何断言因此保持确定性；
     // 编辑器构造时设成 kUiTextScale，用户看到的就是放大后的字号。
-    inline constexpr float kUiTextScale = 1.16f;
+    inline juce::Typeface::Ptr uiRegular()
+    {
+        static const auto face = juce::Typeface::createSystemTypefaceFor (
+            BinaryData::BarlowRegular_ttf, BinaryData::BarlowRegular_ttfSize);
+        return face;
+    }
+    inline juce::Typeface::Ptr uiMedium()
+    {
+        static const auto face = juce::Typeface::createSystemTypefaceFor (
+            BinaryData::BarlowMedium_ttf, BinaryData::BarlowMedium_ttfSize);
+        return face;
+    }
+    inline constexpr float kUiTextScale = 1.0f;
     inline float& textScaleRef() { static float s = 1.0f; return s; }
     inline void  setTextScale (float s) { textScaleRef() = juce::jlimit (0.5f, 3.0f, s); }
     inline float textScale() { return textScaleRef(); }

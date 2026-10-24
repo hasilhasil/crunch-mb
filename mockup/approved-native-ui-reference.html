@@ -1,0 +1,490 @@
+<div id="cmb-linked-layouts">
+    <section data-variant="置于顶栏" aria-label="联动按钮放在顶栏右侧，频谱底部完整">
+  <div class="cmb-plugin" data-theme="blue" data-width-mode="full" data-height-mode="regular" aria-label="Crunch MB 重绘界面设计">
+    <div class="cmb-workspace">
+      <canvas class="cmb-spectrum" role="img" aria-label="四频段 Pre 和 Post 频谱、动态响应和所选频段 Range 的示意画面"></canvas>
+      <header class="cmb-top">
+        <div class="cmb-brand"><span class="cmb-brand-dot"></span><span>CRUNCH <b>MB</b></span></div>
+        <button type="button" class="cmb-power cmb-small-button" aria-pressed="true" aria-label="插件电源"><i data-lucide="power" aria-hidden="true"></i></button>
+        <nav class="cmb-band-tabs" aria-label="选择频段"><button type="button" data-band="0">LOW</button><button type="button" data-band="1">LOW MID</button><button type="button" data-band="2" aria-pressed="true">HIGH MID</button><button type="button" data-band="3">HIGH</button></nav>
+        <button type="button" class="cmb-range cmb-small-button" data-action="range" aria-label="切换显示范围">±12 dB ▾</button>
+        
+      </header>
+      <div class="cmb-theme-menu" hidden><span>APPEARANCE</span><button type="button" data-theme-choice="blue">Blue <i></i></button><button type="button" data-theme-choice="red">Red <i></i></button><button type="button" data-theme-choice="cream">Cream <i></i></button></div>
+      <div class="cmb-band-actions" aria-label="当前频段监听"><button type="button" aria-pressed="false" data-listen="Solo">S</button><button type="button" aria-pressed="false" data-listen="Mute">M</button><button type="button" aria-pressed="false" data-listen="Bypass">B</button><button type="button" aria-pressed="false" data-listen="Delta">Δ</button></div>
+      <aside class="cmb-meters" aria-label="输入输出示意电平">
+        <div class="cmb-meter-head"><button type="button" class="cmb-settings cmb-small-button" data-action="settings" aria-label="切换主题颜色"><i data-lucide="palette" aria-hidden="true"></i></button></div>
+        <div class="cmb-meter-body"><div class="cmb-meter-track"><span class="cmb-meter-fill cmb-meter-in"></span><i class="cmb-peak cmb-peak-in"></i></div><div class="cmb-meter-track"><span class="cmb-meter-fill cmb-meter-out"></span><i class="cmb-peak cmb-peak-out"></i></div></div>
+        <div class="cmb-meter-values"><span>−9.7</span><span>−12.1</span></div>
+      </aside>
+      <section class="cmb-band-panel cmb-glass" aria-label="所选频段的六旋钮控制面板">
+        <div class="cmb-panel-pointer"></div>
+        <div class="cmb-panel-header"><span class="cmb-selected-dot"></span><strong class="cmb-band-name">HIGH MID</strong><span class="cmb-frequency">1.0k – 6.0k Hz</span><span class="cmb-header-spacer"></span><span class="cmb-panel-detail">BAND 03</span><button type="button" class="cmb-close" data-action="close" aria-label="关闭频段面板">×</button></div>
+        <div class="cmb-panel-body"><div class="cmb-knob-row"></div><button type="button" class="cmb-expert-tab" aria-expanded="false" data-action="expert"><span>EXPERT</span><span class="cmb-expert-chevron">›</span></button>
+          <div class="cmb-parameters"><div class="cmb-mode"><button type="button" aria-pressed="true" data-mode="Compress">COMPRESS</button><button type="button" aria-pressed="false" data-mode="Expand">EXPAND</button></div><label class="cmb-ratio-label">RATIO <input type="range" min="1" max="20" step="0.1" value="4" aria-label="压缩比"><output>4.0 : 1</output></label><label class="cmb-knee-label">KNEE <input type="range" min="0" max="48" step="0.1" value="6" aria-label="拐点宽度"><output>6.0 dB</output></label><div class="cmb-sc-source"><span>SIDECHAIN</span><button type="button" aria-pressed="true" data-sc="Internal">INT</button><button type="button" aria-pressed="false" data-sc="External">EXT</button></div></div>
+          <div class="cmb-expert-area" hidden><label>DETECTOR<select aria-label="检测器"><option>Peak</option><option>RMS</option></select></label><label>FILTERING<select class="cmb-filter-mode" aria-label="侧链滤波模式"><option>Band</option><option>Free</option></select></label><label>SC HIGH-PASS<input class="cmb-sc-low" type="number" min="20" max="2000" value="100" aria-label="侧链高通频率"></label><label>SC LOW-PASS<input class="cmb-sc-high" type="number" min="500" max="20000" value="5000" aria-label="侧链低通频率"></label><label class="cmb-stereo-label">STEREO LINK<input type="range" min="0" max="100" value="100" aria-label="立体声关联"><output>100%</output></label></div>
+        </div>
+      </section>
+      <section class="cmb-linked-panel cmb-glass" aria-label="四段联动控制面板" hidden><div class="cmb-linked-header"><div><strong>LINKED CONTROL</strong><span>四段联动</span></div><button type="button" class="cmb-close" data-action="close" aria-label="关闭联动面板">×</button></div><div class="cmb-linked-knobs"></div><div class="cmb-linked-caption"><span>THRESHOLD / ATTACK / RELEASE / MAKEUP · Δ 线性偏移</span><span>MIX · 四段统一设为</span></div></section>
+      <section class="cmb-analyzer-panel cmb-glass" aria-label="频谱设置" hidden><div class="cmb-option-heading">ANALYZER<button type="button" class="cmb-close" data-action="close" aria-label="关闭频谱设置">×</button></div><div class="cmb-analyzer-toggles"><button type="button" data-spectrum="pre" aria-pressed="true">PRE</button><button type="button" data-spectrum="post" aria-pressed="true">POST</button><button type="button" class="cmb-freeze" aria-pressed="false">FREEZE</button></div><label>Resolution<select aria-label="频谱精度"><option>2048</option><option>4096</option><option>8192</option></select></label><label>Speed<select aria-label="频谱速度"><option>Medium</option><option>Fast</option><option>Slow</option></select></label><label>Tilt<select aria-label="频谱倾斜"><option>3 dB/oct</option><option>0 dB/oct</option><option>4.5 dB/oct</option></select></label></section>
+      <section class="cmb-output-panel cmb-glass" aria-label="全局输出设置" hidden><div class="cmb-option-heading">INPUT / OUTPUT<button type="button" class="cmb-close" data-action="close" aria-label="关闭输入输出设置">×</button></div><label>Input Gain <span><input type="number" step="0.1" min="-36" max="36" value="0.0" aria-label="全局输入增益">dB</span></label><label>Output Gain <span><input type="number" step="0.1" min="-36" max="36" value="0.0" aria-label="全局输出增益">dB</span></label><label>Global Mix <span><input type="number" step="1" min="0" max="200" value="100" aria-label="全局混合">%</span></label><label class="cmb-auto-label">Auto Gain <button type="button" aria-pressed="false">OFF</button></label><label>Monitor<select aria-label="信号试听"><option>Output</option><option>Input</option><option>Band 1</option><option>Band 2</option><option>Band 3</option><option>Band 4</option><option>Gain Reduction</option></select></label></section>
+      <button type="button" class="cmb-linked-trigger" data-action="linked" aria-label="四段联动控制" aria-expanded="false"><i data-lucide="link-2" aria-hidden="true"></i><span>LINKED CONTROL</span><span class="cmb-trigger-note">四段联动</span><span>⌃</span></button>
+    </div>
+    <footer class="cmb-bottom"><label class="cmb-phase"><span>PHASE</span><select aria-label="相位模式"><option>Natural Phase</option><option>Minimal Phase</option><option>Linear Phase</option></select></label><label><span>SLOPE</span><select aria-label="分频斜率"><option>24 dB/oct</option><option>12 dB/oct</option><option>36 dB/oct</option><option>48 dB/oct</option></select></label><label><span>QUALITY</span><select aria-label="线性相位质量"><option>Medium</option><option>Low</option><option>High</option></select></label><label><span>LOOKAHEAD</span><select aria-label="全局前瞻"><option>Off</option><option>1 ms</option><option>3 ms</option></select></label><label><span>OVERSAMPLING</span><select aria-label="过采样"><option>Off</option><option>2×</option><option>4×</option></select></label><button type="button" data-action="analyzer" class="cmb-bottom-button" aria-expanded="false"><i data-lucide="audio-lines" aria-hidden="true"></i><span>Analyzer</span></button><button type="button" data-action="output" class="cmb-bottom-button" aria-expanded="false"><span>OUT</span><strong>0.0 dB</strong></button><button type="button" class="cmb-bypass" aria-pressed="false">BYPASS</button></footer>
+    <button type="button" class="cmb-resize-grip" aria-label="调整界面尺寸：左右方向键改变宽度，上下方向键改变高度"><span aria-hidden="true">◢</span></button>
+    <span class="cmb-announcer" aria-live="polite"></span>
+  </div>
+    </section>
+</div>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500&family=Barlow:wght@400;500&display=swap');
+#cmb-linked-layouts{width:100%;background:transparent}
+#cmb-linked-layouts *{box-sizing:border-box}
+#cmb-linked-layouts .cmb-plugin{--cmb-bg:#101214;--cmb-panel:#1a1d20;--cmb-surface:#22262b;--cmb-surfaceA:rgba(34,38,43,.84);--cmb-popA:rgba(34,38,43,.62);--cmb-track:#2a2e33;--cmb-knob:#f2efe8;--cmb-text:#d8d8d8;--cmb-dim:#9aa0a6;--cmb-grid:#22262b;--cmb-gridZ:#3c4249;--cmb-meterBg:#16181b;--cmb-inFill:#6a7076;--cmb-outLevel:#e8eaed;--cmb-accent:#2f9dff;--cmb-shadow:rgba(0,0,0,.48);position:relative;isolation:isolate;width:100%;background:var(--cmb-bg);color:var(--cmb-text);border:1px solid var(--cmb-gridZ);border-radius:10px;font:400 12px/1.4 Poppins,'Segoe UI',sans-serif;overflow:hidden;color-scheme:dark}
+#cmb-linked-layouts .cmb-plugin[data-theme=red]{--cmb-accent:#e05b5b}
+#cmb-linked-layouts .cmb-plugin[data-theme=cream]{--cmb-bg:#f6f0e7;--cmb-panel:#efe8db;--cmb-surface:#fffdf8;--cmb-surfaceA:rgba(255,253,248,.86);--cmb-popA:rgba(255,253,248,.68);--cmb-track:#ded4c4;--cmb-knob:#ffffff;--cmb-text:#463f38;--cmb-dim:#8d8375;--cmb-grid:#e7dfcf;--cmb-gridZ:#c8bdac;--cmb-meterBg:#f2ebdf;--cmb-inFill:#b5aa98;--cmb-outLevel:#703c2b;--cmb-accent:#e07856;--cmb-shadow:rgba(80,60,40,.25);color-scheme:light}
+#cmb-linked-layouts button,#cmb-linked-layouts input,#cmb-linked-layouts select{font:inherit;color:inherit}
+#cmb-linked-layouts button{border:0;background:transparent;cursor:default}
+#cmb-linked-layouts button:hover{color:var(--cmb-accent)}
+#cmb-linked-layouts button:focus-visible,#cmb-linked-layouts select:focus-visible,#cmb-linked-layouts input:focus-visible{outline:2px solid var(--cmb-accent);outline-offset:3px}
+#cmb-linked-layouts button[aria-pressed=true]{color:var(--cmb-accent)}
+#cmb-linked-layouts svg[data-lucide]{width:16px;height:16px;stroke-width:1.6;flex-shrink:0}
+#cmb-linked-layouts [hidden]{display:none!important}
+#cmb-linked-layouts strong,#cmb-linked-layouts b{font-weight:500}
+#cmb-linked-layouts .cmb-workspace{height:570px;position:relative}
+#cmb-linked-layouts .cmb-spectrum{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+#cmb-linked-layouts .cmb-top{position:absolute;inset:0 0 auto;height:46px;display:flex;align-items:center;gap:12px;padding:0 56px 0 17px;background:var(--cmb-surfaceA);backdrop-filter:blur(14px);border-bottom:1px solid color-mix(in srgb,var(--cmb-gridZ) 65%,transparent);z-index:6}
+#cmb-linked-layouts .cmb-brand{display:flex;align-items:center;gap:9px;white-space:nowrap;font-size:16px;letter-spacing:.4px}
+#cmb-linked-layouts .cmb-brand b{color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-brand-dot,#cmb-linked-layouts .cmb-selected-dot{width:6px;height:6px;border-radius:50%;background:var(--cmb-accent);flex-shrink:0}
+#cmb-linked-layouts .cmb-small-button{display:flex;align-items:center;justify-content:center;border-radius:7px;min-width:30px;height:28px;color:var(--cmb-dim);white-space:nowrap}
+#cmb-linked-layouts .cmb-power{background:var(--cmb-track);margin-right:6px}
+#cmb-linked-layouts .cmb-band-tabs{display:flex;gap:3px;margin:0 auto}
+#cmb-linked-layouts .cmb-band-tabs button{padding:6px 12px;font-size:11px;white-space:nowrap;border-radius:5px}
+#cmb-linked-layouts .cmb-band-tabs button[aria-pressed=true]{background:color-mix(in srgb,var(--cmb-accent) 13%,transparent);box-shadow:inset 0 -2px var(--cmb-accent)}
+#cmb-linked-layouts .cmb-range{font-variant-numeric:tabular-nums}
+#cmb-linked-layouts .cmb-settings{margin-left:2px}
+#cmb-linked-layouts .cmb-theme-menu{position:absolute;right:60px;top:48px;width:170px;padding:12px;background:var(--cmb-surface);border:1px solid var(--cmb-gridZ);border-radius:9px;z-index:20;box-shadow:0 10px 30px var(--cmb-shadow)}
+#cmb-linked-layouts .cmb-theme-menu>span{display:block;color:var(--cmb-dim);font-size:11px;margin-bottom:7px}
+#cmb-linked-layouts .cmb-theme-menu button{display:flex;justify-content:space-between;align-items:center;width:100%;padding:9px;border-radius:4px}
+#cmb-linked-layouts .cmb-theme-menu button[aria-pressed=true]{background:var(--cmb-track)}
+#cmb-linked-layouts .cmb-theme-menu i{width:8px;height:8px;border-radius:50%;background:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-band-actions{position:absolute;display:flex;gap:3px;top:90px;left:59%;z-index:3}
+#cmb-linked-layouts .cmb-band-actions button{width:27px;height:27px;background:var(--cmb-surfaceA);border:1px solid var(--cmb-gridZ);border-radius:5px;color:var(--cmb-dim);font-size:11px}
+#cmb-linked-layouts .cmb-band-actions button[aria-pressed=true]{background:color-mix(in srgb,var(--cmb-accent) 24%,var(--cmb-surface));color:var(--cmb-text)}
+#cmb-linked-layouts .cmb-meters{position:absolute;right:0;top:0;bottom:0;width:44px;background:color-mix(in srgb,var(--cmb-panel) 67%,transparent);border-left:1px solid var(--cmb-gridZ);padding:0 5px;z-index:7;display:flex;flex-direction:column;gap:8px}
+#cmb-linked-layouts .cmb-meter-head{display:flex;justify-content:space-between;height:46px;align-items:center;font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-meter-body{flex:1;display:flex;justify-content:space-between;gap:5px;position:relative;background:repeating-linear-gradient(to top,transparent 0,transparent calc(20% - 1px),var(--cmb-gridZ) calc(20% - 1px),var(--cmb-gridZ) 20%)}
+#cmb-linked-layouts .cmb-meter-track{width:13px;background:var(--cmb-meterBg);height:100%;position:relative;overflow:hidden}
+#cmb-linked-layouts .cmb-meter-fill{position:absolute;bottom:0;width:100%;height:78%}
+#cmb-linked-layouts .cmb-meter-in{background:var(--cmb-inFill);opacity:.65}
+#cmb-linked-layouts .cmb-meter-out{height:73%;background:linear-gradient(to top,var(--cmb-accent),var(--cmb-outLevel))}
+#cmb-linked-layouts .cmb-peak{position:absolute;width:100%;height:2px;background:var(--cmb-outLevel);bottom:83%}
+#cmb-linked-layouts .cmb-peak-out{bottom:78%}
+#cmb-linked-layouts .cmb-meter-values{display:flex;justify-content:space-between;font-size:11px;letter-spacing:-.7px;margin:0 -3px 9px;font-variant-numeric:tabular-nums}
+#cmb-linked-layouts .cmb-glass{background:var(--cmb-popA);backdrop-filter:blur(22px) saturate(.6);-webkit-backdrop-filter:blur(22px) saturate(.6);border:1px solid var(--cmb-gridZ);box-shadow:0 18px 40px var(--cmb-shadow),0 4px 10px var(--cmb-shadow),inset 0 1px color-mix(in srgb,var(--cmb-text) 7%,transparent);border-radius:13px}
+#cmb-linked-layouts .cmb-band-panel,#cmb-linked-layouts .cmb-linked-panel{background:rgba(26,29,32,.46);backdrop-filter:blur(7px) saturate(.88);-webkit-backdrop-filter:blur(7px) saturate(.88)}
+#cmb-linked-layouts .cmb-plugin[data-theme=cream] .cmb-band-panel,#cmb-linked-layouts .cmb-plugin[data-theme=cream] .cmb-linked-panel{background:rgba(255,253,248,.58)}
+#cmb-linked-layouts .cmb-band-panel .cmb-panel-pointer{background:rgba(26,29,32,.72)}
+#cmb-linked-layouts .cmb-plugin[data-theme=cream] .cmb-band-panel .cmb-panel-pointer{background:rgba(255,253,248,.78)}
+#cmb-linked-layouts .cmb-band-panel{position:absolute;bottom:71px;width:min(690px,calc(100% - 105px));left:16%;z-index:5;transition:opacity .15s}
+#cmb-linked-layouts .cmb-panel-pointer{position:absolute;left:55%;top:-6px;width:11px;height:11px;background:var(--cmb-surface);border-left:1px solid var(--cmb-gridZ);border-top:1px solid var(--cmb-gridZ);transform:rotate(45deg)}
+#cmb-linked-layouts .cmb-panel-header{height:37px;display:flex;align-items:center;gap:9px;padding:0 12px 0 15px;border-bottom:1px solid color-mix(in srgb,var(--cmb-gridZ) 65%,transparent);background:color-mix(in srgb,var(--cmb-surface) 40%,transparent);border-radius:13px 13px 0 0}
+#cmb-linked-layouts .cmb-band-name{font-size:12px;letter-spacing:.4px}
+#cmb-linked-layouts .cmb-frequency{font-size:11px;color:var(--cmb-dim);font-variant-numeric:tabular-nums}
+#cmb-linked-layouts .cmb-header-spacer{flex:1}
+#cmb-linked-layouts .cmb-panel-detail{font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-close{font-size:22px;width:27px;height:27px;border-radius:5px;display:grid;place-content:center;color:var(--cmb-dim);padding:0}
+#cmb-linked-layouts .cmb-close:hover{background:var(--cmb-track)}
+#cmb-linked-layouts .cmb-panel-body{position:relative;padding:13px 40px 14px 15px}
+#cmb-linked-layouts .cmb-knob-row{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+#cmb-linked-layouts .cmb-control{text-align:center;min-width:0}
+#cmb-linked-layouts .cmb-control-label{font-size:11px;color:var(--cmb-dim);letter-spacing:.25px;white-space:nowrap}
+#cmb-linked-layouts .cmb-dial{width:65px;height:65px;position:relative;margin:6px auto 5px;border-radius:50%;background:var(--cmb-gauge,conic-gradient(from 225deg,var(--cmb-accent) var(--cmb-sweep),var(--cmb-track) var(--cmb-sweep),var(--cmb-track) 270deg,transparent 270deg));box-shadow:0 1px 0 color-mix(in srgb,var(--cmb-text) 10%,transparent)}
+#cmb-linked-layouts .cmb-dial::before{content:'';position:absolute;inset:5px;border-radius:50%;background:var(--cmb-surface)}
+#cmb-linked-layouts .cmb-dial::after{content:'';position:absolute;inset:10px;border-radius:50%;background:linear-gradient(145deg,var(--cmb-knob),color-mix(in srgb,var(--cmb-knob) 85%,var(--cmb-dim)));box-shadow:inset 0 1px 1px color-mix(in srgb,var(--cmb-knob) 80%,transparent),0 3px 5px var(--cmb-shadow);pointer-events:none}
+#cmb-linked-layouts .cmb-dial-needle{position:absolute;inset:10px;transform:rotate(var(--cmb-angle));z-index:2;pointer-events:none}
+#cmb-linked-layouts .cmb-dial-needle::before{content:'';display:block;position:absolute;left:calc(50% - 1.5px);top:3px;width:3px;height:15px;background:#343a40;border-radius:2px}
+#cmb-linked-layouts .cmb-dial:hover{filter:brightness(1.06)}
+#cmb-linked-layouts .cmb-dial:active::after{box-shadow:inset 0 2px 4px var(--cmb-shadow)}
+#cmb-linked-layouts .cmb-dial input{position:absolute;inset:0;margin:0;width:100%;height:100%;opacity:0;z-index:3;cursor:ns-resize;touch-action:none}
+#cmb-linked-layouts .cmb-dial:focus-within{outline:2px solid var(--cmb-accent);outline-offset:3px}
+#cmb-linked-layouts .cmb-control-number{display:flex;align-items:baseline;justify-content:center;gap:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+#cmb-linked-layouts .cmb-control-number input{width:53px;max-width:70%;text-align:right;background:transparent;border:0;border-bottom:1px solid transparent;font-size:14px;padding:2px 0;min-width:0;appearance:textfield}
+#cmb-linked-layouts input::-webkit-inner-spin-button{appearance:none}
+#cmb-linked-layouts .cmb-control-number input:focus{border-color:var(--cmb-accent);background:var(--cmb-surface)}
+#cmb-linked-layouts .cmb-control-number span{font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-expert-tab{position:absolute;right:4px;top:11px;bottom:12px;width:27px;display:flex;align-items:center;justify-content:center;gap:10px;writing-mode:vertical-rl;font-size:11px;letter-spacing:1px;border-radius:6px;background:var(--cmb-track);color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-expert-tab[aria-expanded=true]{background:color-mix(in srgb,var(--cmb-accent) 18%,var(--cmb-track));color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-expert-chevron{font-size:18px}
+#cmb-linked-layouts .cmb-parameters{margin-top:13px;border-top:1px solid color-mix(in srgb,var(--cmb-gridZ) 70%,transparent);padding-top:12px;display:grid;grid-template-columns:1fr 1.15fr;gap:11px 22px;align-items:center}
+#cmb-linked-layouts .cmb-mode{display:flex;border:1px solid var(--cmb-gridZ);border-radius:6px;overflow:hidden;height:28px}
+#cmb-linked-layouts .cmb-mode button{flex:1;font-size:11px;padding:0 5px}
+#cmb-linked-layouts .cmb-mode button[aria-pressed=true]{background:var(--cmb-accent);color:var(--cmb-bg)}
+#cmb-linked-layouts .cmb-parameters label{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts input[type=range]{accent-color:var(--cmb-accent);min-width:0}
+#cmb-linked-layouts .cmb-parameters input[type=range]{width:100%;flex:1;height:3px;margin:0}
+#cmb-linked-layouts .cmb-parameters output{color:var(--cmb-text);white-space:nowrap;min-width:49px;text-align:right;font-variant-numeric:tabular-nums}
+#cmb-linked-layouts .cmb-sc-source{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-sc-source>span{margin-right:auto}
+#cmb-linked-layouts .cmb-sc-source button{padding:3px 12px;border-radius:4px}
+#cmb-linked-layouts .cmb-sc-source button[aria-pressed=true]{background:var(--cmb-track);color:var(--cmb-text)}
+#cmb-linked-layouts .cmb-expert-area{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:15px;padding-top:13px;border-top:1px solid var(--cmb-gridZ)}
+#cmb-linked-layouts .cmb-expert-area label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-expert-area select,#cmb-linked-layouts .cmb-expert-area input[type=number]{background:var(--cmb-surface);border:1px solid var(--cmb-gridZ);border-radius:4px;width:100%;padding:5px;color:var(--cmb-text)}
+#cmb-linked-layouts .cmb-stereo-label{grid-column:1/-1;display:grid!important;grid-template-columns:100px 1fr 42px;align-items:center}
+#cmb-linked-layouts .cmb-stereo-label output{color:var(--cmb-text);text-align:right}
+#cmb-linked-layouts .cmb-linked-trigger{position:absolute;bottom:0;left:50%;transform:translateX(-50%);height:31px;width:min(380px,70%);display:flex;align-items:center;justify-content:center;gap:10px;background:var(--cmb-surfaceA);backdrop-filter:blur(14px);border:1px solid var(--cmb-gridZ);border-bottom:0;border-radius:12px 12px 0 0;font-size:11px;z-index:8;box-shadow:0 -4px 12px color-mix(in srgb,var(--cmb-shadow) 40%,transparent)}
+#cmb-linked-layouts .cmb-linked-trigger[aria-expanded=true]{background:var(--cmb-track);box-shadow:inset 0 2px 7px var(--cmb-shadow);color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-trigger-note{color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-linked-panel{position:absolute;left:6%;right:calc(6% + 44px);bottom:65px;padding:0 15px 12px;z-index:5}
+#cmb-linked-layouts .cmb-linked-header{height:45px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--cmb-gridZ);margin-bottom:15px}
+#cmb-linked-layouts .cmb-linked-header>div{flex:1;display:flex;gap:12px;align-items:baseline}
+#cmb-linked-layouts .cmb-linked-header strong{color:var(--cmb-accent);letter-spacing:.5px}
+#cmb-linked-layouts .cmb-linked-header span{font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-lock{display:flex;align-items:center;gap:6px;border:1px solid var(--cmb-gridZ);padding:5px 10px;border-radius:5px}
+#cmb-linked-layouts .cmb-lock[aria-pressed=true]{background:color-mix(in srgb,var(--cmb-accent) 17%,var(--cmb-surface));box-shadow:inset 0 2px 5px var(--cmb-shadow);border-color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-lock[aria-pressed=true] span{color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-linked-knobs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+#cmb-linked-layouts .cmb-linked-caption{display:flex;justify-content:space-between;gap:10px;margin-top:13px;padding-top:10px;border-top:1px solid var(--cmb-gridZ);font-size:11px;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-analyzer-panel,#cmb-linked-layouts .cmb-output-panel{position:absolute;bottom:16px;right:66px;width:272px;z-index:10;padding:13px 15px;background:var(--cmb-surfaceA)}
+#cmb-linked-layouts .cmb-option-heading{display:flex;justify-content:space-between;align-items:center;letter-spacing:.4px;margin-bottom:9px}
+#cmb-linked-layouts .cmb-analyzer-toggles{display:flex;gap:5px;margin-bottom:9px}
+#cmb-linked-layouts .cmb-analyzer-toggles button{padding:6px 10px;border-radius:5px;background:var(--cmb-track);font-size:11px}
+#cmb-linked-layouts .cmb-analyzer-panel label,#cmb-linked-layouts .cmb-output-panel label{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:7px 0;color:var(--cmb-dim)}
+#cmb-linked-layouts .cmb-analyzer-panel select,#cmb-linked-layouts .cmb-output-panel select{max-width:135px;background:var(--cmb-track);color:var(--cmb-text);border:0;border-radius:4px;padding:5px;font-size:12px}
+#cmb-linked-layouts .cmb-output-panel label>span{display:flex;align-items:baseline;gap:6px;font-size:11px}
+#cmb-linked-layouts .cmb-output-panel input{width:68px;padding:4px 6px;text-align:right;background:var(--cmb-track);border:0;border-radius:4px;color:var(--cmb-text);font-variant-numeric:tabular-nums}
+#cmb-linked-layouts .cmb-auto-label button{padding:4px 12px;background:var(--cmb-track);border-radius:4px;font-size:11px}
+#cmb-linked-layouts .cmb-bottom{min-height:58px;display:grid;grid-template-columns:1.55fr 1.12fr .98fr .95fr 1.03fr 1.1fr 1.08fr .88fr;align-items:center;padding:7px 9px;gap:7px;background:var(--cmb-surfaceA);border-top:1px solid var(--cmb-gridZ);position:relative;z-index:9}
+#cmb-linked-layouts .cmb-bottom>label{display:flex;flex-direction:column;gap:1px;min-width:0;padding-left:6px}
+#cmb-linked-layouts .cmb-bottom>label>span{font-size:11px;color:var(--cmb-dim);white-space:nowrap;letter-spacing:-.15px}
+#cmb-linked-layouts .cmb-bottom select{width:100%;min-width:0;border:0;background:transparent;font-size:12px;padding:2px 0;color:var(--cmb-text)}
+#cmb-linked-layouts option{background:var(--cmb-surface);color:var(--cmb-text)}
+#cmb-linked-layouts .cmb-bottom-button{display:flex;justify-content:center;align-items:center;gap:7px;padding:7px 3px;min-height:33px;background:var(--cmb-track);border-radius:6px;font-size:11px;white-space:nowrap}
+#cmb-linked-layouts .cmb-bottom-button[aria-expanded=true]{box-shadow:inset 0 2px 6px var(--cmb-shadow);color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-bottom-button strong{font-size:11px;font-variant-numeric:tabular-nums}
+#cmb-linked-layouts .cmb-bypass{padding:9px 2px;background:var(--cmb-track);border-radius:6px;font-size:11px}
+#cmb-linked-layouts .cmb-bypass[aria-pressed=true]{background:color-mix(in srgb,var(--cmb-accent) 24%,var(--cmb-track));box-shadow:inset 0 2px 6px var(--cmb-shadow)}
+#cmb-linked-layouts .cmb-announcer{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+#cmb-linked-layouts .cmb-plugin.cmb-off .cmb-spectrum{opacity:.4}
+@media(max-width:800px){#cmb-linked-layouts .cmb-top{gap:7px;padding-left:12px}#cmb-linked-layouts .cmb-brand{font-size:14px}#cmb-linked-layouts .cmb-band-tabs button{padding:6px 7px}#cmb-linked-layouts .cmb-bottom{grid-template-columns:1.4fr 1.15fr 1fr 1fr;gap:8px;padding:8px 10px}#cmb-linked-layouts .cmb-bottom>label:nth-child(5){grid-column:auto}#cmb-linked-layouts .cmb-band-panel{width:calc(100% - 82px)}#cmb-linked-layouts .cmb-dial{width:59px;height:59px}#cmb-linked-layouts .cmb-workspace{height:570px}#cmb-linked-layouts .cmb-panel-body{padding-left:10px}#cmb-linked-layouts .cmb-control-label{letter-spacing:-.4px}#cmb-linked-layouts .cmb-control-number input{font-size:13px}#cmb-linked-layouts .cmb-panel-detail{display:none}}
+@media(max-width:580px){#cmb-linked-layouts .cmb-workspace{height:690px}#cmb-linked-layouts .cmb-top{height:88px;align-content:center;flex-wrap:wrap;column-gap:10px;row-gap:2px;padding-right:50px}#cmb-linked-layouts .cmb-brand{flex:1}#cmb-linked-layouts .cmb-band-tabs{order:5;width:100%;justify-content:space-between}#cmb-linked-layouts .cmb-band-tabs button{flex:1;padding:5px 3px}#cmb-linked-layouts .cmb-power{margin:0}#cmb-linked-layouts .cmb-settings{margin:0}#cmb-linked-layouts .cmb-range{font-size:11px}#cmb-linked-layouts .cmb-meters{width:38px;padding:0 4px}#cmb-linked-layouts .cmb-meter-head{height:88px;font-size:11px;gap:2px}#cmb-linked-layouts .cmb-meter-track{width:11px}#cmb-linked-layouts .cmb-meter-values{font-size:11px;letter-spacing:-1px;margin-left:-2px;margin-right:-2px}#cmb-linked-layouts .cmb-band-panel{width:calc(100% - 58px);bottom:69px}#cmb-linked-layouts .cmb-panel-header{padding-left:10px;gap:5px}#cmb-linked-layouts .cmb-band-name{font-size:11px}#cmb-linked-layouts .cmb-frequency{font-size:11px;letter-spacing:-.5px}#cmb-linked-layouts .cmb-knob-row{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:14px}#cmb-linked-layouts .cmb-panel-body{padding-right:29px;padding-top:10px}#cmb-linked-layouts .cmb-dial{width:59px;height:59px;margin-top:4px}#cmb-linked-layouts .cmb-expert-tab{width:20px;right:3px}#cmb-linked-layouts .cmb-parameters{grid-template-columns:1fr;gap:12px;padding-top:11px;margin-top:11px}#cmb-linked-layouts .cmb-expert-area{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}#cmb-linked-layouts .cmb-stereo-label{grid-template-columns:80px 1fr 34px}#cmb-linked-layouts .cmb-bottom{grid-template-columns:1.3fr 1fr 1fr;padding:9px 7px;gap:9px 5px}#cmb-linked-layouts .cmb-bottom-button{font-size:11px}#cmb-linked-layouts .cmb-bottom>label>span{font-size:11px;letter-spacing:-.5px}#cmb-linked-layouts .cmb-linked-trigger{width:calc(100% - 92px);left:calc(50% - 19px);gap:7px;font-size:11px}#cmb-linked-layouts .cmb-trigger-note{display:none}#cmb-linked-layouts .cmb-linked-panel{left:10px;right:48px}#cmb-linked-layouts .cmb-linked-header>div{flex-direction:column;gap:0}#cmb-linked-layouts .cmb-linked-knobs{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 5px}#cmb-linked-layouts .cmb-linked-caption{flex-direction:column;font-size:11px}#cmb-linked-layouts .cmb-linked-header strong{font-size:11px}#cmb-linked-layouts .cmb-lock{padding:4px 6px;gap:4px}#cmb-linked-layouts .cmb-analyzer-panel,#cmb-linked-layouts .cmb-output-panel{right:48px;width:calc(100% - 58px);max-width:272px}#cmb-linked-layouts .cmb-theme-menu{top:88px;right:48px}#cmb-linked-layouts .cmb-panel-header .cmb-header-spacer{min-width:0}}
+@media(prefers-reduced-motion:reduce){#cmb-linked-layouts .cmb-band-panel{transition:none}}
+@media(max-width:580px){#cmb-linked-layouts .cmb-plugin:has(.cmb-expert-tab[aria-expanded=true]) .cmb-workspace{height:840px}}
+/* More spectrum space; preserve the established controls and type sizes. */
+#cmb-linked-layouts .cmb-workspace{height:650px}
+#cmb-linked-layouts .cmb-band-panel{bottom:61px;width:min(630px,calc(100% - 105px))}
+#cmb-linked-layouts .cmb-panel-header{height:33px}
+#cmb-linked-layouts .cmb-panel-body{padding-top:10px;padding-bottom:10px}
+#cmb-linked-layouts .cmb-dial{margin-top:4px;margin-bottom:4px}
+#cmb-linked-layouts .cmb-parameters{margin-top:9px;padding-top:9px;row-gap:8px}
+#cmb-linked-layouts .cmb-bottom{min-height:50px;padding-top:5px;padding-bottom:5px}
+#cmb-linked-layouts .cmb-linked-trigger{height:28px}
+@media(max-width:800px){#cmb-linked-layouts .cmb-workspace{height:640px}#cmb-linked-layouts .cmb-band-panel{width:min(630px,calc(100% - 82px))}}
+@media(max-width:580px){#cmb-linked-layouts .cmb-workspace{height:760px}#cmb-linked-layouts .cmb-plugin:has(.cmb-expert-tab[aria-expanded=true]) .cmb-workspace{height:900px}#cmb-linked-layouts .cmb-band-panel{width:calc(100% - 58px)}#cmb-linked-layouts .cmb-bottom{padding-top:8px;padding-bottom:8px}}
+
+/* The spectrum now reaches the left housing edge, the meter's inner edge,
+   and the global strip without a bottom-center interruption. */
+#cmb-linked-layouts .viz-carousel > section { width:100%; }
+#cmb-linked-layouts .cmb-spectrum { display:block; }
+#cmb-linked-layouts .cmb-bottom { border-top-color:var(--cmb-gridZ); }
+#cmb-linked-layouts [data-variant="融入底栏"] .cmb-bottom {
+  grid-template-columns:142px minmax(110px,1.3fr) minmax(88px,1fr) minmax(81px,.9fr) minmax(78px,.85fr) minmax(95px,1fr) minmax(90px,1fr) minmax(95px,1fr) minmax(70px,.8fr);
+  gap:5px;
+}
+#cmb-linked-layouts [data-variant="融入底栏"] .cmb-linked-trigger {
+  position:static;transform:none;left:auto;bottom:auto;width:100%;height:36px;
+  border:1px solid var(--cmb-gridZ);border-radius:6px;background:var(--cmb-track);
+  backdrop-filter:none;box-shadow:none;gap:6px;padding:0 6px;white-space:nowrap;
+  font-size:11px;justify-content:center;
+}
+#cmb-linked-layouts [data-variant="融入底栏"] .cmb-trigger-note { display:none; }
+#cmb-linked-layouts [data-variant="融入底栏"] .cmb-linked-trigger>span:last-child { margin-left:auto; }
+#cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger {
+  position:static;transform:none;left:auto;bottom:auto;width:145px;height:30px;
+  border:1px solid var(--cmb-gridZ);border-radius:6px;background:var(--cmb-track);
+  backdrop-filter:none;box-shadow:none;gap:6px;padding:0 7px;white-space:nowrap;
+  font-size:11px;justify-content:center;flex:none;
+}
+#cmb-linked-layouts [data-variant="置于顶栏"] .cmb-trigger-note { display:none; }
+#cmb-linked-layouts [data-variant="图内侧签"] .cmb-linked-trigger {
+  left:12px;top:93px;bottom:auto;transform:none;width:151px;height:31px;
+  border:1px solid var(--cmb-gridZ);border-radius:6px;
+  background:var(--cmb-surfaceA);backdrop-filter:blur(14px);
+  box-shadow:0 3px 12px var(--cmb-shadow);gap:6px;padding:0 7px;
+  font-size:11px;justify-content:center;
+}
+#cmb-linked-layouts [data-variant="图内侧签"] .cmb-trigger-note { display:none; }
+@media (max-width:800px) {
+  #cmb-linked-layouts [data-variant="融入底栏"] .cmb-bottom { grid-template-columns:repeat(4,minmax(0,1fr));gap:7px; }
+  #cmb-linked-layouts [data-variant="融入底栏"] .cmb-linked-trigger { grid-column:span 2; }
+  #cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger { width:112px;font-size:10px; }
+}
+@media (max-width:580px) {
+  #cmb-linked-layouts [data-variant="融入底栏"] .cmb-bottom { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  #cmb-linked-layouts [data-variant="融入底栏"] .cmb-linked-trigger { grid-column:span 3; }
+  #cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger { width:32px;min-width:32px;padding:0;order:4; }
+  #cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger>span { display:none; }
+  #cmb-linked-layouts [data-variant="图内侧签"] .cmb-linked-trigger { top:148px;left:9px;width:135px; }
+}
+
+
+/* Keep the established type choices in the top and Global bars. */
+#cmb-linked-layouts .cmb-top,#cmb-linked-layouts .cmb-bottom{font-family:Barlow,Poppins,'Segoe UI',sans-serif}
+/* Wide desktop layout with a single-row Global bar. */
+#cmb-linked-layouts{width:100%;max-width:1120px;margin-inline:auto}
+#cmb-linked-layouts .cmb-bottom{
+  display:grid;height:54px;min-height:54px;
+  grid-template-columns:minmax(0,1.7fr) minmax(0,1.18fr) minmax(0,1.18fr) minmax(0,1.25fr) minmax(0,1.38fr) minmax(0,.95fr) minmax(0,1.05fr) minmax(0,.76fr);
+  align-items:center;gap:8px;padding:7px 14px;overflow:hidden;
+}
+#cmb-linked-layouts .cmb-bottom>label{
+  display:flex;flex-direction:row;align-items:center;gap:7px;
+  min-width:0;padding-left:0;white-space:nowrap;
+}
+#cmb-linked-layouts .cmb-bottom>label>span{flex:none}
+#cmb-linked-layouts .cmb-bottom>label:nth-child(5){padding-right:12px;border-right:1px solid var(--cmb-gridZ)}
+#cmb-linked-layouts .cmb-bottom select{flex:1;width:0;min-width:0;padding:2px 0;font-size:12px}
+#cmb-linked-layouts .cmb-bottom-button,
+#cmb-linked-layouts .cmb-bypass{height:34px;min-height:34px;padding:5px 7px;gap:5px;white-space:nowrap}
+#cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger{width:160px;min-width:160px;padding:0 12px;gap:6px}
+#cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger>span:last-child{display:none}
+@media(max-width:800px){
+  #cmb-linked-layouts .cmb-bottom{
+    grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(0,.85fr) minmax(0,.9fr) minmax(0,.7fr);
+    gap:4px;padding:7px 8px;overflow:hidden;
+  }
+  #cmb-linked-layouts .cmb-bottom>label{gap:4px}
+  #cmb-linked-layouts .cmb-bottom>label:nth-child(5){padding-right:4px}
+  #cmb-linked-layouts .cmb-bottom select{font-size:11px}
+  #cmb-linked-layouts .cmb-bottom-button,#cmb-linked-layouts .cmb-bypass{padding:4px;gap:3px}
+  #cmb-linked-layouts .cmb-bottom-button[data-action="analyzer"] svg{display:none}
+  #cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger{width:128px;min-width:128px;padding:0 10px;gap:4px}
+}
+@media(max-width:620px){
+  #cmb-linked-layouts .cmb-bottom{
+    height:auto;min-height:84px;grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:4px 8px;padding:7px 8px;
+  }
+  #cmb-linked-layouts [data-variant="置于顶栏"] .cmb-linked-trigger{width:32px;min-width:32px;padding:0;gap:0}
+}
+/* The editor resizes on both axes; spectrum takes the flexible space. */
+#cmb-linked-layouts .cmb-plugin{
+  display:flex;flex-direction:column;width:min(100%,1040px);height:780px;
+  min-width:920px;min-height:560px;max-width:100%;max-height:920px;
+  --cmb-dial-size:72px;
+}
+#cmb-linked-layouts .cmb-workspace{height:auto;min-height:0;flex:1 1 auto}
+#cmb-linked-layouts .cmb-bottom{flex:0 0 54px;height:54px;min-height:54px;
+  grid-template-columns:minmax(0,1.5fr) minmax(0,1.25fr) minmax(0,1.27fr) minmax(0,1.28fr) minmax(0,1.4fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,.74fr);
+  gap:8px;padding:7px 14px;overflow:hidden}
+#cmb-linked-layouts .cmb-bottom>label{display:flex;flex-direction:row;align-items:center;gap:7px;min-width:0;padding-left:0;white-space:nowrap}
+#cmb-linked-layouts .cmb-bottom>label>span{flex:none}
+#cmb-linked-layouts .cmb-bottom>label:nth-child(5){padding-right:10px;border-right:1px solid var(--cmb-gridZ)}
+#cmb-linked-layouts .cmb-bottom select{flex:1;width:auto;min-width:44px;padding:2px 0;font-size:12px;white-space:nowrap}
+#cmb-linked-layouts .cmb-bottom .cmb-phase select{min-width:95px}
+#cmb-linked-layouts .cmb-bottom>label:nth-child(2) select{min-width:78px}
+#cmb-linked-layouts .cmb-bottom>label:nth-child(3) select{min-width:65px}
+#cmb-linked-layouts .cmb-bottom-button,#cmb-linked-layouts .cmb-bypass{height:34px;min-height:34px;padding:5px 7px;gap:5px;white-space:nowrap}
+#cmb-linked-layouts .cmb-band-panel{width:min(760px,calc(100% - 105px))}
+#cmb-linked-layouts .cmb-dial{width:var(--cmb-dial-size);height:var(--cmb-dial-size)}
+#cmb-linked-layouts .cmb-top{height:46px;flex-wrap:nowrap;padding-right:57px}
+#cmb-linked-layouts .cmb-meter-head{height:46px;display:grid;place-items:center;flex:none}
+#cmb-linked-layouts .cmb-meter-head .cmb-settings{width:30px;min-width:30px;height:29px;margin:0;padding:0;background:var(--cmb-track);border-radius:6px}
+#cmb-linked-layouts .cmb-theme-menu{top:48px;right:5px}
+#cmb-linked-layouts .cmb-resize-grip{position:absolute;right:1px;bottom:1px;width:22px;height:22px;z-index:30;padding:0;border:0;background:transparent;color:var(--cmb-dim);font-size:14px;line-height:1;cursor:nwse-resize;touch-action:none}
+#cmb-linked-layouts .cmb-resize-grip:hover{color:var(--cmb-accent)}
+#cmb-linked-layouts .cmb-resize-grip span{display:block;transform:translate(2px,2px)}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-top{gap:7px;padding-left:12px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-brand{font-size:14px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-band-tabs button{padding:6px 7px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-linked-trigger{width:38px;min-width:38px;padding:0;gap:0}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-linked-trigger>span{display:none}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom{
+  grid-template-columns:minmax(115px,1.4fr) minmax(96px,1.15fr) minmax(90px,1.08fr) minmax(80px,.9fr) minmax(75px,.9fr) minmax(72px,.86fr) minmax(70px,.84fr) minmax(55px,.66fr);
+  gap:3px;padding:7px 8px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label{gap:4px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label:nth-child(5){padding-right:4px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom select{font-size:11px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom-button,#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bypass{padding:4px;gap:3px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom-button[data-action="analyzer"] svg{display:none}
+#cmb-linked-layouts .cmb-plugin[data-height-mode="short"] .cmb-band-panel{bottom:34px}
+#cmb-linked-layouts .cmb-plugin[data-height-mode="short"] .cmb-linked-panel{bottom:36px}
+#cmb-linked-layouts .cmb-plugin[data-height-mode="short"] .cmb-panel-body{padding-top:7px;padding-bottom:7px}
+#cmb-linked-layouts .cmb-plugin[data-height-mode="short"] .cmb-parameters{margin-top:6px;padding-top:7px;row-gap:6px}
+/* Full Global labels at every supported editor width. */
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom{
+  grid-template-columns:minmax(0,1.5fr) minmax(0,1.25fr) minmax(0,1.27fr) minmax(0,1.28fr) minmax(0,1.4fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,.74fr);
+  gap:4px;padding:7px 8px;
+}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label{gap:4px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label>span{font-size:11px;letter-spacing:-.15px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label>span::after{content:none}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label:nth-child(5){padding-right:0;border-right:0}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom select{font-size:12px}
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom-button[data-action="analyzer"] svg{display:block}
+/* Apply one restrained UI typeface while retaining the existing scale and readout type. */
+#cmb-linked-layouts .cmb-band-panel,
+#cmb-linked-layouts .cmb-linked-panel,
+#cmb-linked-layouts .cmb-analyzer-panel,
+#cmb-linked-layouts .cmb-output-panel,
+#cmb-linked-layouts .cmb-theme-menu{font-family:Barlow,Poppins,'Segoe UI',sans-serif}
+#cmb-linked-layouts .cmb-frequency,
+#cmb-linked-layouts .cmb-control-number,
+#cmb-linked-layouts .cmb-meter-values{font-family:Poppins,'Segoe UI',sans-serif}
+#cmb-linked-layouts .cmb-brand{font-weight:500;letter-spacing:.2px}
+#cmb-linked-layouts .cmb-band-tabs button[aria-pressed="true"],
+#cmb-linked-layouts .cmb-band-name,
+#cmb-linked-layouts .cmb-linked-header strong{font-weight:500;letter-spacing:.2px}
+#cmb-linked-layouts .cmb-control-label{letter-spacing:0}
+#cmb-linked-layouts .cmb-expert-tab{letter-spacing:.5px}
+/* Global labels and their current settings share a 24 px text box and 18 px line. */
+#cmb-linked-layouts .cmb-plugin .cmb-bottom>label>span,
+#cmb-linked-layouts .cmb-plugin .cmb-bottom>label>select,
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label>span,
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label>select{
+  font-family:Barlow,Poppins,'Segoe UI',sans-serif;
+  font-size:11.5px;
+  line-height:18px;
+  height:24px;
+  margin:0;
+}
+#cmb-linked-layouts .cmb-plugin .cmb-bottom>label>span,
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label>span{
+  display:inline-flex;align-items:center;font-weight:500;letter-spacing:-.15px;
+}
+#cmb-linked-layouts .cmb-plugin .cmb-bottom>label>select,
+#cmb-linked-layouts .cmb-plugin[data-width-mode="compact"] .cmb-bottom>label>select{
+  font-weight:400;padding:0;background:transparent;
+}
+</style>
+<script>
+(()=>{
+ function init(plugin){
+ const root=plugin,workspace=root.querySelector('.cmb-workspace'),canvas=root.querySelector('canvas'),ctx=canvas.getContext('2d');
+ const variant=plugin.closest('[data-variant]').dataset.variant;
+ const trigger=root.querySelector('.cmb-linked-trigger');
+ if(variant==='融入底栏')root.querySelector('.cmb-bottom').prepend(trigger);
+ if(variant==='置于顶栏')root.querySelector('.cmb-top').insertBefore(trigger,root.querySelector('.cmb-range'));
+ const $=s=>root.querySelector(s),$$=s=>Array.from(root.querySelectorAll(s));
+ const names=['LOW','LOW MID','HIGH MID','HIGH'],freqs=[20,200,1000,6000,20000],labels=['20 – 200 Hz','200 Hz – 1.0k Hz','1.0k – 6.0k Hz','6.0k – 20.0k Hz'];
+ const configs=[['threshold','THRESHOLD',-60,0,-20,'dB',1],['range','RANGE',-30,30,-6,'dB',1],['attack','ATTACK',.1,200,10,'ms',1],['release','RELEASE',10,1000,100,'ms',1],['output','OUTPUT',-36,36,0,'dB',1],['mix','MIX',0,100,100,'%',0]];
+ let saved={};try{saved=window.openai?.widgetState?.privateContent||{}}catch{}
+ const state={theme:['blue','red','cream'].includes(saved.theme)?saved.theme:'blue',band:Number.isInteger(saved.band)?Math.max(0,Math.min(3,saved.band)):2,panel:'none',expert:!!saved.expert,range:12};
+ let bands=Array.from({length:4},(_,i)=>Object.fromEntries(configs.map(c=>[c[0],c[4]+(c[0]==='threshold'?[2,-2,0,-4][i]:0)]))),plot={x:38,y:130,w:600,h:300},drag=null;
+ const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+ function persist(){if(window.openai?.setWidgetState)window.openai.setWidgetState({modelContent:{design:'Crunch MB · 完整 Global 标签缩放版',variant,theme:state.theme,selectedBand:names[state.band],panel:state.panel,expert:state.expert,width:Math.round(plugin.getBoundingClientRect().width),height:Math.round(plugin.getBoundingClientRect().height)},privateContent:{theme:state.theme,band:state.band,panel:state.panel,expert:state.expert,sizeVersion:2,width:Math.round(plugin.getBoundingClientRect().width),height:Math.round(plugin.getBoundingClientRect().height)}}).catch(()=>{})}
+ function announce(s){$('.cmb-announcer').textContent=s}
+ function normalized(c,v){if(c[0]==='attack'||c[0]==='release')return Math.log(v/c[2])/Math.log(c[3]/c[2]);return (v-c[2])/(c[3]-c[2])}
+ function fromNormalized(c,n){return c[0]==='attack'||c[0]==='release'?c[2]*Math.pow(c[3]/c[2],n):c[2]+n*(c[3]-c[2])}
+ function buildKnobs(container,cfgs,linked=false){container.innerHTML=cfgs.map((c,i)=>`<div class="cmb-control" data-key="${c[0]}"><div class="cmb-control-label">${c[1]}</div><div class="cmb-dial"><span class="cmb-dial-needle"></span><input type="range" min="0" max="1000" step="1" aria-label="${linked?'四段联动 ':''}${c[1]}" data-knob="${i}"></div><div class="cmb-control-number"><input type="number" aria-label="${linked?'联动值 ':''}${c[1]} 数值" min="${c[2]}" max="${c[3]}" step="${c[7]||Math.pow(10,-c[6])}"><span>${c[5]}</span></div></div>`).join('');
+  container.querySelectorAll('.cmb-control').forEach((el,i)=>{const c=cfgs[i],slider=el.querySelector('[type=range]'),number=el.querySelector('[type=number]');let linkedValue=c[4];
+   function put(v){v=clamp(v,c[2],c[3]);const previous=linkedValue;linkedValue=v;if(linked){bands.forEach(b=>{if(c[0]==='mix')b.mix=v;else {const original=configs.find(z=>z[0]===c[0]);b[c[0]]=clamp(b[c[0]]+v-previous,original[2],original[3])}})}else bands[state.band][c[0]]=v;update();draw()}
+   function update(){const v=linked?linkedValue:bands[state.band][c[0]],n=clamp(normalized(c,v),0,1);slider.value=Math.round(n*1000);number.value=v.toFixed(c[6]);el.style.setProperty('--cmb-sweep',(n*270)+'deg');el.style.setProperty('--cmb-angle',(-135+n*270)+'deg');if(c[2]<0&&c[3]>0){const zero=270*(0-c[2])/(c[3]-c[2]),start=Math.min(zero,n*270),end=Math.max(zero,n*270);el.style.setProperty('--cmb-gauge',`conic-gradient(from 225deg,var(--cmb-track) 0deg,var(--cmb-track) ${start}deg,var(--cmb-accent) ${start}deg,var(--cmb-accent) ${end}deg,var(--cmb-track) ${end}deg,var(--cmb-track) 270deg,transparent 270deg)`)}slider.setAttribute('aria-valuetext',v.toFixed(c[6])+' '+c[5])}
+   slider.addEventListener('input',()=>put(fromNormalized(c,Number(slider.value)/1000)));
+   let origin=null;slider.addEventListener('pointerdown',e=>{origin={y:e.clientY,n:Number(slider.value)/1000};slider.setPointerCapture(e.pointerId);e.preventDefault()});slider.addEventListener('pointermove',e=>{if(!origin)return;const delta=(origin.y-e.clientY)/(e.shiftKey?1500:150);const n=clamp(origin.n+delta,0,1);put(fromNormalized(c,n));origin={y:e.clientY,n}});slider.addEventListener('pointerup',()=>{origin=null;persist()});slider.addEventListener('pointercancel',()=>origin=null);
+   slider.addEventListener('dblclick',()=>{number.focus();number.select()});number.addEventListener('change',()=>{if(number.value!==''&&Number.isFinite(Number(number.value)))put(Number(number.value));else update();persist()});number.addEventListener('keydown',e=>{if(e.key==='Enter')number.blur();if(e.key==='Escape'){update();number.blur()}});el.refresh=update;update()
+  })
+ }
+ buildKnobs($('.cmb-knob-row'),configs);
+ const linkedConfigs=[['threshold','THRESHOLD',-30,30,0,'Δ dB',1],['attack','ATTACK',-100,100,0,'Δ ms',1],['release','RELEASE',-500,500,0,'Δ ms',1],['output','MAKEUP',-24,24,0,'Δ dB',1],['mix','MIX',0,100,100,'%',0]];
+ // Linked time knobs are linear offsets; the band time knobs retain their logarithmic travel.
+ // Build with linear keys, then bind each key to the matching physical band parameter.
+ const buildLinked=()=>{const temp=linkedConfigs.map(c=>c.slice());temp[1][0]='attackDelta';temp[2][0]='releaseDelta';bands.forEach(b=>{Object.defineProperty(b,'attackDelta',{get(){return this.attack},set(v){this.attack=clamp(v,.1,200)},configurable:true});Object.defineProperty(b,'releaseDelta',{get(){return this.release},set(v){this.release=clamp(v,10,1000)},configurable:true})});configs.push(['attackDelta','ATTACK',.1,200,0,'ms',1],['releaseDelta','RELEASE',10,1000,0,'ms',1]);buildKnobs($('.cmb-linked-knobs'),temp,true)};buildLinked();
+ function panel(which){state.panel=state.panel===which?'none':which;render();persist()}
+ function render(){plugin.dataset.theme=state.theme;$$('[data-theme-choice]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.themeChoice===state.theme)));$$('[data-band]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.band)===state.band)));$('.cmb-band-name').textContent=names[state.band];$('.cmb-frequency').textContent=labels[state.band];$('.cmb-panel-detail').textContent='BAND 0'+(state.band+1);$('.cmb-band-panel').hidden=state.panel!=='band';$('.cmb-linked-panel').hidden=state.panel!=='linked';$('.cmb-analyzer-panel').hidden=state.panel!=='analyzer';$('.cmb-output-panel').hidden=state.panel!=='output';$('.cmb-expert-area').hidden=!state.expert;$('.cmb-expert-tab').setAttribute('aria-expanded',String(state.expert));$('.cmb-expert-chevron').textContent=state.expert?'‹':'›';$$('[data-action=linked],[data-action=analyzer],[data-action=output]').forEach(b=>b.setAttribute('aria-expanded',String(state.panel===b.dataset.action)));$('.cmb-range').textContent='±'+state.range+' dB ▾';$$('.cmb-knob-row .cmb-control').forEach(x=>x.refresh());draw()}
+ $$('[data-band]').forEach(b=>b.addEventListener('click',()=>{state.band=Number(b.dataset.band);state.panel='band';render();persist();announce(names[state.band]+' 频段')}));
+ $$('[data-action]').forEach(b=>b.addEventListener('click',()=>{const a=b.dataset.action;if(a==='close'){state.panel='none';render();persist()}else if(a==='settings'){$('.cmb-theme-menu').hidden=!$('.cmb-theme-menu').hidden}else if(a==='expert'){state.expert=!state.expert;render();persist()}else if(a==='range'){state.range=({6:12,12:30,30:6})[state.range];render()}else panel(a)}));
+ $$('[data-theme-choice]').forEach(b=>b.addEventListener('click',()=>{state.theme=b.dataset.themeChoice;$('.cmb-theme-menu').hidden=true;render();persist()}));
+  $$('[data-listen]').forEach(b=>b.addEventListener('click',()=>b.setAttribute('aria-pressed',String(b.getAttribute('aria-pressed')!=='true'))));
+ $$('[data-mode]').forEach(b=>b.addEventListener('click',()=>{$$('[data-mode]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));announce(b.dataset.mode)}));
+ $$('[data-sc]').forEach(b=>b.addEventListener('click',()=>$$('[data-sc]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)))));
+ ['ratio','knee'].forEach(k=>{$('.cmb-'+k+'-label input').addEventListener('input',e=>{$('.cmb-'+k+'-label output').textContent=Number(e.target.value).toFixed(1)+(k==='ratio'?' : 1':' dB')})});
+ $('.cmb-stereo-label input').addEventListener('input',e=>$('.cmb-stereo-label output').textContent=e.target.value+'%');
+ $('.cmb-filter-mode').addEventListener('change',e=>{const free=e.target.value==='Free';$('.cmb-sc-low').disabled=!free;$('.cmb-sc-high').disabled=!free});$('.cmb-sc-low').disabled=true;$('.cmb-sc-high').disabled=true;
+ $$('[data-spectrum]').forEach(b=>b.addEventListener('click',()=>{b.setAttribute('aria-pressed',String(b.getAttribute('aria-pressed')!=='true'));draw()}));
+ $('.cmb-freeze').addEventListener('click',e=>{const b=e.currentTarget;b.setAttribute('aria-pressed',String(b.getAttribute('aria-pressed')!=='true'));$('[data-action=analyzer] span').textContent=b.getAttribute('aria-pressed')==='true'?'Frozen':'Analyzer'});
+ $('.cmb-auto-label button').addEventListener('click',e=>{const b=e.currentTarget,on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',String(on));b.textContent=on?'ON':'OFF'});
+ $('.cmb-power').addEventListener('click',e=>{const b=e.currentTarget,on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',String(on));plugin.classList.toggle('cmb-off',!on)});
+ $('.cmb-bypass').addEventListener('click',e=>{const b=e.currentTarget;b.setAttribute('aria-pressed',String(b.getAttribute('aria-pressed')!=='true'));draw()});
+ $$('.cmb-output-panel input').forEach((el,i)=>el.addEventListener('change',()=>{const v=Number(el.value);if(!Number.isFinite(v)){el.value=i===2?100:0;return}el.value=clamp(v,Number(el.min),Number(el.max));if(i===1)$('[data-action=output] strong').textContent=Number(el.value).toFixed(1)+' dB'}));
+ const logx=f=>Math.log(f/20)/Math.log(1000);
+ function draw(){const r=workspace.getBoundingClientRect(),w=r.width,h=r.height;if(w<1)return;const dpr=window.devicePixelRatio||1;canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);const css=getComputedStyle(plugin),c=k=>css.getPropertyValue('--cmb-'+k).trim();const narrow=w<580,meterWidth=$('.cmb-meters').getBoundingClientRect().width;plot={x:0,y:narrow?130:92,w:w-meterWidth,h:h-(narrow?185:150)};const {x,y,w:pw,h:ph}=plot;const yy=v=>y+ph*(.28-v/(state.range*2));const fx=f=>x+logx(f)*pw;const basey=yy(0);ctx.clearRect(0,0,w,h);ctx.fillStyle=c('bg');ctx.fillRect(0,0,w,h);
+ ctx.fillStyle=c('accent');ctx.globalAlpha=.055;ctx.fillRect(fx(freqs[state.band]),46,fx(freqs[state.band+1])-fx(freqs[state.band]),h-46);ctx.globalAlpha=1;
+ ctx.font='11px Poppins, Segoe UI, sans-serif';ctx.fillStyle=c('dim');ctx.strokeStyle=c('grid');ctx.lineWidth=1;
+ [50,100,200,500,1000,2000,5000,10000].forEach(f=>{if(narrow&&![100,1000,10000].includes(f))return;const px=fx(f);ctx.beginPath();ctx.moveTo(px,46);ctx.lineTo(px,h);ctx.stroke();ctx.textAlign='center';ctx.fillStyle=c('dim');ctx.fillText(f>=1000?(f/1000)+'k':String(f),px,h-14)});
+ for(let i=0;i<=5;i++){const py=y+ph*i/5;ctx.strokeStyle=c('grid');ctx.beginPath();ctx.moveTo(0,py);ctx.lineTo(x+pw,py);ctx.stroke();ctx.fillStyle=c('dim');ctx.textAlign='left';ctx.fillText(i===0?'0':('−'+(i*20)),4,py+4);ctx.textAlign='right';const gd=(state.range*(1-i*.4)).toFixed(0);ctx.fillStyle=c('accent');ctx.globalAlpha=.8;ctx.fillText((gd>0?'+':'')+gd,x+pw-6,py+4);ctx.globalAlpha=1}
+ // Two deliberately non-live example spectra; no audio is loaded or processed.
+ function spectrum(t,post){let a=.55*Math.exp(-Math.pow((t-.27)/.2,2))+.39*Math.exp(-Math.pow((t-.59)/.27,2))+.14*Math.exp(-Math.pow((t-.83)/.1,2));a+=.025*Math.sin(t*109)+.018*Math.sin(t*231)+.012*Math.cos(t*487);return clamp(a*(post?.84:1),.015,.9)}
+ function paintSpectrum(post){ctx.beginPath();ctx.moveTo(x,h);for(let i=0;i<=pw;i+=2){const t=i/pw;ctx.lineTo(x+i,h-spectrum(t,post)*ph*.76)}ctx.lineTo(x+pw,h-spectrum(1,post)*ph*.76);ctx.lineTo(x+pw,h);ctx.closePath();const g=ctx.createLinearGradient(0,y,0,h);g.addColorStop(0,c(post?'accent':'inFill'));g.addColorStop(1,c('bg'));ctx.fillStyle=g;ctx.globalAlpha=post?.20:.31;ctx.fill();ctx.globalAlpha=post?.34:.32;ctx.strokeStyle=c(post?'accent':'dim');ctx.lineWidth=post?1.2:1;ctx.stroke();ctx.globalAlpha=1}
+ if($('[data-spectrum=pre]').getAttribute('aria-pressed')==='true')paintSpectrum(false);if($('[data-spectrum=post]').getAttribute('aria-pressed')==='true')paintSpectrum(true);
+ ctx.strokeStyle=c('gridZ');ctx.beginPath();ctx.moveTo(0,basey);ctx.lineTo(x+pw,basey);ctx.stroke();
+ const centers=freqs.slice(0,4).map((f,i)=>(logx(f)+logx(freqs[i+1]))/2);
+ // Each crossover blends adjacent bands over a short log-frequency interval.
+ // Four weights always sum to one, so the overall response is one continuous curve.
+ const edges=freqs.slice(1,4).map(logx),bounds=[0,...edges,1];
+ const widths=edges.map((edge,i)=>clamp(Math.min(edge-bounds[i],bounds[i+2]-edge)*.12,.012,.032));
+ const transfer=(t,edge,width)=>1/(1+Math.exp(-(t-edge)/width));
+ function bandWeights(t){const a=transfer(t,edges[0],widths[0]),b=transfer(t,edges[1],widths[1]),c=transfer(t,edges[2],widths[2]);return [1-a,a*(1-b),a*b*(1-c),a*b*c]}
+ const gains=bands.map((b,i)=>b.output-([1.4,2.6,3.1,1][i]*(b.mix/100)));
+ function response(t){if($('.cmb-bypass').getAttribute('aria-pressed')==='true')return 0;const weights=bandWeights(t);return weights.reduce((sum,weight,i)=>sum+weight*gains[i],0)}
+ const sel=state.band,range=bands[sel].range,pointCount=Math.max(80,Math.ceil(pw/2));
+ ctx.beginPath();for(let j=0;j<=pointCount;j++){const t=j/pointCount,px=x+t*pw,py=yy(response(t));j?ctx.lineTo(px,py):ctx.moveTo(px,py)}
+ for(let j=pointCount;j>=0;j--){const t=j/pointCount;ctx.lineTo(x+t*pw,yy(response(t)+range*bandWeights(t)[sel]))}
+ ctx.closePath();ctx.globalAlpha=.11;ctx.fillStyle=c('accent');ctx.fill();ctx.globalAlpha=1;
+ ctx.beginPath();for(let j=0;j<=pointCount;j++){const t=j/pointCount,px=x+t*pw,py=yy(response(t)+range*bandWeights(t)[sel]);j?ctx.lineTo(px,py):ctx.moveTo(px,py)}
+ ctx.globalAlpha=.30;ctx.strokeStyle=c('accent');ctx.lineWidth=1;ctx.stroke();ctx.globalAlpha=1;
+ ctx.beginPath();for(let j=0;j<=pointCount;j++){const t=j/pointCount,px=x+t*pw,py=yy(response(t));j?ctx.lineTo(px,py):ctx.moveTo(px,py)}ctx.strokeStyle=c('accent');ctx.lineWidth=2.6;ctx.stroke();
+ names.forEach((n,i)=>{const px=x+centers[i]*pw,py=yy(response(centers[i]));ctx.fillStyle=c(i===state.band?'accent':'dim');ctx.textAlign='center';ctx.font='11px Poppins, Segoe UI, sans-serif';ctx.fillText(narrow?['L','LM','HM','H'][i]:n,px,narrow?112:69);ctx.beginPath();ctx.arc(px,py,i===state.band?7:4,0,Math.PI*2);ctx.fillStyle=c(i===state.band?'accent':'text');ctx.fill();if(i===state.band){ctx.beginPath();ctx.arc(px,py,13,-Math.PI*.85,Math.PI*.55);ctx.strokeStyle=c('accent');ctx.lineWidth=2;ctx.stroke()}});
+ for(let i=1;i<=3;i++){const px=fx(freqs[i]);ctx.strokeStyle=c('gridZ');ctx.lineWidth=1;ctx.beginPath();const handleY=y+ph*.44;ctx.moveTo(px,46);ctx.lineTo(px,h);ctx.stroke();ctx.fillStyle=c('track');ctx.beginPath();ctx.roundRect(px-11,handleY-11,22,22,6);ctx.fill();ctx.strokeStyle=c('dim');ctx.beginPath();ctx.moveTo(px-3,handleY-5);ctx.lineTo(px-3,handleY+5);ctx.moveTo(px+3,handleY-5);ctx.lineTo(px+3,handleY+5);ctx.stroke()}
+ const panelEl=$('.cmb-band-panel'),panelW=panelEl.getBoundingClientRect().width||Math.min(690,w-105),bandX=x+centers[state.band]*pw;const left=clamp(bandX-panelW*.5,10,Math.max(10,w-54-panelW));panelEl.style.left=left+'px';$('.cmb-panel-pointer').style.left=clamp(bandX-left,22,panelW-22)+'px';$('.cmb-band-actions').style.left=clamp(bandX-55,10,w-170)+'px';$('.cmb-band-actions').style.top=(narrow?134:86)+'px';
+ }
+ canvas.addEventListener('pointerdown',e=>{const r=canvas.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;const near=[1,2,3].find(i=>Math.abs(mx-(plot.x+logx(freqs[i])*plot.w))<14&&Math.abs(my-(plot.y+plot.h*.44))<15);if(near){drag={index:near};canvas.setPointerCapture(e.pointerId);return}if(mx<plot.x||mx>plot.x+plot.w)return;const t=(mx-plot.x)/plot.w;state.band=clamp(freqs.findIndex((f,i)=>i<4&&t>=logx(f)&&t<=logx(freqs[i+1])),0,3);state.panel='band';render();persist()});
+ canvas.addEventListener('pointermove',e=>{if(!drag)return;const r=canvas.getBoundingClientRect(),f=20*Math.pow(1000,(e.clientX-r.left-plot.x)/plot.w),i=drag.index;freqs[i]=Math.round(clamp(f,freqs[i-1]*2,freqs[i+1]/2));labels.splice(0,4,...freqs.slice(0,4).map((f,j)=>`${f>=1000?(f/1000).toFixed(1)+'k':f} – ${freqs[j+1]>=1000?(freqs[j+1]/1000).toFixed(1)+'k':freqs[j+1]} Hz`));$('.cmb-frequency').textContent=labels[state.band];draw()});
+ canvas.addEventListener('pointerup',()=>{drag=null});canvas.addEventListener('pointercancel',()=>{drag=null});
+ root.addEventListener('keydown',e=>{if(e.key==='Escape'){state.panel='none';$('.cmb-theme-menu').hidden=true;render();persist()}});
+ window.addEventListener('openai:set_globals',e=>{const s=e.detail?.globals?.widgetState?.privateContent;if(!s)return;if(['blue','red','cream'].includes(s.theme))state.theme=s.theme;if(Number.isInteger(s.band))state.band=clamp(s.band,0,3);if(['band','linked','analyzer','output','none'].includes(s.panel))state.panel=s.panel;state.expert=!!s.expert;render()});
+ const resizeGrip=$('.cmb-resize-grip');
+ let resizeStart=null;
+ function syncSize(){
+   const r=plugin.getBoundingClientRect(),w=r.width,h=r.height;
+   const widthMode=w<960?'compact':'full',heightMode=h<640?'short':'regular';
+   if(plugin.dataset.widthMode!==widthMode)plugin.dataset.widthMode=widthMode;
+   if(plugin.dataset.heightMode!==heightMode)plugin.dataset.heightMode=heightMode;
+   plugin.style.setProperty('--cmb-dial-size',clamp(Math.min(w*.07,h*.105),54,78).toFixed(1)+'px');
+   draw();
+ }
+ function setEditorSize(w,h){
+   const available=plugin.parentElement.getBoundingClientRect().width;
+   plugin.style.width=Math.round(clamp(w,920,Math.max(920,Math.min(1120,available))))+'px';
+   plugin.style.height=Math.round(clamp(h,560,920))+'px';
+   syncSize();
+ }
+ resizeGrip.addEventListener('pointerdown',e=>{
+   e.preventDefault();e.stopPropagation();
+   const r=plugin.getBoundingClientRect();
+   resizeStart={x:e.clientX,y:e.clientY,w:r.width,h:r.height};
+   resizeGrip.setPointerCapture(e.pointerId);
+ });
+ resizeGrip.addEventListener('pointermove',e=>{
+   if(!resizeStart)return;
+   setEditorSize(resizeStart.w+e.clientX-resizeStart.x,resizeStart.h+e.clientY-resizeStart.y);
+ });
+ resizeGrip.addEventListener('pointerup',()=>{if(resizeStart){resizeStart=null;persist()}});
+ resizeGrip.addEventListener('pointercancel',()=>{resizeStart=null});
+ resizeGrip.addEventListener('keydown',e=>{
+   const r=plugin.getBoundingClientRect(),step=e.shiftKey?4:20;
+   if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();setEditorSize(r.width+(e.key==='ArrowRight'?step:-step),r.height);persist()}
+   if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();setEditorSize(r.width,r.height+(e.key==='ArrowDown'?step:-step));persist()}
+ });
+ if(Number.isFinite(saved.width))setEditorSize(saved.width,saved.sizeVersion===2&&Number.isFinite(saved.height)?saved.height:780);
+ render();syncSize();new ResizeObserver(draw).observe(workspace);new ResizeObserver(syncSize).observe(plugin);if(document.fonts?.ready)document.fonts.ready.then(draw);
+ if(globalThis.Tweak){const t=new Tweak({container:plugin,onChange:()=>{render();persist()}});t.addSelect(state,'theme',{label:'保留的三主题',options:[{label:'Blue',value:'blue'},{label:'Red',value:'red'},{label:'Cream',value:'cream'}]});t.addSelect(state,'panel',{label:'查看界面状态',options:[{label:'频段六旋钮',value:'band'},{label:'四段联动',value:'linked'},{label:'Analyzer',value:'analyzer'},{label:'输入输出',value:'output'},{label:'全幅频谱',value:'none'}]});t.addToggle(state,'expert',{label:'展开 Expert'})}
+}
+ document.querySelectorAll('#cmb-linked-layouts .cmb-plugin').forEach(init);
+})();
+</script>
+
+
+

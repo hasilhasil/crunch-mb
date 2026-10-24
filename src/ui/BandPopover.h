@@ -9,6 +9,7 @@
 #include "MBTheme.h"
 #include "Anim.h"
 #include "Knob.h"
+#include "ValueField.h"
 #include "../Parameters.h"
 
 class CrunchMBAudioProcessor;
@@ -74,6 +75,9 @@ public:
 
     // ---- 命中测试 ----
     bool hitTestClose  (juce::Point<float> p) const;
+    juce::Rectangle<float> closeRect() const;
+    juce::Rectangle<float> popSliderRect (int k) const;
+    juce::Rectangle<float> popSliderTrackRect (int k) const;
     bool hitTestPanel  (juce::Point<float> p) const;
     bool hitTestSlider (juce::Point<float> p, int& kOut) const;
     juce::Rectangle<float> expertRect() const;
@@ -84,12 +88,13 @@ public:
     juce::Rectangle<float> dynamicsSegRect() const;
     bool hitTestDynamicsSeg (juce::Point<float> p) const;
     /** 返回 true 表示状态翻转了。 */
-    bool clickDynamicsSeg();
+    bool clickDynamicsSeg(bool expand);
     bool dynamicsIsExpand() const noexcept { return dynamicsExpand_; }
     bool isExpertOpen() const noexcept { return expertOpen_; }
     void toggleExpert()
     {
         expertOpen_ = ! expertOpen_;
+        layoutKnobs(true);
         // R35（C-b）：EXPERT 内容现在由 ExpertLayer 子组件绘制，要单独重绘
         if (expertLayer_ != nullptr) expertLayer_->repaint();
         repaint();
@@ -101,6 +106,10 @@ public:
     ExpertRow hitTestExpertRow (juce::Point<float> p) const;
     /** 点击某行：Detector 翻转 Peak/RMS，Lookahead 循环 Off→1ms→3ms。 */
     void clickExpertRow (ExpertRow row);
+    bool selectExpertAt(juce::Point<float> p);
+    juce::Rectangle<float> expertOptionRect(ExpertRow row,int option) const;
+    void selectExpertOption(ExpertRow row,int option);
+    ValueField& sidechainFieldForTest(bool high) { return high?scHigh_:scLow_; }
 
     // ---- 交互（由 DisplayView 的鼠标处理转发）----
     void beginSliderDrag (int k, float mouseX);
@@ -207,7 +216,6 @@ public:
 private:
     juce::Rectangle<float> popoverRect() const;
     juce::Rectangle<float> popKnobRect (int k) const;
-    juce::Rectangle<float> popSliderRect (int k) const;
 
     /** R35（C-b）：EXPERT 展开内容的**覆盖层**。
      *  JUCE 里子组件永远画在父组件 paint() 之后，而 EXPERT 框原先是在
@@ -218,10 +226,11 @@ private:
     struct ExpertLayer : public juce::Component
     {
         BandPopover& owner;
-        explicit ExpertLayer (BandPopover& o) : owner (o) { setInterceptsMouseClicks (false, false); }
+        explicit ExpertLayer (BandPopover& o) : owner (o) { setInterceptsMouseClicks (false, true); }
         void paint (juce::Graphics& g) override { owner.paintExpertLayer (g); }
     };
     std::unique_ptr<ExpertLayer> expertLayer_;
+    ValueField scLow_,scHigh_;
     void paintExpertLayer (juce::Graphics& g);
 
     void ensureKnobs();
@@ -229,7 +238,7 @@ private:
     void applyPopoverKnob (int k, double v);
     void applySlider (int k, double v);
     /** Phase：侧链频率循环（Free 模式的高通/低通频率档位）。 */
-    void setSideChainFreq (int band, bool isLow);
+    void layoutExpertFields();
 
     float getParamNorm (const juce::String& id) const;
     float getParamPhysical (const juce::String& id) const;
@@ -259,7 +268,7 @@ private:
     bool  expertOpen_ = false;
     int   sliderDrag_ = -1;
     float sliderDragX0_ = 0.0f;
-    double sliderDragV0_ = 0.0;
+    double sliderDragNorm0_ = 0.0;
 
     std::array<std::unique_ptr<Knob>, kPopKnobs> knobs_;
     /** R35（D）：上次下发给 Knob 的直径（Knob 无 getter）。 */

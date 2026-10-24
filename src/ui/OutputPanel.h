@@ -4,6 +4,8 @@
 
 #include "MBTheme.h"
 #include "Anim.h"
+#include "Knob.h"
+#include <array>
 
 class CrunchMBAudioProcessor;
 
@@ -31,17 +33,12 @@ class OutputPanel : public juce::Component
 public:
     std::function<void()> onSettingsChanged;
 
-    OutputPanel()
-    {
-        // R33：bounds 是全屏（DisplayView 传 getLocalBounds()）。默认的
-        // setInterceptsMouseClicks(true) 会让这个全屏子组件吞掉所有鼠标事件，
-        // DisplayView 的 mouseDown/mouseMove 收不到 → 插件完全无法交互。
-        // 命中统一由 DisplayView 分发（同 LinkedDrawer/BandPopover）。
-        setInterceptsMouseClicks (false, false);
-    }
-    ~OutputPanel() override = default;
+    OutputPanel();
+    ~OutputPanel() override;
+    std::function<void(int,bool)> onGesture;
 
     void paint (juce::Graphics&) override;
+    void resized() override;
 
     // ---- 状态 ----
     bool  isOpen()   const noexcept { return open_; }
@@ -52,9 +49,10 @@ public:
     bool clickButton();
     void clickOutside();
     bool advance (double nowMs);
+    void snapToCurrent() { anim_=animTarget_=open_?1.0f:0.0f;tween_.snapTo(anim_);layoutControls(); }
 
     void setHostBounds (juce::Rectangle<int> hostBounds);
-    void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); repaint(); }
+    void setTheme (MBTheme::Theme t);
 
     // ---- 当前设置 ----
     float inputGainDb()  const noexcept { return inputGainDb_; }
@@ -96,6 +94,7 @@ public:
         globalBypass_ = anyBypassed;
         autoGain_     = autoGainOn;
         monitorIdx_   = mon;
+        syncControls();
         repaint();
     }
 
@@ -104,8 +103,20 @@ public:
     /** rowOut: 0=InputGain 1=OutputGain 2=GlobalMix 3=GlobalBypass 4=AutoGain 5=Monitor */
     bool hitTestRow (juce::Point<float> p, int& rowOut) const;
     void clickRow (int row);
+    juce::Rectangle<float> toggleRect(int index) const;
+    Knob& numericControlForTest(int index) { return knobs_[(size_t)index]; }
 
 private:
+    void syncControls();
+    void layoutControls();
+    struct PanelLookAndFeel : juce::LookAndFeel_V4
+    {
+        float scale=1;
+        juce::Font getComboBoxFont(juce::ComboBox&) override { return MBTheme::font(MBTheme::uiMedium(),14*scale); }
+        juce::Font getPopupMenuFont() override { return MBTheme::font(MBTheme::uiRegular(),15*scale); }
+    } menuLookAndFeel_;
+    std::array<Knob,3> knobs_;
+    juce::ComboBox monitorBox_;
     bool  open_ = false;
     bool  sticky_ = false;
     float anim_ = 0.0f;

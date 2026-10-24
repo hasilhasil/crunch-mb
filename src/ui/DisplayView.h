@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "MBTheme.h"
+#include "EditorLayout.h"
 #include "Anim.h"
 #include "Knob.h"
 #include "LinkedDrawer.h"
@@ -42,6 +43,7 @@ public:
     ~DisplayView() override;
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics& g) override { drawMidiLearnOverlay(g); drawDropDown(g); }
     void resized() override;
     void timerCallback() override;
     bool keyPressed (const juce::KeyPress&) override;
@@ -84,6 +86,7 @@ public:
                 (float) -c->getX(), (float) -c->getY()));
             c->paint (g);
         }
+        paintOverChildren(g);
     }
     // 测试钩子：手动驱动一帧（timerCallback 为 protected）
     // Phase A：推进**虚拟时钟**再跑一帧，使动画测试确定性
@@ -178,6 +181,8 @@ public:
      *  tween 起点是真实时间，不吸附的话面板 alpha 会停在 0）。 */
     void snapPanelsForTest()
     {
+        if (outputPanel_   != nullptr) outputPanel_->snapToCurrent();
+        if (analyzerPanel_ != nullptr) analyzerPanel_->snapToCurrent();
         if (linkedDrawer_  != nullptr) linkedDrawer_->snapToCurrent();
         if (bandPopover_   != nullptr) bandPopover_->snapToCurrent();
     }
@@ -222,6 +227,7 @@ public:
     {
         return bandButtonRect (juce::jlimit (0, 3, band), 0).getX();
     }
+    juce::Rectangle<float> bandButtonRectForTest(int band, int button) const { return bandButtonRect(band,button); }
     // 测试钩子：直接派发鼠标事件（mouseXxx 为 protected；内部经 Desktop 取 MouseInputSource）
     void mouseDownForTest (float x, float y);
     void mouseDragForTest (float x, float y);
@@ -318,6 +324,10 @@ public:
     // 测试钩子（T35）——Phase A：抽屉已拆为 LinkedDrawer，经它转发
     bool isLinkedOpenForTest() const { return linkedDrawer_ != nullptr && linkedDrawer_->isOpen(); }
     void applyLinkedOffsetForTest (int k, double v);
+    juce::String linkedFeedbackTextForTest(int band) const { return linkedFeedbackText(band); }
+    OutputPanel* outputPanelForTest() { return outputPanel_.get(); }
+    AnalyzerPanel* analyzerPanelForTest() { return analyzerPanel_.get(); }
+    BandPopover* bandPopoverForTest() { return bandPopover_.get(); }
     juce::Rectangle<int> linkedKnobBoundsForTest (int k) const
     {
         return linkedDrawer_ != nullptr ? linkedDrawer_->knobBoundsForTest (k)
@@ -387,10 +397,7 @@ public:
     /** Phase C-5：EXPERT 展开内容矩形（T40 用）。 */
     juce::Rectangle<float> popExpertContentRectForTest() const;
     /** Phase D-2 测试钩子：LINKED 抽屉是否 sticky。 */
-    bool isLinkedStickyForTest() const
-    {
-        return linkedDrawer_ != nullptr && linkedDrawer_->isSticky();
-    }
+
     /** R36（B3/B6）测试钩子：LINKED 标签页点击、锁定按钮矩形、抽屉面板矩形、
      *  二级菜单顶部频率文本。 */
     void clickLinkedButtonForTest()
@@ -399,10 +406,7 @@ public:
         togglePopover (false);
         linkedDrawer_->clickButton();
     }
-    juce::Rectangle<float> pinRectForTest() const
-    {
-        return linkedDrawer_ != nullptr ? linkedDrawer_->pinRect() : juce::Rectangle<float>();
-    }
+    juce::Rectangle<float> linkedCloseRectForTest() const { return linkedDrawer_->closeRect(); }
     juce::Rectangle<float> linkedPanelRectForTest() const
     {
         return linkedDrawer_ != nullptr ? linkedDrawer_->panelRectForTest()
@@ -473,7 +477,7 @@ public:
     /** T78 测试钩子：POWER 胶囊矩形（与 hitTestPowerButton 同一几何）。 */
     juce::Rectangle<float> powerButtonRectForTest() const
     {
-        return juce::Rectangle<float> (sx (196.0f), sy (3.0f), sx (78.0f), sy (24.0f));
+        return EditorLayout(getLocalBounds()).power();
     }
     /** T79 测试钩子：设置 mouseUp 时认定的"按住时长"（一次性）。 */
     void setHoldElapsedForTest (int ms) { holdElapsedMsForTest_ = ms; }
@@ -642,17 +646,10 @@ private:
     // A8/#4：绘图区边界**完全贴合**状态栏下缘与 global bar 上缘（无间隙）
     float plotBottomPx() const noexcept
     {
-        // R36（B3）：绘图区底缘要**扣掉 LINKED 标签页那一条**。
-        //   标签页（29px 高）常驻在 global bar 正上方；此前它只在抽屉打开时
-        //   才绘制，所以没占位；现在恒常可见，若仍把绘图区算到 global bar 上缘，
-        //   标签页就会盖住底部的分频手柄（x 290 / 492 两个手柄被压住，
-        //   用户只剩"拖整条分割线"这一条路）。
-        //   BandPopover 那边一直是 `H − kGlobalBarH − kDrawerBtnH`，
-        //   DisplayView 这里漏了后一项——本次对齐。
-        return (float) getHeight() - sy (kGlobalBarH) - sy (kDrawerBtnH);
+        return EditorLayout (getLocalBounds()).globalTop();
     }
-    float plotTopPx()    const noexcept { return sy (kTopStripH); }
-    float plotRightPx()  const noexcept { return sx (kMeterX) - sx (4.0f); }   // #3：右缘避开 IN/OUT 音量表
+    float plotTopPx()    const noexcept { return EditorLayout (getLocalBounds()).topHeight(); }
+    float plotRightPx()  const noexcept { return EditorLayout (getLocalBounds()).plotRight(); }   // #3：右缘避开 IN/OUT 音量表
     float plotWidthPx()  const noexcept { return plotRightPx(); }
     float plotHeightPx() const noexcept { return plotBottomPx() - plotTopPx(); }
 
@@ -663,7 +660,7 @@ private:
      *  让刻度数字/读数等文字随窗口一起变大变小（原先一律写死像素字号）。 */
     float uiFontScale() const noexcept
     {
-        return juce::jlimit (0.75f, 2.4f, (float) getHeight() / kDesignH);
+        return EditorLayout (getLocalBounds()).scale;
     }
 
     // ---- 绘制分块 ----
@@ -971,6 +968,9 @@ private:
     // Phase A：两者均已拆为独立组件。DisplayView 只持 unique_ptr，
     // 负责开合仲裁（O6 互斥）、命中分发、鼠标坐标转发、每帧 advance()。
     std::unique_ptr<LinkedDrawer> linkedDrawer_;
+    int linkedFeedbackIndex_=-1;
+    double linkedFeedbackUntilMs_=0;
+    juce::String linkedFeedbackText(int band) const;
     std::unique_ptr<BandPopover>  bandPopover_;
     juce::Point<float> lastMousePos_ { -1.0f, -1.0f };
     juce::Rectangle<float> displayRangeBtn_;

@@ -1,5 +1,6 @@
 #include "BandPopover.h"
 #include "../PluginProcessor.h"
+#include "EditorLayout.h"
 
 // ============================================================
 // BandPopover 实现（UI_SPEC §6，Pro-MB 样式）
@@ -29,6 +30,13 @@ BandPopover::BandPopover (CrunchMBAudioProcessor& processor)
     // → THRESHOLD/RANGE/ATTACK/RELEASE/MIX 五个旋钮鼠标完全无效（用户实测）。
     setInterceptsMouseClicks (false, true);
     buildParamCache();
+    scLow_.configure("HIGH-PASS","Hz",20,2000,0,true);
+    scHigh_.configure("LOW-PASS","Hz",500,20000,0,true);
+    for(int i=0;i<2;++i){auto& field=i==0?scLow_:scHigh_;const juce::String suffix=i==0?"SCLow":"SCHigh";
+        field.onValueChange=[this,suffix](double v){setParamPhysical("band"+juce::String(juce::jmax(0,band_))+suffix,(float)v);};
+        field.onDragStart=[this,suffix]{if(auto* p=proc_.apvts.getParameter("band"+juce::String(juce::jmax(0,band_))+suffix))p->beginChangeGesture();};
+        field.onDragEnd=[this,suffix]{if(auto* p=proc_.apvts.getParameter("band"+juce::String(juce::jmax(0,band_))+suffix))p->endChangeGesture();};}
+
 }
 
 BandPopover::~BandPopover() = default;
@@ -44,6 +52,7 @@ void BandPopover::buildParamCache()
 void BandPopover::setTheme (MBTheme::Theme t)
 {
     pal_ = MBTheme::palette (t);
+    scLow_.setPalette(pal_);scHigh_.setPalette(pal_);
     for (auto& kb : knobs_)
         if (kb != nullptr) kb->setPalette (pal_);
     repaint();
@@ -95,66 +104,55 @@ void BandPopover::setBandFreqRange (float hzLow, float hzHigh)
 // ---------------- 几何 ----------------
 juce::Rectangle<float> BandPopover::popoverRect() const
 {
-    const float W = (float) hostBounds_.getWidth();
-    const float H = (float) hostBounds_.getHeight();
-    // R36（B4/B5）：面板放大 472×200 → 510×216。
-    //   · 6 个旋钮（新增 OUTPUT）需要更多横向空间；
-    //   · 字号整体放大后 200px 高已经装不下「旋钮行 + 滑杆行 + EXPERT」。
-    //   内部所有比例仍按 472/200 的设计稿写，本函数只负责把设计盒放大。
-    const float pw = W * (510.0f / kDesignW);
-    const float ph = H * (216.0f / kDesignH);
 
-    // 随分段居中：取该段左右边界的像素中点
-    const float midX = (bandLeftX_ + bandRightX_) * 0.5f;
-    float px = midX - pw * 0.5f;
-    px = juce::jlimit (W * (8.0f / kDesignW), W - pw - W * (8.0f / kDesignW), px);
+    const EditorLayout l(hostBounds_);const float s=l.scale;
+    const float w=juce::jmin(760*s,l.plotRight()-24*s),h=(expertOpen_?430.0f:280.0f)*s;
+    const float x=juce::jlimit(12*s,juce::jmax(12*s,l.plotRight()-w-12*s),(bandLeftX_+bandRightX_)*.5f-w*.5f);
+    return {x,l.globalTop()-h-48*s,w,h};
 
-    const float plotTop    = H * (kTopStripH / kDesignH);
-    const float plotBottom = H - H * (kGlobalBarH / kDesignH) - H * (kDrawerBtnH / kDesignH);
-    // 垂直位置：绘图区 58% 处
-    const float py = plotTop + (plotBottom - plotTop) * 0.58f - ph * 0.5f;
-    return juce::Rectangle<float> (px, py, pw, ph);
 }
 
 juce::Rectangle<float> BandPopover::popKnobRect (int k) const
 {
-    const auto r = popoverRect();
-    const float unitW = (r.getWidth() - r.getWidth() * (16.0f / 472.0f)) / (float) kPopKnobs;
-    const float x = r.getX() + r.getWidth() * (8.0f / 472.0f) + unitW * (float) k + 2.0f;
-    return juce::Rectangle<float> (x, r.getY() + r.getHeight() * (34.0f / 200.0f),
-                                   unitW - 4.0f, r.getHeight() * (74.0f / 200.0f));
+
+    const auto r=popoverRect();const float s=EditorLayout(hostBounds_).scale,cell=(r.getWidth()-58*s)/kPopKnobs;
+    return {r.getX()+16*s+k*cell,r.getY()+36*s,cell,137*s};
+
 }
 
 juce::Rectangle<float> BandPopover::popSliderRect (int k) const
 {
-    const auto r = popoverRect();
-    const float rowW = (r.getWidth() - r.getWidth() * (20.0f / 472.0f)) / 3.0f;
-    const float x0 = r.getX() + r.getWidth() * (10.0f / 472.0f) + rowW * (float) k;
-    return juce::Rectangle<float> (x0, r.getY() + r.getHeight() * (142.0f / 200.0f),
-                                   rowW - r.getWidth() * (10.0f / 472.0f),
-                                   r.getHeight() * (22.0f / 200.0f));
+
+    const auto r=popoverRect();const float s=EditorLayout(hostBounds_).scale;
+    const float leftW=(r.getWidth()-54*s)/2.15f;
+    const float rightX=r.getX()+leftW+38*s;
+    if(k==1)return {r.getX()+16*s,r.getY()+222*s,leftW,28*s};
+    return {rightX,r.getY()+(k==0?180:222)*s,r.getRight()-rightX-16*s,28*s};
+
+}
+
+juce::Rectangle<float> BandPopover::popSliderTrackRect (int k) const
+{
+    const auto row = popSliderRect (k);
+    const float s = EditorLayout (hostBounds_).scale;
+    return { row.getX() + 50*s, row.getCentreY() - 2*s,
+             juce::jmax (1.0f, row.getWidth() - 118*s), 4*s };
 }
 
 juce::Rectangle<float> BandPopover::expertRect() const
 {
-    // Phase C-5：EXPERT 从底部横排改成**右缘竖排标签**（Pro-MB 的标志性布局）。
-    // 原来占面板左下角一块，现在占右缘一条窄带，点击展开的内容也改成
-    // 从右缘向左展开，不占用面板底部原本属于旋钮/滑杆的空间。
-    const auto r = popoverRect();
-    const float tabW = r.getWidth() * (22.0f / 472.0f);
-    return juce::Rectangle<float> (r.getRight() - tabW, r.getY() + r.getHeight() * (34.0f / 200.0f),
-                                   tabW, r.getHeight() * (100.0f / 200.0f));
+
+    const auto r=popoverRect();const float s=EditorLayout(hostBounds_).scale;
+    return {r.getRight()-30*s,r.getY()+46*s,22*s,122*s};
+
 }
 
 juce::Rectangle<float> BandPopover::expertContentRect() const
 {
-    const auto r = popoverRect();
-    const auto er = expertRect();
-    const float ew = r.getWidth() * (200.0f / 472.0f);
-    // Phase：EXPERT 内容从 2 行扩到 5 行（Detector / Lookahead / Filtering / SC Low / SC High）
-    const float eh = r.getHeight() * (100.0f / 200.0f);
-    return juce::Rectangle<float> (er.getX() - ew - r.getWidth() * (6.0f / 472.0f),
-                                   er.getY(), ew, eh);
+
+    const auto r=popoverRect();const float s=EditorLayout(hostBounds_).scale;
+    return {r.getX()+16*s,r.getY()+272*s,r.getWidth()-32*s,142*s};
+
 }
 
 // ---------------- Phase C-6：Dynamics 分段按钮 ----------------
@@ -162,13 +160,10 @@ juce::Rectangle<float> BandPopover::expertContentRect() const
 // 未选中段透明底 + dim 字。点击翻转 Compress/Expand。
 juce::Rectangle<float> BandPopover::dynamicsSegRect() const
 {
-    const auto r = popoverRect();
-    // 放在滑杆行上方、旋钮行下方（r 的 118/200 处），宽约为面板的 40%
-    const float w = r.getWidth() * (188.0f / 472.0f);
-    const float h = r.getHeight() * (20.0f / 200.0f);
-    const float x = r.getX() + r.getWidth() * (10.0f / 472.0f);
-    const float y = r.getY() + r.getHeight() * (118.0f / 200.0f);
-    return juce::Rectangle<float> (x, y, w, h);
+
+    const auto r=popoverRect();const float s=EditorLayout(hostBounds_).scale;
+    return {r.getX()+16*s,r.getY()+180*s,(r.getWidth()-54*s)/2.15f,28*s};
+
 }
 
 bool BandPopover::hitTestDynamicsSeg (juce::Point<float> p) const
@@ -176,96 +171,58 @@ bool BandPopover::hitTestDynamicsSeg (juce::Point<float> p) const
     return open_ && dynamicsSegRect().contains (p);
 }
 
-bool BandPopover::clickDynamicsSeg()
+bool BandPopover::clickDynamicsSeg(bool expand)
 {
-    dynamicsExpand_ = ! dynamicsExpand_;
+    dynamicsExpand_ = expand;
     const int b = (band_ >= 0) ? band_ : 0;
     setParamNorm ("band" + juce::String (b) + "Dynamics", dynamicsExpand_ ? 1.0f : 0.0f);
     repaint();
     return true;
 }
 
-BandPopover::ExpertRow BandPopover::hitTestExpertRow (juce::Point<float> p) const
+juce::Rectangle<float> BandPopover::expertOptionRect(ExpertRow row,int option) const
 {
-    if (! open_ || ! expertOpen_)
-        return ExpertRow::None;
-    const auto box = expertContentRect();
-    if (! box.contains (p))
-        return ExpertRow::None;
-    // 5 行等分：Detector / Lookahead / Filtering / SC Low / SC High
-    const int idx = (int) ((p.y - box.getY()) / (box.getHeight() / 5.0f));
-    switch (juce::jlimit (0, 4, idx))
-    {
-        case 0:  return ExpertRow::Detector;
-        case 1:  return ExpertRow::Lookahead;
-        case 2:  return ExpertRow::Filtering;
-        case 3:  return ExpertRow::SCLow;
-        default: return ExpertRow::SCHigh;
-    }
+    const auto box=expertContentRect();const float s=EditorLayout(hostBounds_).scale;
+    const int index=(int)row-1,count=row==ExpertRow::Lookahead?3:2;
+    const float left=box.getX()+145*s,cell=(box.getWidth()*.56f-151*s)/count;
+    return {left+option*cell,box.getY()+12*s+index*40*s,cell-4*s,30*s};
 }
-
-void BandPopover::setSideChainFreq (int band, bool isLow)
+BandPopover::ExpertRow BandPopover::hitTestExpertRow(juce::Point<float> p) const
 {
-    // Pro-MB：Free 模式下侧链有一个高通和一个低通频率，用来让该段触发于
-    // 不同的频率范围。这里用"点击循环预设档"的方式暴露（与 Lookahead 同样的
-    // 交互语言，不需要额外拖拽手势）。
-    const juce::String id = "band" + juce::String (band)
-                         + (isLow ? "SCLow" : "SCHigh");
-    const float choicesLow[4]  = { 20.0f, 100.0f, 500.0f, 2000.0f };
-    const float choicesHigh[4] = { 500.0f, 2000.0f, 5000.0f, 20000.0f };
-    const float* choices = isLow ? choicesLow : choicesHigh;
-
-    const float cur = getParamPhysical (id);
-    int next = 0;
-    for (int i = 0; i < 4; ++i)
-        if (cur >= choices[i] - 1.0f) next = (i + 1) % 4;
-    setParamPhysical (id, choices[next]);
+    if(!open_||!expertOpen_)return ExpertRow::None;
+    for(auto row:{ExpertRow::Detector,ExpertRow::Lookahead,ExpertRow::Filtering})
+        for(int i=0;i<(row==ExpertRow::Lookahead?3:2);++i)if(expertOptionRect(row,i).contains(p))return row;
+    return ExpertRow::None;
 }
-
-void BandPopover::clickExpertRow (ExpertRow row)
+void BandPopover::selectExpertOption(ExpertRow row,int option)
 {
-    const int b = (band_ >= 0) ? band_ : 0;
-    switch (row)
-    {
-        case ExpertRow::Detector:
-            // 翻转 Peak/RMS（与滑杆 k=3 同语义）
-            applySlider (3, sliders_[3] > 0.5 ? 0.0 : 1.0);
-            break;
-        case ExpertRow::Lookahead:
-            // Off → 1ms → 3ms 循环（lookahead 是全局参数，k=4 只显示不在此写；
-            // 这里显式循环全局 lookahead 参数）
-            {
-                // ⚠️ lookahead 是 Choice 参数，实际值**就是选项索引**（0/1/2）。
-                //   这里必须用 getParamPhysical（实际值语义）而不是
-                //   getParamNorm（normalized）——R19 把 getParamNorm 改成真正的
-                //   归一化后，若继续用它会读到 0/0.5/1，roundToInt 得 0/0/1，
-                //   循环立刻错乱（T55.4 实测回归）。
-                const int cur = (int) juce::roundToInt (getParamPhysical ("lookahead"));
-                const int next = (cur + 1) % 3;
-                setParamNorm ("lookahead", next * 0.5f);   // 写入侧仍是 normalized
-                sliders_[4] = next * 0.5f;
-            }
-            break;
-        case ExpertRow::Filtering:
-            // Band → Free 循环（Pro-MB Side Chain Filtering）
-            {
-                const float cur = getParamNorm ("band" + juce::String (b) + "SCFilter");
-                setParamNorm ("band" + juce::String (b) + "SCFilter", cur > 0.5f ? 0.0f : 1.0f);
-            }
-            break;
-        case ExpertRow::SCLow:
-            // 高通频率：20 → 100 → 500 → 2000 Hz 循环
-            setSideChainFreq (b, true);
-            break;
-        case ExpertRow::SCHigh:
-            // 低通频率：500 → 2000 → 5000 → 20000 Hz 循环
-            setSideChainFreq (b, false);
-            break;
-        case ExpertRow::None:
-            break;
-    }
-    (void) b;
-    repaint();
+    const auto prefix="band"+juce::String(juce::jmax(0,band_));
+    if(row==ExpertRow::Detector)applySlider(3,juce::jlimit(0,1,option));
+    else if(row==ExpertRow::Lookahead){const int index=juce::jlimit(0,2,option);setParamPhysical("lookahead",(float)index);sliders_[4]=index*.5f;}
+    else if(row==ExpertRow::Filtering)setParamPhysical(prefix+"SCFilter",(float)juce::jlimit(0,1,option));
+    if(expertLayer_)expertLayer_->repaint();repaint();
+}
+bool BandPopover::selectExpertAt(juce::Point<float> p)
+{
+    if(!open_||!expertOpen_)return false;
+    for(auto row:{ExpertRow::Detector,ExpertRow::Lookahead,ExpertRow::Filtering})
+        for(int i=0;i<(row==ExpertRow::Lookahead?3:2);++i)if(expertOptionRect(row,i).contains(p)){selectExpertOption(row,i);return true;}
+    return false;
+}
+// Kept for existing callers; continuous values are edited by ValueField.
+void BandPopover::clickExpertRow(ExpertRow row)
+{
+    if(row==ExpertRow::Detector)selectExpertOption(row,sliders_[3]>.5?0:1);
+    if(row==ExpertRow::Lookahead)selectExpertOption(row,((int)std::lround(sliders_[4]*2)+1)%3);
+    if(row==ExpertRow::Filtering)selectExpertOption(row,getParamNorm("band"+juce::String(juce::jmax(0,band_))+"SCFilter")>.5f?0:1);
+}
+void BandPopover::layoutExpertFields()
+{
+    const auto box=expertContentRect();const float s=EditorLayout(hostBounds_).scale;
+    const float left=box.getX()+box.getWidth()*.58f;
+    for(int i=0;i<2;++i){auto& field=i==0?scLow_:scHigh_;field.setScale(s);
+        field.setBounds(juce::Rectangle<float>(left,box.getY()+(32+48*i)*s,box.getRight()-left-12*s,38*s).toNearestInt());
+        field.setVisible(open_&&expertOpen_);}
 }
 
 // ---------------- 开合 / 动画 ----------------
@@ -367,6 +324,8 @@ void BandPopover::ensureKnobs()
     {
         expertLayer_ = std::make_unique<ExpertLayer> (*this);
         addAndMakeVisible (*expertLayer_);
+        expertLayer_->addChildComponent(scLow_);expertLayer_->addChildComponent(scHigh_);
+        scLow_.setPalette(pal_);scHigh_.setPalette(pal_);
     }
     expertLayer_->setBounds (getLocalBounds());
     expertLayer_->toFront (false);
@@ -374,6 +333,7 @@ void BandPopover::ensureKnobs()
 
 void BandPopover::layoutKnobs (bool force)
 {
+    layoutExpertFields();
     if (! knobsReady_)
         return;
     const float a = juce::jlimit (0.0f, 1.0f, anim_);
@@ -389,7 +349,7 @@ void BandPopover::layoutKnobs (bool force)
         // 旋钮在一大片空槽里显得很小）。上下限防止极端尺寸下失真。
         // Knob 没有 diameter getter，用成员缓存，避免每帧 setKnobDiameter
         // （它会 invalidateBackLayer + repaint，代价不小）。
-        const float dia = juce::jlimit (24.0f, 72.0f, rc.getHeight() * (38.0f / 74.0f));
+        const float dia = 72.0f * EditorLayout(hostBounds_).scale;
         if (std::abs (knobDiameters_[(size_t) k] - dia) > 0.5f)
         {
             knobDiameters_[(size_t) k] = dia;
@@ -428,15 +388,18 @@ void BandPopover::beginSliderDrag (int k, float mouseX)
 {
     sliderDrag_ = k;
     sliderDragX0_ = mouseX;
-    sliderDragV0_ = sliders_[(size_t) juce::jlimit (0, 4, k)];
+    // Ratio is stored as a physical 1..20 value; the drag baseline must be 0..1.
+    // Using the raw ratio here clamped every drag to 20:1, including left drags.
+    const double value = sliders_[(size_t) juce::jlimit (0, 4, k)];
+    sliderDragNorm0_ = k == 0 ? (value - 1.0) / 19.0 : value;
 }
 
 void BandPopover::dragSlider (int k, float mouseX)
 {
     if (sliderDrag_ != k)
         return;
-    const float w = popSliderRect (k).getWidth();
-    float frac = (float) sliderDragV0_ + (mouseX - sliderDragX0_) / juce::jmax (1.0f, w);
+    const float w = popSliderTrackRect (k).getWidth();
+    float frac = (float) sliderDragNorm0_ + (mouseX - sliderDragX0_) / w;
     frac = juce::jlimit (0.0f, 1.0f, frac);
 
     if (k == 0)
@@ -525,6 +488,8 @@ void BandPopover::applySlider (int k, double v)
 void BandPopover::syncFromParams()
 {
     const int b = (band_ >= 0) ? band_ : 0;
+    scLow_.setValue(getParamPhysical("band"+juce::String(b)+"SCLow"));
+    scHigh_.setValue(getParamPhysical("band"+juce::String(b)+"SCHigh"));
     static const juce::String ids[kPopKnobs] = {
         "Threshold", "Range", "Attack", "Release", "Makeup", "Mix"   // B5：Makeup = OUTPUT
     };
@@ -565,7 +530,8 @@ bool BandPopover::syncParam (const juce::String& paramId)
     if (! paramId.startsWith (prefix))
     {
         // 全局的 lookahead 也属于本面板（EXPERT 行 + sliders_[4]）
-        return paramId == Param::ID::lookahead;
+        if(paramId==Param::ID::lookahead){sliders_[4]=getParamPhysical(paramId)*.5f;return true;}
+        return false;
     }
 
     const juce::String suffix = paramId.substring (prefix.length());
@@ -597,8 +563,9 @@ bool BandPopover::syncParam (const juce::String& paramId)
         dynamicsExpand_ = getParamNorm (paramId) > 0.5f;
         return true;
     }
-    if (suffix == "SCFilter" || suffix == "SCLow" || suffix == "SCHigh")
-        return true;        // EXPERT 行直接读参数绘制，无需缓存
+    if(suffix=="SCLow"){scLow_.setValue(getParamPhysical(paramId));return true;}
+    if(suffix=="SCHigh"){scHigh_.setValue(getParamPhysical(paramId));return true;}
+    if(suffix=="SCFilter")return true;        // EXPERT 行直接读参数绘制，无需缓存
 
     return false;
 }
@@ -621,11 +588,15 @@ void BandPopover::advanceKnobStates (double nowMs)
 // ---------------- 命中测试 ----------------
 bool BandPopover::hitTestClose (juce::Point<float> p) const
 {
+    return open_ && closeRect().contains(p);
+}
+
+juce::Rectangle<float> BandPopover::closeRect() const
+{
     const auto r = popoverRect();
-    const float s = r.getWidth() * (22.0f / 472.0f);
-    return juce::Rectangle<float> (r.getRight() - s - r.getWidth() * (10.0f / 472.0f),
-                                   r.getY() + r.getHeight() * (8.0f / 200.0f), s, s)
-             .contains (p);
+    const float s = 26.0f * EditorLayout(hostBounds_).scale;
+    return {r.getRight() - s - 12.0f * EditorLayout(hostBounds_).scale,
+            r.getY() + 5.0f * EditorLayout(hostBounds_).scale, s, s};
 }
 
 bool BandPopover::hitTestPanel (juce::Point<float> p) const
@@ -680,33 +651,24 @@ void BandPopover::paint (juce::Graphics& g)
 
     // ---- 顶栏：⚡BYP 宏 + 段名 + 频率范围 + ✕ ----
     {
-        const float boltS = r.getWidth() * (20.0f / 472.0f);
-        auto bolt = juce::Rectangle<float> (r.getX() + r.getWidth() * (10.0f / 472.0f),
-                                            r.getY() + r.getHeight() * (7.0f / 200.0f),
-                                            boltS, boltS);
-        g.setColour (pal_.track);
-        g.fillRoundedRectangle (bolt, r.getWidth() * (5.0f / 472.0f));
-        g.setColour (pal_.accent);
-        g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
-        g.drawText (juce::String::fromUTF8 ("\xE2\x9A\xA1"), bolt, juce::Justification::centred);
-
+        const float s=EditorLayout(hostBounds_).scale;
+        const juce::Rectangle<float> bolt(r.getX(),r.getY(),8*s,0);
         static const char* kNames[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
         g.setColour (pal_.text);
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 12.0f));
+        g.setFont (MBTheme::font (MBTheme::uiMedium(), 12.0f * EditorLayout(hostBounds_).scale));
         // R36（B6）：频率范围用 setBandFreqRange 推下来的真实 Hz 文本，
         //   不再把像素坐标当 Hz 打印、也不再只在打开时算一次。
         g.drawText (juce::String (kNames[juce::jlimit (0, 3, band_)]) + "  "
                     + (freqText_.isNotEmpty() ? freqText_
                                               : fmtHzShort (bandHzLow_) + " - " + fmtHzShort (bandHzHigh_)),
                     juce::Rectangle<float> (bolt.getRight() + r.getWidth() * (8.0f / 472.0f),
-                                            r.getY() + r.getHeight() * (7.0f / 200.0f),
+                                            r.getY() + 7.0f * EditorLayout(hostBounds_).scale,
                                             r.getWidth() * (300.0f / 472.0f),
-                                            r.getHeight() * (20.0f / 200.0f)),
+                                            24.0f * EditorLayout(hostBounds_).scale),
                     juce::Justification::centredLeft);
 
-        const float cs = r.getWidth() * (22.0f / 472.0f);
-        auto closeBtn = juce::Rectangle<float> (r.getRight() - cs - r.getWidth() * (10.0f / 472.0f),
-                                                r.getY() + r.getHeight() * (8.0f / 200.0f), cs, cs);
+        const auto closeBtn = closeRect();
+        const float cs = closeBtn.getWidth();
         g.setColour (pal_.track);
         g.fillRoundedRectangle (closeBtn, r.getWidth() * (6.0f / 472.0f));
         // R36：原来这里画的是 "✕"（U+2715）——Poppins 里没有这个字形，
@@ -723,22 +685,8 @@ void BandPopover::paint (juce::Graphics& g)
         // 分隔线
         g.setColour (pal_.grid);
         g.fillRect (r.getX() + r.getWidth() * (10.0f / 472.0f),
-                    r.getY() + r.getHeight() * (30.0f / 200.0f),
+                    r.getY() + 36.0f * EditorLayout(hostBounds_).scale,
                     r.getWidth() - r.getWidth() * (20.0f / 472.0f), 1.0f);
-    }
-
-    // ---- 旋钮行底板（弧/帽/指针/数值由 Knob 子组件绘制）----
-    // ⚠️ R36：这里原来还会在每个旋钮下方画一行范围标注（"-60..0 dB" 之类）。
-    //   改成 6 个旋钮 + 字号放大之后，那行标注和 Knob 自己的数值读数**叠在一起**
-    //   （快照里能看到 "-20.0 dB" 压在 "-60..0 dB" 上）。Pro-MB 的分段面板
-    //   也只显示数值、不显示范围，所以直接去掉，退回干净的"标签 + 旋钮 + 数值"。
-    for (int k = 0; k < kPopKnobs; ++k)
-    {
-        const auto kr = popKnobRect (k);
-        const bool hot = kr.contains (lastMousePos_);
-        g.setColour (pal_.track.withAlpha ((hot ? 0.50f : 0.28f) * a));
-        g.fillRoundedRectangle (kr.expanded (r.getWidth() * (2.0f / 472.0f)),
-                                r.getWidth() * (6.0f / 472.0f));
     }
 
     // ---- Phase C-6：Dynamics 分段按钮（Compress / Expand，Pro-MB segmented 对标）----
@@ -762,7 +710,7 @@ void BandPopover::paint (juce::Graphics& g)
             {
                 g.setColour (pal_.dim.withMultipliedAlpha (a));
             }
-            g.setFont (MBTheme::font (on ? MBTheme::semiBold() : MBTheme::regular(), 9.5f));
+            g.setFont (MBTheme::font (on ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * EditorLayout(hostBounds_).scale));
             g.drawText (labels[i], cell, juce::Justification::centred);
         }
         // 外框（分段控件的容器感）
@@ -770,47 +718,35 @@ void BandPopover::paint (juce::Graphics& g)
         g.drawRoundedRectangle (seg, seg.getHeight() * 0.28f, 1.0f);
     }
 
-    // ---- 滑杆行：RATIO / KNEE(0-48dB) / EXT ----
-    // R36（B4）：原来是"整块深色胶囊 + 居中文字"，圆角半径 = 半高，
-    //   于是 frac 很小时填充块被画成一颗大蓝球（快照里那三个圆点就是它），
-    //   整行看起来像标签而不是控件。现在改成标准写法：
-    //   上排「名称 … 数值」，下排「细轨道 + accent 填充 + 圆点手柄」。
-    //   拖动热区仍是整行 popSliderRect()，手感不变。
-    for (int k = 0; k < 3; ++k)
-    {
-        const auto sr = popSliderRect (k);
-        const bool hot = (sliderDrag_ == k) || sr.contains (lastMousePos_);
-
-        float frac = (k == 0) ? (float) ((sliders_[0] - 1.0) / 19.0)
-                   : (k == 1) ? (float) sliders_[1]
-                              : (float) sliders_[2];
-        frac = juce::jlimit (0.0f, 1.0f, frac);
-
-        const float labelH = sr.getHeight() * 0.50f;
-        const juce::String name = (k == 0) ? "RATIO" : (k == 1) ? "KNEE" : "EXT";
-        const juce::String val  = (k == 0) ? juce::String (sliders_[0], 1) + " : 1"
-                                : (k == 1) ? juce::String (sliders_[1] * 48.0, 1) + " dB"
-                                           : ((sliders_[2] > 0.5) ? "SIDECHAIN" : "INTERNAL");
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
-        g.setColour (hot ? pal_.text.withMultipliedAlpha (a) : pal_.dim.withMultipliedAlpha (a));
-        g.drawText (name, sr.withHeight (labelH), juce::Justification::centredLeft);
-        g.setColour (hot ? pal_.accent.withMultipliedAlpha (a) : pal_.text.withMultipliedAlpha (a));
-        g.drawText (val, sr.withHeight (labelH), juce::Justification::centredRight);
-
-        const float trkH = juce::jmax (3.0f, sr.getHeight() * 0.16f);
-        const float trkY = sr.getY() + labelH + (sr.getHeight() - labelH - trkH) * 0.5f;
-        const float padX = trkH * 1.2f;
-        auto track = juce::Rectangle<float> (sr.getX() + padX, trkY,
-                                             juce::jmax (4.0f, sr.getWidth() - padX * 2.0f), trkH);
-        g.setColour (pal_.track.withAlpha ((hot ? 0.95f : 0.70f) * a));
-        g.fillRoundedRectangle (track, trkH * 0.5f);
-        g.setColour (pal_.accent.withAlpha ((hot ? 0.95f : 0.80f) * a));
-        g.fillRoundedRectangle (track.withWidth (juce::jmax (trkH, track.getWidth() * frac)),
-                                trkH * 0.5f);
-        const float hx = track.getX() + track.getWidth() * frac;
-        const float hr = trkH * 1.05f;
-        g.setColour (hot ? juce::Colours::white : pal_.knob);
-        g.fillEllipse (hx - hr, trkY + trkH * 0.5f - hr, hr * 2.0f, hr * 2.0f);
+    // Approved two-row footer: Compress/Expand + Ratio, Knee + Sidechain.
+    const float scale=EditorLayout(hostBounds_).scale;
+    for(int k=0;k<3;++k) {
+        const auto row=popSliderRect(k);
+        const bool hot=(sliderDrag_==k)||row.contains(lastMousePos_);
+        g.setFont(MBTheme::font(MBTheme::uiMedium(),12*scale));
+        g.setColour(pal_.dim.withMultipliedAlpha(a));
+        g.drawText(k==0?"RATIO":k==1?"KNEE":"SIDECHAIN",row.withWidth((k==2?80:46)*scale),juce::Justification::centredLeft);
+        if(k==2) {
+            const float x=row.getX()+90*scale,w=(row.getWidth()-90*scale)*.5f;
+            for(int j=0;j<2;++j) {
+                const auto cell=juce::Rectangle<float>(x+j*w,row.getY(),w-4*scale,row.getHeight());
+                const bool on=(sliders_[2]>.5)==(j==1);
+                g.setColour((on?pal_.accent.withAlpha(.2f):pal_.track).withMultipliedAlpha(a));
+                g.fillRoundedRectangle(cell,5*scale);
+                g.setColour((on?pal_.accent:pal_.dim).withMultipliedAlpha(a));
+                g.drawText(j==0?"INT":"EXT",cell,juce::Justification::centred);
+            }
+            continue;
+        }
+        const float fraction=juce::jlimit(0.0f,1.0f,k==0?float((sliders_[0]-1)/19):float(sliders_[1]));
+        const auto track=popSliderTrackRect(k);
+        g.setColour(pal_.track.withMultipliedAlpha(a));g.fillRoundedRectangle(track,2*scale);
+        g.setColour(pal_.accent.withMultipliedAlpha(a));g.fillRoundedRectangle(track.withWidth(juce::jmax(4*scale,track.getWidth()*fraction)),2*scale);
+        g.setColour((hot?juce::Colours::white:pal_.knob).withMultipliedAlpha(a));
+        g.fillEllipse(track.getX()+track.getWidth()*fraction-5*scale,row.getCentreY()-5*scale,10*scale,10*scale);
+        const auto value=k==0?juce::String(sliders_[0],1)+" : 1":juce::String(sliders_[1]*48,1)+" dB";
+        g.setFont(MBTheme::font(MBTheme::regular(),12*scale));g.setColour(pal_.text.withMultipliedAlpha(a));
+        g.drawText(value,row.withLeft(row.getRight()-64*scale),juce::Justification::centredRight);
     }
 
     // ---- EXPERT 右缘竖排标签（Phase C-5，Pro-MB 对标）----
@@ -821,7 +757,7 @@ void BandPopover::paint (juce::Graphics& g)
         g.fillRoundedRectangle (er, er.getWidth() * 0.3f);
         g.setColour (expertOpen_ ? pal_.accent.withAlpha (0.9f * a)
                                  : pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (expertOpen_ ? MBTheme::semiBold() : MBTheme::regular(), 9.0f));
+        g.setFont (MBTheme::font (expertOpen_ ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * EditorLayout(hostBounds_).scale));
 
         // R36（B4）：原来逐字符往下排（"E X P E R T"竖着一列），观感很差。
         //   改为把「EXPERT ▸」整体旋转 −90°，沿右缘竖着读。
@@ -844,61 +780,24 @@ void BandPopover::paint (juce::Graphics& g)
 }
 
 // R35（C-b）：EXPERT 展开层——由 ExpertLayer 子组件调用，合成在旋钮之上。
-void BandPopover::paintExpertLayer (juce::Graphics& g)
+void BandPopover::paintExpertLayer(juce::Graphics& g)
 {
-    if (! open_ || ! expertOpen_ || anim_ < 0.004f)
-        return;
-    const float a = juce::jlimit (0.0f, 1.0f, anim_);
-    const auto r = popoverRect();
-
-    {
-        const auto box = expertContentRect();
-        g.setColour (pal_.surface.withAlpha (0.96f * a));
-        g.fillRoundedRectangle (box, r.getWidth() * (6.0f / 472.0f));
-        g.setColour (pal_.accent.withAlpha (0.6f * a));
-        g.drawRoundedRectangle (box, r.getWidth() * (6.0f / 472.0f), 1.0f);
-
-        const int bShow = (band_ >= 0) ? band_ : 0;
-        const float rowH = box.getHeight() / 5.0f;
-        g.setFont (MBTheme::font (MBTheme::regular(), 8.5f));
-
-        struct Row { const char* label; juce::String value; };
-        const Row rows[5] = {
-            { "DETECTOR",  sliders_[3] > 0.5 ? "RMS" : "PEAK" },
-            { "LOOKAHEAD", sliders_[4] == 0 ? "OFF"
-                             : sliders_[4] == 1 ? "1 ms" : "3 ms" },
-            { "FILTERING", getParamNorm ("band" + juce::String (bShow) + "SCFilter") > 0.5f
-                             ? "FREE" : "BAND" },
-            { "SC HIGH-PASS", fmtHzShort (getParamPhysical (
-                             "band" + juce::String (bShow) + "SCLow")) + " Hz" },
-            { "SC LOW-PASS",  fmtHzShort (getParamPhysical (
-                             "band" + juce::String (bShow) + "SCHigh")) + " Hz" },
-        };
-
-        for (int i = 0; i < 5; ++i)
-        {
-            const float y = box.getY() + rowH * (float) i;
-            g.setColour (pal_.dim.withMultipliedAlpha (a * 0.9f));
-            g.drawText (rows[i].label,
-                        juce::Rectangle<float> (box.getX() + box.getWidth() * 0.06f, y,
-                                                box.getWidth() * 0.56f, rowH),
-                        juce::Justification::centredLeft);
-            g.setColour (pal_.text.withMultipliedAlpha (a));
-            g.drawText (rows[i].value,
-                        juce::Rectangle<float> (box.getX() + box.getWidth() * 0.58f, y,
-                                                box.getWidth() * 0.36f, rowH),
-                        juce::Justification::centredRight);
-        }
-
-        // 提示这些行都是可点的
-        g.setColour (pal_.accent.withAlpha (0.7f * a));
-        g.setFont (MBTheme::font (MBTheme::regular(), 7.5f));
-        g.drawText ("(click to cycle)",
-                    juce::Rectangle<float> (box.getX() + box.getWidth() * 0.06f,
-                                            box.getBottom() - rowH * 0.45f,
-                                            box.getWidth() * 0.88f, rowH * 0.45f),
-                    juce::Justification::centredLeft);
-    }
+    if(!open_||!expertOpen_||anim_<.004f)return;
+    const auto box=expertContentRect();const float s=EditorLayout(hostBounds_).scale;
+    g.setColour(pal_.surface.withAlpha(.80f*anim_));g.fillRoundedRectangle(box,7*s);
+    g.setColour(pal_.gridZ);g.drawRoundedRectangle(box,7*s,s);
+    const char* titles[]={"DETECTOR","LOOKAHEAD","SC FILTERING"};
+    const char* options[3][3]={{"Peak","RMS",""},{"Off","1 ms","3 ms"},{"Band","Free",""}};
+    const int selected[]={sliders_[3]>.5?1:0,(int)std::lround(sliders_[4]*2),getParamNorm("band"+juce::String(juce::jmax(0,band_))+"SCFilter")>.5f?1:0};
+    for(int row=0;row<3;++row){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim);
+        g.drawText(titles[row],juce::Rectangle<float>(box.getX()+12*s,box.getY()+(12+row*40)*s,130*s,30*s),juce::Justification::centredLeft);
+        for(int i=0;i<(row==1?3:2);++i){const auto r=expertOptionRect((ExpertRow)(row+1),i);const bool on=selected[row]==i;
+            g.setColour(on?pal_.accent.withAlpha(.2f):pal_.track);g.fillRoundedRectangle(r,4*s);
+            g.setColour(on?pal_.accent:pal_.gridZ);g.drawRoundedRectangle(r,4*s,s);
+            g.setColour(on?pal_.text:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),14*s));g.drawText(options[row][i],r,juce::Justification::centred,false);}}
+    const float left=box.getX()+box.getWidth()*.58f;
+    g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),12*s));
+    g.drawText("FREQUENCY (FREE MODE)",juce::Rectangle<float>(left,box.getY()+8*s,box.getRight()-left-12*s,22*s),juce::Justification::centredLeft);
 }
 
 void BandPopover::resized()

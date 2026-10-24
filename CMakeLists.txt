@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CrunchMB VERSION 1.0.0)
+project(CrunchMB VERSION 1.0.4)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,7 +20,9 @@ set(FONT_SOURCES
     "${FONT_DIR}/Poppins-Regular.ttf"
     "${FONT_DIR}/Poppins-Medium.ttf"
     "${FONT_DIR}/Poppins-SemiBold.ttf"
-    "${FONT_DIR}/Poppins-Bold.ttf")
+    "${FONT_DIR}/Poppins-Bold.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/Barlow-Regular.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/Barlow-Medium.ttf")
 juce_add_binary_data(CrunchMBData SOURCES ${FONT_SOURCES})
 
 # ---------- 插件目标 ----------
@@ -29,9 +31,10 @@ juce_add_plugin(CrunchMB
     COMPANY_NAME              "Kilo"
     BUNDLE_ID                 com.kilo.crunchmb
     PLUGIN_MANUFACTURER_CODE  Kilo
-    PLUGIN_CODE               CRMB
+    # Fixed identity from 1.0.4 onward. Do not regenerate per build/version.
+    PLUGIN_CODE               K7mB
     FORMATS                   VST3 Standalone
-    VERSION                   1.0.0
+    VERSION                   1.0.4
     IS_SYNTH                  FALSE
     NEEDS_MIDI_INPUT          FALSE
     NEEDS_MIDI_OUTPUT         FALSE
@@ -76,8 +79,21 @@ target_sources(CrunchMB PRIVATE
 target_compile_definitions(CrunchMB PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    # No VST2 edition is shipped. Do not advertise a legacy VST2 identity.
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+# JUCE generates this manifest by querying the compiled binary's factory.
+# Fail the build if a flag, product code or JUCE upgrade changes our identity.
+if(WIN32)
+    get_target_property(crunch_mb_vst3_bundle CrunchMB_VST3 JUCE_PLUGIN_ARTEFACT_FILE)
+    add_custom_command(TARGET CrunchMB_VST3 POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            "-DMANIFEST=${crunch_mb_vst3_bundle}/Contents/Resources/moduleinfo.json"
+            "-DEXPECTED_VERSION=1.0.4"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyVst3Identity.cmake"
+        VERBATIM)
+endif()
 
 juce_generate_juce_header(CrunchMB)
 
@@ -133,6 +149,7 @@ target_sources(CrunchMBTests PRIVATE
     src/ui/SpectrumView.h)
 target_include_directories(CrunchMBTests PRIVATE src)
 target_compile_definitions(CrunchMBTests PRIVATE
+    JUCE_PLUGINHOST_VST3=1
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0)
 target_link_libraries(CrunchMBTests PRIVATE

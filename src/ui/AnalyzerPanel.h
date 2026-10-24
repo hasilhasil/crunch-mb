@@ -59,6 +59,7 @@ public:
 
     /** 每帧推进动画。返回 true 表示仍在动画中。 */
     bool advance (double nowMs);
+    void snapToCurrent() { anim_=animTarget_=open_?1.0f:0.0f;tween_.snapTo(anim_); }
 
     void setHostBounds (juce::Rectangle<int> hostBounds);
     void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); repaint(); }
@@ -83,6 +84,7 @@ public:
     // ---- 命中测试 ----
     /** 面板自身矩形（用于"点面板外收起"判定与绘制）。 */
     juce::Rectangle<float> panelRect() const;
+    juce::Rectangle<float> optionRect(int row) const;
     /** 命中某一行；rowOut: 0=Pre 1=Post 2..5=Resolution 6..8=Speed 9..12=Tilt 13=Freeze */
     bool hitTestRow (juce::Point<float> p, int& rowOut) const;
 

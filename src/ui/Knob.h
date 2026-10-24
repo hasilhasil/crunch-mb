@@ -59,6 +59,10 @@ public:
     void setValuePrefix (juce::String p)       { valuePrefix_ = std::move (p); repaint(); }
     void setLinkedMark (bool b)                { linkedMark_ = b; repaint(); }   // §5.2 ⊞ 联动标识
     void setPalette (MBTheme::Palette p)       { pal_ = p; invalidateBackLayer(); repaint(); }
+    void setSelectionFeedbackEnabled(bool enabled) { selectionFeedback_=enabled; }
+    void setUiTextSizes(float label,float value) { labelTextSize_=label;valueTextSize_=value; }
+    void focusGained(juce::Component::FocusChangeType) override { repaint(); }
+    void focusLost(juce::Component::FocusChangeType) override { if(editing_)closeEditor(true);repaint(); }
 
     // ---- 值 ----
     void setValue (double v, bool sendNotification = true);
@@ -218,6 +222,8 @@ private:
 
     // 内嵌编辑（自绘）
     bool editing_ = false;
+    bool selectionFeedback_=false;
+    float labelTextSize_=0,valueTextSize_=0;
     juce::String editText_;
     // A2 修复（UI_PLAN_V2 §6.3）：光标可见性改为**时间驱动**。
     // 此前在 Knob::paint() 里写 `editCursorOn_ = ! editCursorOn_;`，

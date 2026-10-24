@@ -1,5 +1,6 @@
 #include "AnalyzerPanel.h"
 #include "../PluginProcessor.h"
+#include "EditorLayout.h"
 
 // ============================================================
 // AnalyzerPanel 实现
@@ -16,14 +17,10 @@ namespace
 
 juce::Rectangle<float> AnalyzerPanel::panelRect() const
 {
-    // 贴在 global bar 上方、水平居中于 Analyzer 按钮（与 hitTestAnalyzerButton 同位）
-    const float W = (float) hostBounds_.getWidth();
-    const float H = (float) hostBounds_.getHeight();
-    const float pw = W * (190.0f / kDesignW);
-    const float ph = H * ((kNumRows * kRowH + 16.0f) / kDesignH);
-    const float px = W * 0.5f - W * (150.0f / kDesignW) + W * (52.0f / kDesignW) - pw * 0.5f;
-    const float py = H - H * (kGlobalBarH / kDesignH) - ph - H * (4.0f / kDesignH);
-    return juce::Rectangle<float> (px, py, pw, ph);
+
+    const EditorLayout l(hostBounds_);const float s=l.scale,w=440*s,h=348*s;
+    return {l.plotRight()-w-12*s,l.globalTop()-h-12*s,w,h};
+
 }
 
 void AnalyzerPanel::setHostBounds (juce::Rectangle<int> hostBounds)
@@ -83,21 +80,22 @@ bool AnalyzerPanel::advance (double nowMs)
 // ---------------- 行布局与点击 ----------------
 void AnalyzerPanel::layoutRows() {}
 
-bool AnalyzerPanel::hitTestRow (juce::Point<float> p, int& rowOut) const
+juce::Rectangle<float> AnalyzerPanel::optionRect(int row) const
 {
-    if (! open_)
-        return false;
-    const auto pr = panelRect();
-    if (! pr.contains (p))
-        return false;
-    // 行区从面板顶部 8px 开始，每行 kRowH
-    const float top = pr.getY() + pr.getHeight() * (8.0f / (kNumRows * kRowH + 16.0f));
-    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 16.0f));
-    const int idx = (int) ((p.y - top) / rowH);
-    if (idx < 0 || idx >= kNumRows)
-        return false;
-    rowOut = idx;
-    return true;
+    const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale;
+    int index=0,count=1;float y=298,h=32;
+    if(row<2){index=row;count=2;y=46;}
+    else if(row<6){index=row-2;count=4;y=116;h=38;}
+    else if(row<9){index=row-6;count=3;y=186;}
+    else if(row<13){index=row-9;count=4;y=250;}
+    const float cell=(r.getWidth()-32*s)/count;
+    return {r.getX()+16*s+index*cell,r.getY()+y*s,cell-4*s,h*s};
+}
+bool AnalyzerPanel::hitTestRow(juce::Point<float> p,int& rowOut) const
+{
+    if(!open_)return false;
+    for(int i=0;i<14;++i)if(optionRect(i).contains(p)){rowOut=i;return true;}
+    return false;
 }
 
 void AnalyzerPanel::clickRow (int row)
@@ -126,87 +124,24 @@ void AnalyzerPanel::clickRow (int row)
 }
 
 // ---------------- 绘制 ----------------
-void AnalyzerPanel::paint (juce::Graphics& g)
+void AnalyzerPanel::paint(juce::Graphics& g)
 {
-    if (! open_ || anim_ < 0.004f)
-        return;
-    const float a = juce::jlimit (0.0f, 1.0f, anim_);
-    const auto pr = panelRect();
-
-    // 面板：深色圆角 + accent 描边（Pro-MB 的深灰圆角设置面板）
-    // ---- Phase E-3：多层渐变投影（原来是一层硬边黑影）----
-    {
-        const float corner = pr.getWidth() * 0.06f;
-        struct Layer { float dy; float alpha; float expand; };
-        const Layer layers[3] = {
-            { 2.0f,  0.30f, 0.0f },
-            { 6.0f,  0.20f, 3.0f },
-            { 14.0f, 0.14f, 7.0f },
-        };
-        for (const auto& L : layers)
-        {
-            auto shadow = pr.translated (0.0f, L.dy).expanded (L.expand);
-            g.setColour (juce::Colours::black.withAlpha (L.alpha * a));
-            g.fillRoundedRectangle (shadow, corner + L.expand);
-        }
-    }
-    g.setColour (pal_.popA.withMultipliedAlpha (a));
-    g.fillRoundedRectangle (pr, pr.getWidth() * 0.06f);
-    g.setColour (pal_.accent.withAlpha (0.55f * a));
-    g.drawRoundedRectangle (pr, pr.getWidth() * 0.06f, 1.0f);
-
-    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 16.0f));
-    const float top  = pr.getY() + pr.getHeight() * (8.0f / (kNumRows * kRowH + 16.0f));
-
-    struct Item { const char* label; bool on; bool isHeader; };
-    const Item items[kNumRows] = {
-        { "Pre spectrum",              preOn_,                 false },
-        { "Post spectrum",             postOn_,                false },
-        { "Resolution  Low (1024)",    fftSize_ == 1024,       false },
-        { "Resolution  Medium (2048)", fftSize_ == 2048,       false },
-        { "Resolution  High (4096)",   fftSize_ == 4096,       false },
-        { "Resolution  Max (8192)",    fftSize_ == 8192,       false },
-        { "Speed  Fast",               speed_ == 0,            false },
-        { "Speed  Medium",             speed_ == 1,            false },
-        { "Speed  Slow",               speed_ == 2,            false },
-        { "Tilt  Off (0 dB/oct)",      std::abs (tilt_) < 0.01f, false },
-        { "Tilt  1.5 dB/oct",          std::abs (tilt_ - 1.5f) < 0.01f, false },
-        { "Tilt  3.0 dB/oct",          std::abs (tilt_ - 3.0f) < 0.01f, false },
-        { "Tilt  4.5 dB/oct",          std::abs (tilt_ - 4.5f) < 0.01f, false },
-        { "Freeze",                    frozen_,                false },
-    };
-
-    g.setFont (MBTheme::font (MBTheme::regular(), 9.5f));
-    for (int i = 0; i < kNumRows; ++i)
-    {
-        const float y = top + rowH * (float) i;
-        const bool on = items[i].on;
-        // 选中行：accent 淡底 + 左侧小圆点
-        if (on)
-        {
-            g.setColour (pal_.accent.withAlpha (0.16f * a));
-            g.fillRoundedRectangle (juce::Rectangle<float> (pr.getX() + pr.getWidth() * 0.04f, y,
-                                                            pr.getWidth() * 0.92f, rowH * 0.9f),
-                                    pr.getWidth() * 0.03f);
-        }
-        g.setColour (on ? pal_.text : pal_.dim);
-        g.drawText (items[i].label,
-                    juce::Rectangle<float> (pr.getX() + pr.getWidth() * 0.12f, y,
-                                            pr.getWidth() * 0.84f, rowH),
-                    juce::Justification::centredLeft);
-        // 左侧圆点（选中=实心 accent，未选=空心 gridZ）
-        const float dotR = juce::jmax (2.0f, pr.getWidth() * 0.014f);
-        const float dx = pr.getX() + pr.getWidth() * 0.075f;
-        const float dy = y + rowH * 0.5f;
-        if (on)
-        {
-            g.setColour (pal_.accent.withAlpha (0.95f * a));
-            g.fillEllipse (dx - dotR, dy - dotR, dotR * 2.0f, dotR * 2.0f);
-        }
-        else
-        {
-            g.setColour (pal_.gridZ.withMultipliedAlpha (a));
-            g.drawEllipse (dx - dotR, dy - dotR, dotR * 2.0f, dotR * 2.0f, 1.0f);
-        }
-    }
+    if(!open_||anim_<.004f)return;
+    const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale,a=anim_;
+    g.setColour(juce::Colours::black.withAlpha(.25f*a));g.fillRoundedRectangle(r.translated(0,5*s).expanded(3*s),12*s);
+    g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);
+    g.setColour(pal_.gridZ);g.drawRoundedRectangle(r,12*s,s);
+    g.setColour(pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
+    g.drawText("ANALYZER",r.withTrimmedLeft(18*s).withHeight(40*s),juce::Justification::centredLeft);
+    const char* headings[]={"RESOLUTION","SPEED","TILT (dB/oct)"};const float ys[]={90,162,226};
+    for(int i=0;i<3;++i){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim);
+        g.drawText(headings[i],juce::Rectangle<float>(r.getX()+18*s,r.getY()+ys[i]*s,r.getWidth()-36*s,22*s),juce::Justification::centredLeft);}
+    const bool on[]={preOn_,postOn_,fftSize_==1024,fftSize_==2048,fftSize_==4096,fftSize_==8192,
+        speed_==0,speed_==1,speed_==2,std::abs(tilt_)<.01f,std::abs(tilt_-1.5f)<.01f,std::abs(tilt_-3)<.01f,std::abs(tilt_-4.5f)<.01f,frozen_};
+    const char* labels[]={"Pre spectrum","Post spectrum","Low 1024","Medium 2048","High 4096","Max 8192","Fast","Medium","Slow","Off","1.5","3.0","4.5","Freeze"};
+    for(int i=0;i<14;++i){auto cell=optionRect(i);
+        g.setColour(on[i]?pal_.accent.withAlpha(.2f):pal_.track);g.fillRoundedRectangle(cell,5*s);
+        g.setColour(on[i]?pal_.accent:pal_.gridZ);g.drawRoundedRectangle(cell,5*s,s);
+        g.setColour(on[i]?pal_.text:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),(i>=2&&i<6?13.0f:14.0f)*s));
+        g.drawText(labels[i],cell.reduced(3*s,0),juce::Justification::centred,false);}
 }

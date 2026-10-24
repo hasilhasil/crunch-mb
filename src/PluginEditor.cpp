@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ui/DisplayView.h"
+#include "ui/EditorLayout.h"
 
 // ============================================================
 // CrunchMBAudioProcessorEditor — 外壳（Phase 4.2）
@@ -24,9 +25,9 @@ CrunchMBAudioProcessorEditor::CrunchMBAudioProcessorEditor (CrunchMBAudioProcess
     display = std::make_unique<DisplayView> (proc);
     addAndMakeVisible (*display);
 
-    setSize (920, 620);
     setResizable (true, true);
-    setResizeLimits (700, 500, 1840, 1240);
+    setResizeLimits (EditorLayout::minWidth, EditorLayout::minHeight, 2080, 1560);
+    setSize (EditorLayout::defaultWidth, EditorLayout::defaultHeight);
 
     // ⚠️ setSize 之后立即给 display 真实 bounds：若只靠 resized() 回调，
     // 宿主不及时调用时 display 的 size 为 0 → plotHeightPx() 退化 → 曲线比例错乱（#9）

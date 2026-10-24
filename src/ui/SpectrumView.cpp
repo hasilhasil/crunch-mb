@@ -66,25 +66,28 @@ void SpectrumView::refreshPaths()
 
 void SpectrumView::paint (juce::Graphics& g)
 {
+    // A frozen analyzer still needs new geometry when the editor is resized.
+    if (! pathsValid_ && hasFrame_)
+        refreshPaths();
     // ⚠️ guard 只用"内容为空"判断，不用 pathsValid_ 脏标志——
     // 2026-09-23 修复：脏标志为 true 的那一帧会整层不画，但 Path 里还有上一帧
     // 几何可用 → 用户看到"曲线/频谱偶发消失一瞬间"。
     if (preFill_.isEmpty() && preStroke_.isEmpty())
         return;
 
-    // B1（用户验收指定）：主题色(accent) = Pre，灰(inFill) = Post
+    // Approved redraw: Pre is grey; Post keeps the selected theme colour.
     if (preOn_)
     {
-        g.setColour (pal_.accent.withAlpha (0.30f));
+        g.setColour (pal_.inFill.withAlpha (0.20f));
         g.fillPath (preFill_);
-        g.setColour (pal_.accent.withAlpha (0.95f));
+        g.setColour (pal_.inFill.withAlpha (0.65f));
         g.strokePath (preStroke_, juce::PathStrokeType (2.0f));
     }
     if (postOn_)
     {
-        g.setColour (pal_.inFill.withAlpha (0.20f));
+        g.setColour (pal_.accent.withAlpha (0.20f));
         g.fillPath (postFill_);
-        g.setColour (pal_.inFill.withAlpha (0.80f));
+        g.setColour (pal_.accent.withAlpha (0.80f));
         g.strokePath (postStroke_, juce::PathStrokeType (1.5f));
     }
 }

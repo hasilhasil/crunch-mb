@@ -16,6 +16,7 @@ namespace
                                                            : juce::String (v, 1); }                  // ≥1 取整，<1 保留 1 位
     juce::String fmtRatio(float v, int) { return juce::String (v, 2); }                              // : 1，2 位小数
     juce::String fmtPct  (float v, int) { return juce::String ((int) std::round (v)); }              // % 整数
+    juce::String fmtPctPrecise(float v,int) { return juce::String(v,1); }
 
     using FloatAttr = juce::AudioParameterFloatAttributes;
 
@@ -85,7 +86,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     // Phase：全局 Mix 0-200%（Pro-MB 对标）。
     // 100% = 纯处理声；<100% = 与干声混合（减弱效果）；>100% = 并行压缩提响。
-    addFloat  (pid (ID::globalMix), "Mix", { 0.0f, 200.0f, 1.0f }, 100.0f, "%", fmtPct);
+    addFloat  (pid (ID::globalMix), "Mix", { 0.0f, 200.0f, 0.1f }, 100.0f, "%", fmtPctPrecise);
 
     // Auto-Gain（Future MB 对标，TECH_SPEC §5.1 / RESEARCH_UI P3）。
     // **默认关闭**：关闭时插件行为与本次改动之前完全一致；

@@ -1,187 +1,103 @@
 #include "OutputPanel.h"
-#include "../PluginProcessor.h"
+#include "EditorLayout.h"
 
-// ============================================================
-// OutputPanel 实现
-// ============================================================
-
-namespace
+OutputPanel::OutputPanel()
 {
-    constexpr float kDesignW = 920.0f;
-    constexpr float kDesignH = 620.0f;
-    constexpr float kGlobalBarH = 32.0f;
-    constexpr float kRowH = 22.0f;
-    constexpr int   kNumRows = 6;   // InputGain / OutputGain / Mix / GlobalBypass / AutoGain / Monitor
-    /** Monitor 档位名（与 Param::Monitor 枚举顺序一致）。 */
-    const char* const kMonitorNames[7] = {
-        "Output", "Input", "Band 1", "Band 2", "Band 3", "Band 4", "Gain Reduction"
-    };
+    setInterceptsMouseClicks(false,true);
+    const char* labels[]={"INPUT GAIN","OUTPUT GAIN","MIX"};
+    for(int i=0;i<3;++i){auto& knob=knobs_[(size_t)i];
+        knob.setRange(i==2?0:-36,i==2?200:36,.1);knob.setDefaultValue(i==2?100:0);
+        knob.setValue(i==2?100:0,false);knob.setLabel(labels[i]);knob.setValueSuffix(i==2?"%":"dB");knob.setDecimals(1);
+        if(i!=2){knob.setBipolar(true);knob.setBipolarOrigin(0);}
+        knob.setSelectionFeedbackEnabled(true);
+        knob.onValueChange=[this,i](double v){if(i==0)inputGainDb_=(float)v;else if(i==1)outputGainDb_=(float)v;else globalMixPct_=(float)v;
+            if(onSettingsChanged)onSettingsChanged();};
+        knob.onDragStart=[this,i]{if(onGesture)onGesture(i,true);};
+        knob.onDragEnd=[this,i]{if(onGesture)onGesture(i,false);};
+        addChildComponent(knob);
+    }
+    monitorBox_.addItemList({"Output","Input","Band 1","Band 2","Band 3","Band 4","Gain Reduction"},1);
+    monitorBox_.setLookAndFeel(&menuLookAndFeel_);monitorBox_.setSelectedId(1,juce::dontSendNotification);
+    monitorBox_.onChange=[this]{monitorIdx_=monitorBox_.getSelectedId()-1;if(onSettingsChanged)onSettingsChanged();};
+    addChildComponent(monitorBox_);setTheme(MBTheme::Theme::Blue);
 }
-
+OutputPanel::~OutputPanel(){monitorBox_.setLookAndFeel(nullptr);}
 juce::Rectangle<float> OutputPanel::panelRect() const
 {
-    const float W = (float) hostBounds_.getWidth();
-    const float H = (float) hostBounds_.getHeight();
-    const float pw = W * (180.0f / kDesignW);
-    const float ph = H * ((kNumRows * kRowH + 14.0f) / kDesignH);
-    // 右对齐到 BYPASS 胶囊左侧（与 OUT 读数同侧）
-    const float px = W - W * (108.0f / kDesignW) - pw - W * (6.0f / kDesignW);
-    const float py = H - H * (kGlobalBarH / kDesignH) - ph - H * (4.0f / kDesignH);
-    return juce::Rectangle<float> (px, py, pw, ph);
+    const EditorLayout l(hostBounds_);const float s=l.scale,w=440*s,h=316*s;
+    return {l.plotRight()-w-12*s,l.globalTop()-h-12*s,w,h};
 }
-
-void OutputPanel::setHostBounds (juce::Rectangle<int> hostBounds)
+juce::Rectangle<float> OutputPanel::toggleRect(int index) const
 {
-    if (hostBounds_ == hostBounds)
-        return;
-    hostBounds_ = hostBounds;
+    const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale;
+    return {r.getX()+16*s+index*208*s,r.getY()+207*s,200*s,34*s};
+}
+void OutputPanel::setHostBounds(juce::Rectangle<int> bounds){hostBounds_=bounds;layoutControls();repaint();}
+void OutputPanel::resized(){layoutControls();}
+void OutputPanel::setTheme(MBTheme::Theme theme)
+{
+    pal_=MBTheme::palette(theme);for(auto& knob:knobs_)knob.setPalette(pal_);
+    monitorBox_.setColour(juce::ComboBox::backgroundColourId,pal_.track);
+    monitorBox_.setColour(juce::ComboBox::textColourId,pal_.text);
+    monitorBox_.setColour(juce::ComboBox::outlineColourId,pal_.gridZ);
+    menuLookAndFeel_.setColour(juce::PopupMenu::backgroundColourId,pal_.surface);
+    menuLookAndFeel_.setColour(juce::PopupMenu::textColourId,pal_.text);
+    menuLookAndFeel_.setColour(juce::PopupMenu::highlightedBackgroundColourId,pal_.accent);
     repaint();
 }
-
-// ---------------- sticky 状态机（与 AnalyzerPanel / LinkedDrawer 同一套）----------------
-// R36（B2）：hoverButton() 已删除 —— 底栏按钮改为纯点击展开。
-
+void OutputPanel::layoutControls()
+{
+    const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale,cell=(r.getWidth()-32*s)/3;
+    for(int i=0;i<3;++i){auto& knob=knobs_[(size_t)i];knob.setKnobDiameter(76*s);
+        knob.setUiTextSizes(14*s,16*s);knob.setBounds(juce::Rectangle<float>(r.getX()+16*s+i*cell,r.getY()+49*s,cell,150*s).toNearestInt());knob.setVisible(open_);knob.setAlpha(anim_);}
+    menuLookAndFeel_.scale=s;monitorBox_.setBounds(juce::Rectangle<float>(r.getX()+132*s,r.getY()+254*s,r.getWidth()-148*s,36*s).toNearestInt());
+    monitorBox_.setVisible(open_);monitorBox_.setAlpha(anim_);
+}
+void OutputPanel::syncControls()
+{
+    knobs_[0].setValue(inputGainDb_,false);knobs_[1].setValue(outputGainDb_,false);knobs_[2].setValue(globalMixPct_,false);
+    monitorBox_.setSelectedId(monitorIdx_+1,juce::dontSendNotification);
+}
 bool OutputPanel::clickButton()
 {
-    if (! sticky_)
-    {
-        sticky_ = true;
-        open_ = true;
-    }
-    else
-    {
-        sticky_ = false;
-        open_ = false;
-    }
-    tween_.start (juce::Time::getMillisecondCounter(), open_ ? 1.0f : 0.0f,
-                  Anim::kFadeMs, anim_);
-    animTarget_ = open_ ? 1.0f : 0.0f;
-    return true;
+    open_=sticky_=!open_;syncControls();layoutControls();
+    tween_.start(juce::Time::getMillisecondCounter(),open_?1.0f:0.0f,Anim::kFadeMs,anim_);animTarget_=open_?1:0;return true;
 }
-
 void OutputPanel::clickOutside()
 {
-    if (! open_ && ! sticky_)
-        return;
-    open_ = false;
-    sticky_ = false;
-    tween_.start (juce::Time::getMillisecondCounter(), 0.0f, Anim::kFadeMs, anim_);
-    animTarget_ = 0.0f;
+    if(!open_)return;open_=sticky_=false;layoutControls();
+    tween_.start(juce::Time::getMillisecondCounter(),0,Anim::kFadeMs,anim_);animTarget_=0;
 }
-
-bool OutputPanel::advance (double nowMs)
+bool OutputPanel::advance(double now)
 {
-    anim_ = tween_.value (nowMs);
-    if (std::abs (anim_ - animTarget_) < Anim::kSnapEps)
-    {
-        anim_ = animTarget_;
-        tween_.snapTo (animTarget_);
-    }
-    return ! tween_.done (nowMs);
+    anim_=tween_.value(now);if(std::abs(anim_-animTarget_)<Anim::kSnapEps){anim_=animTarget_;tween_.snapTo(animTarget_);}
+    bool busy=!tween_.done(now);
+    for(auto& knob:knobs_){knob.setAlpha(anim_);knob.advanceStates(now);knob.setEditCursorBlink((juce::uint32)now);busy|=knob.isAnimating();}
+    monitorBox_.setAlpha(anim_);
+    return busy;
 }
-
-// ---------------- 行点击 ----------------
-bool OutputPanel::hitTestRow (juce::Point<float> p, int& rowOut) const
+bool OutputPanel::hitTestRow(juce::Point<float> p,int& row) const
 {
-    if (! open_)
-        return false;
-    const auto pr = panelRect();
-    if (! pr.contains (p))
-        return false;
-    const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-    const int idx = (int) ((p.y - top) / rowH);
-    if (idx < 0 || idx >= kNumRows)
-        return false;
-    rowOut = idx;
-    return true;
+    if(!open_)return false;for(int i=0;i<2;++i)if(toggleRect(i).contains(p)){row=i+3;return true;}return false;
 }
-
-void OutputPanel::clickRow (int row)
+void OutputPanel::clickRow(int row)
 {
-    switch (row)
-    {
-        // Input Gain：±36 dB，3 dB 步进环绕（与 Output Gain 同一操作逻辑）
-        case 0:  inputGainDb_ += 3.0f; if (inputGainDb_ > 36.0f)  inputGainDb_ = -36.0f; break;
-        case 1:  outputGainDb_ += 3.0f; if (outputGainDb_ > 36.0f)  outputGainDb_ = -36.0f; break;
-        case 2:  globalMixPct_ += 25.0f; if (globalMixPct_ > 200.0f) globalMixPct_ = 0.0f;   break;
-        case 3:  globalBypass_ = ! globalBypass_; break;
-        // Auto-Gain（Future MB 对标）：响度自动补偿。默认关。
-        case 4:  autoGain_ = ! autoGain_; break;
-        // Monitor（Future MB 对标）：循环切换试听目标。
-        case 5:  monitorIdx_ = (monitorIdx_ + 1) % 7; break;
-        default: break;
-    }
-    if (onSettingsChanged)
-        onSettingsChanged();
-    repaint();
+    if(row==3)globalBypass_=!globalBypass_;else if(row==4)autoGain_=!autoGain_;else return;
+    if(onSettingsChanged)onSettingsChanged();repaint();
 }
-
-// ---------------- 绘制 ----------------
-void OutputPanel::paint (juce::Graphics& g)
+void OutputPanel::paint(juce::Graphics& g)
 {
-    if (! open_ || anim_ < 0.004f)
-        return;
-    const float a = juce::jlimit (0.0f, 1.0f, anim_);
-    const auto pr = panelRect();
-
-    // ---- Phase E-3：多层渐变投影 ----
-    {
-        const float corner = pr.getWidth() * 0.06f;
-        struct Layer { float dy; float alpha; float expand; };
-        const Layer layers[3] = {
-            { 2.0f,  0.30f, 0.0f },
-            { 6.0f,  0.20f, 3.0f },
-            { 14.0f, 0.14f, 7.0f },
-        };
-        for (const auto& L : layers)
-        {
-            auto shadow = pr.translated (0.0f, L.dy).expanded (L.expand);
-            g.setColour (juce::Colours::black.withAlpha (L.alpha * a));
-            g.fillRoundedRectangle (shadow, corner + L.expand);
-        }
-    }
-    g.setColour (pal_.popA.withMultipliedAlpha (a));
-    g.fillRoundedRectangle (pr, pr.getWidth() * 0.06f);
-    g.setColour (pal_.accent.withAlpha (0.55f * a));
-    g.drawRoundedRectangle (pr, pr.getWidth() * 0.06f, 1.0f);
-
-    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-    const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-
-    struct Item { const char* label; juce::String value; bool on; };
-    const Item items[kNumRows] = {
-        { "Input Gain",  juce::String (inputGainDb_, 1) + " dB",  false },
-        { "Output Gain", juce::String (outputGainDb_, 1) + " dB", false },
-        { "Mix",         juce::String ((int) globalMixPct_) + " %",  false },
-        { "Global Bypass", globalBypass_ ? "ON" : "OFF",       globalBypass_ },
-        // Auto-Gain：打开时用 accent 高亮，与 Global Bypass 同一视觉语言
-        { "Auto-Gain",  autoGain_ ? "ON" : "OFF",             autoGain_ },
-        // Monitor（Future MB 对标）：非 Output 时高亮（提示正在试听内部信号）
-        { "Monitor",    kMonitorNames[juce::jlimit (0, 6, monitorIdx_)], monitorIdx_ != 0 },
-    };
-
-    g.setFont (MBTheme::font (MBTheme::regular(), 9.5f));
-    for (int i = 0; i < kNumRows; ++i)
-    {
-        const float y = top + rowH * (float) i;
-        const bool on = items[i].on;
-        if (on)
-        {
-            g.setColour (pal_.accent.withAlpha (0.16f * a));
-            g.fillRoundedRectangle (juce::Rectangle<float> (pr.getX() + pr.getWidth() * 0.04f, y,
-                                                            pr.getWidth() * 0.92f, rowH * 0.9f),
-                                    pr.getWidth() * 0.03f);
-        }
-        g.setColour (on ? pal_.text : pal_.dim);
-        g.drawText (items[i].label,
-                    juce::Rectangle<float> (pr.getX() + pr.getWidth() * 0.10f, y,
-                                            pr.getWidth() * 0.52f, rowH),
-                    juce::Justification::centredLeft);
-        g.setColour (on ? pal_.accent : pal_.text);
-        g.drawText (items[i].value,
-                    juce::Rectangle<float> (pr.getX() + pr.getWidth() * 0.55f, y,
-                                            pr.getWidth() * 0.38f, rowH),
-                    juce::Justification::centredRight);
-    }
+    if(!open_||anim_<.004f)return;const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale,a=anim_;
+    g.setColour(juce::Colours::black.withAlpha(.25f*a));g.fillRoundedRectangle(r.translated(0,5*s).expanded(3*s),12*s);
+    g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);g.setColour(pal_.gridZ);g.drawRoundedRectangle(r,12*s,s);
+    g.setColour(pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
+    g.drawText("OUTPUT",r.withTrimmedLeft(18*s).withHeight(42*s),juce::Justification::centredLeft);
+    g.setColour(pal_.gridZ);g.drawLine(r.getX()+16*s,r.getY()+42*s,r.getRight()-16*s,r.getY()+42*s,s);
+    for(int i=0;i<2;++i){auto cell=toggleRect(i);bool on=i==0?globalBypass_:autoGain_;
+        g.setColour(on?pal_.accent.withAlpha(.18f):pal_.track);g.fillRoundedRectangle(cell,5*s);
+        g.setColour(on?pal_.accent:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),14*s));
+        g.drawText(i==0?"Global Bypass":"Auto Gain",cell.withTrimmedLeft(12*s).withTrimmedRight(40*s),juce::Justification::centredLeft);
+        g.drawText(on?"ON":"OFF",cell.withTrimmedLeft(cell.getWidth()-40*s),juce::Justification::centred);}
+    g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),14*s));
+    g.drawText("Monitor",juce::Rectangle<float>(r.getX()+20*s,r.getY()+254*s,100*s,36*s),juce::Justification::centredLeft);
 }

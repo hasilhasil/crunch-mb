@@ -47,6 +47,7 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     addAndMakeVisible (*linkedDrawer_);
     linkedDrawer_->setBounds (getLocalBounds());
     linkedDrawer_->setHostBounds (getLocalBounds());
+    linkedDrawer_->onValuesChanged=[this](int index){linkedFeedbackIndex_=index;linkedFeedbackUntilMs_=animNowMs()+2200;ensureTimerRunning();repaint();};
     // Phase A：频段 Popover 拆为独立组件（UI_PLAN_V2 §3.2）
     bandPopover_ = std::make_unique<BandPopover> (proc_);
     addAndMakeVisible (*bandPopover_);
@@ -94,6 +95,8 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     outputPanel_ = std::make_unique<OutputPanel>();
     outputPanel_->setHostBounds (getLocalBounds());
     outputPanel_->onSettingsChanged = [this] { applyOutputSettings(); };
+    outputPanel_->onGesture=[this](int index,bool begin){const char* ids[]={"inputGain","outputGain","globalMix"};
+        if(auto* parameter=proc_.apvts.getParameter(ids[juce::jlimit(0,2,index)])){if(begin)parameter->beginChangeGesture();else parameter->endChangeGesture();}};
     addAndMakeVisible (*outputPanel_);
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
@@ -148,7 +151,7 @@ void DisplayView::bandEdgesPx (int band, float& leftX, float& rightX) const
 {
     const float W = (float) getWidth();
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
+    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], plotRightPx() };
     leftX  = edges[(size_t) juce::jlimit (0, 4, band)];
     rightX = edges[(size_t) juce::jlimit (0, 4, band + 1)];
 }
@@ -393,14 +396,14 @@ float DisplayView::freqToX (float f) const
 {
     // 横轴：20 Hz .. 22100 Hz，宽度 = 绘图区宽（右缘避开 IN/OUT 音量表，#3）
     const float w = plotWidthPx();
-    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1105.0f) * w;
+    return std::log (juce::jmax (1.0f, f) / 20.0f) / std::log (1000.0f) * w;
 }
 
 float DisplayView::xToFreq (float x) const
 {
     const float w = juce::jmax (1.0f, plotWidthPx());
     const double t = (double) x / (double) w;
-    return (float) (20.0 * std::pow (1105.0, t));
+    return (float) (20.0 * std::pow (1000.0, t));
 }
 
 float DisplayView::specDbToY (float db) const
@@ -421,10 +424,10 @@ float DisplayView::gainToY (float gainDb) const
 
 float DisplayView::meterY (float db) const
 {
-    const float top = plotTopPx();                      // A6/#4：避开顶栏
-    const float bottom = plotBottomPx();                // #4：避开 global bar
-    const float t = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-    return bottom - t * (bottom - top);
+
+    const EditorLayout l(getLocalBounds());const float top=l.topHeight()+8*l.scale,bottom=l.globalTop()-32*l.scale;
+    return bottom-juce::jlimit(0.0f,1.0f,(db+60)/60)*(bottom-top);
+
 }
 
 void DisplayView::drawGrid (juce::Graphics& g)
@@ -513,33 +516,10 @@ float DisplayView::bandCenterFreq (int band) const
 
 void DisplayView::drawPartitions (juce::Graphics& g)
 {
-    const float W = (float) getWidth();
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
-    const double nowMs = animNowMs();
 
-    for (int b = 0; b < 4; ++b)
-    {
-        // Phase A：选中填充 / BYP 渐暗都走 Tween（原为开关量硬跳）
-        const float selK = selT_[(size_t) b].value (nowMs);       // 0..1
-        const float bypK = bypT_[(size_t) b].value (nowMs);       // 0..1（1 = 正常）
-        const float dimK = 0.45f + 0.55f * bypK;                  // P3：BYP 段 dim（Pro-MB：bypassed band 在显示里变暗）
-        const float x0 = edges[b] + 1.0f, w = edges[b + 1] - edges[b] - 2.0f;
-        const float h = sy (kDesignH);
-        const float fillA = 0.05f + 0.05f * selK;                 // 0.05 ↔ 0.10
-        g.setColour (pal_.accent.withAlpha (fillA * dimK));
-        g.fillRect (x0, 0.0f, w, h);   // 分区底色全高（mockup: height=620），描边则贴绘图区
-        if (selK > 0.01f)
-        {
-            // A2.1/C2/#4：只画上/下两条横边；描边贴**绘图区边界**（状态栏下缘 / global bar 上缘），
-            // 不再伸进状态栏；左边框取消（避免与分割线双边重叠变厚）
-            g.setColour (pal_.accent.withAlpha (0.9f * selK * dimK));
-            g.drawHorizontalLine ((int) plotTopPx(), x0, x0 + w);
-            g.drawHorizontalLine ((int) plotBottomPx(), x0, x0 + w);
-            if (b == 3)
-                g.drawVerticalLine ((int) (x0 + w), plotTopPx(), plotBottomPx());
-        }
-    }
+    float left,right;bandEdgesPx(selectedBand_,left,right);
+    g.setColour(pal_.accent.withAlpha(.035f));g.fillRect(left,plotTopPx(),juce::jmin(right,plotRightPx())-left,plotHeightPx());
+
 }
 
 void DisplayView::drawScales (juce::Graphics& g)
@@ -579,7 +559,7 @@ void DisplayView::drawScales (juce::Graphics& g)
         const float labelW = sx (56.0f);
         const float labelH = sy (14.0f);
         // R35（D）：基准 X 必须走 sx()，否则窗口变宽后跑到画面中间
-        const float scaleRightX = sx (kGainScaleRightX);
+        const float scaleRightX = plotRightPx() - 5.0f * fs;
         for (float db = -std::floor (R / step) * step; db <= R + 1.0e-4f; db += step)
         {
             const juce::String t = (db > 0.0f ? "+" : "") + juce::String (db, (step < 1.0f ? 1 : 0));
@@ -616,47 +596,22 @@ void DisplayView::drawScales (juce::Graphics& g)
         // #3：右缘附近的标签右对齐到**绘图区右缘**（避开 IN/OUT 音量表）
         if (freqToX (l.f) > plotRightPx() - w)
             x = plotRightPx() - w;
-        g.drawText (l.t, juce::Rectangle<float> (x, sy (546.0f), w, h),
+        g.drawText (l.t, juce::Rectangle<float> (x, plotBottomPx() - 25.0f * fs, w, h),
                     juce::Justification::centredTop);
     }
 }
 
 void DisplayView::drawCrossovers (juce::Graphics& g)
 {
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const double nowMs = animNowMs();
-    // Phase B-2：手柄移到绘图区**底部**（原在 y=500 中部），并在手柄内显示频率值。
-    // 对齐 Pro-MB：分割线全高 + 底部手柄 + 手柄上标频率。
-    const float plotBottom = plotBottomPx();
-    const float handleH = sy (22.0f);
-    const float handleW = sx (46.0f);
-    const float handleY = plotBottom - handleH;
 
-    for (int e = 0; e < 3; ++e)
-    {
-        const float x = nx[e];
-        // Phase A：hover/拖动主题色渐变（原为硬跳 hot ? accent : gridZ）
-        const float hot = divT_[(size_t) e].value (nowMs);
-        const bool dragging = (drag_ == DragMode::Divider && dragBand_ == e);
-        const juce::Colour c = pal_.gridZ.interpolatedWith (pal_.accent,
-                                                            juce::jlimit (0.0f, 1.0f, hot));
-        g.setColour (c);
-        g.fillRect (x - 0.75f, 0.0f, 1.5f, plotBottom);
+    const float s=EditorLayout(getLocalBounds()).scale;
+    const float xs[]={freqToX(cachedX1_),freqToX(cachedX2_),freqToX(cachedX3_)};
+    const float y=plotTopPx()+plotHeightPx()*.44f;
+    for(int i=0;i<3;++i){const float x=xs[i];const bool hot=hoverDividers_==i||(drag_==DragMode::Divider&&dragBand_==i);
+        drawHairlineV(g,x,plotTopPx(),plotBottomPx(),pal_.gridZ);
+        g.setColour(hot?pal_.accent.withAlpha(.35f):pal_.track);g.fillRoundedRectangle({x-11*s,y-11*s,22*s,22*s},6*s);
+        g.setColour(hot?pal_.accent:pal_.dim);g.drawLine(x-3*s,y-5*s,x-3*s,y+5*s,1.3f*s);g.drawLine(x+3*s,y-5*s,x+3*s,y+5*s,1.3f*s);}
 
-        // 底部手柄（圆角胶囊），hover/拖动时向主题色插值
-        auto handle = juce::Rectangle<float> (x - handleW * 0.5f, handleY, handleW, handleH);
-        g.setColour (pal_.track.interpolatedWith (pal_.accent,
-                                                  juce::jlimit (0.0f, 1.0f, hot * 0.55f)));
-        g.fillRoundedRectangle (handle, handleH * 0.5f);
-        g.setColour (dragging ? pal_.accent : pal_.gridZ);
-        g.drawRoundedRectangle (handle, handleH * 0.5f, 1.0f);
-
-        // 手柄内频率读数（Pro-MB：手柄上直接显示频率，不用额外 tooltip）
-        const float f = (e == 0) ? cachedX1_ : (e == 1) ? cachedX2_ : cachedX3_;
-        g.setColour (hot > 0.5f ? pal_.text : pal_.dim);
-        g.setFont (MBTheme::font (hot > 0.5f ? MBTheme::semiBold() : MBTheme::regular(), 10.0f));
-        g.drawText (fmtHzShort (f), handle, juce::Justification::centred);
-    }
 }
 
 // 频率短格式（与 BandPopover::fmtHzShort 同规则；此处为 DisplayView 本地副本）
@@ -679,79 +634,39 @@ float DisplayView::stateDotX (int band) const
     return edge - sx (30.0f);       // R36（B4）：按钮列加宽到 28px 后圆点跟着左移
 }
 
+juce::String DisplayView::linkedFeedbackText(int band) const
+{
+    if(linkedFeedbackIndex_<0||linkedFeedbackIndex_>=6)return {};
+    const char* suffixes[]={"Threshold","Attack","Release","Makeup","Mix","Range"};
+    const char* units[]={"dB","ms","ms","dB","%","dB"};
+    return juce::String(getParamPhysical("band"+juce::String(band)+suffixes[linkedFeedbackIndex_]),1)+" "+units[linkedFeedbackIndex_];
+}
+
 void DisplayView::drawBandHeaders (juce::Graphics& g)
 {
-    const float W = (float) getWidth();
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float edges[5] = { 0.0f, nx[0], nx[1], nx[2], W };
-    const char* names[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
 
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 11.5f));
-    for (int b = 0; b < 4; ++b)
-    {
-        // A2.2/A2.3：段名右移避开左音量刻度、整体下移至 y=40
-        g.setColour (pal_.accent.withAlpha (0.9f));
-        g.drawText (names[b],
-                    juce::Rectangle<float> (edges[b] + sx (36.0f), sy (40.0f), sx (140.0f), sy (16.0f)),
-                    juce::Justification::centredLeft);
-
-        // 状态点列（S/M/BYP/Δ，4 个 3px 圆点，右缘）——实时反映参数
-        // R34（N7）：band3 的右缘必须与**按钮列**用同一条边界（kMeterX−8）。
-        //   原先这里用的是窗口右缘 W，算出 x≈892 正好压在 IN/OUT 音量表
-        //   （886..918）上；而同一段的按钮列右缘是 kMeterX−8 → 圆点与按钮
-        //   也对不齐。统一由 stateDotX() 决定（绘制与测试共用）。
-        const float sxp = stateDotX (b);
-        for (int j = 0; j < 4; ++j)
-        {
-            bool lit = false;
-            switch (j)
-            {
-                case 0: lit = getParamBool ("band" + juce::String (b) + "Solo");  break;
-                case 1: lit = getParamBool ("band" + juce::String (b) + "Mute");  break;
-                // 2026-10-14：BYP = Mix<50%（D9 方案 A）。band{i}Mix 是浮点参数，
-                // getRawParameterValue 返回物理百分比（0..100），必须直接比 50.0f——
-                // 此前误用 getParamBool（内部 >=0.5f 判定）导致 Mix=30% 时 BYP 灯误亮。
-                case 2: lit = getParamPhysical ("band" + juce::String (b) + "Mix") < 50.0f; break;
-                case 3: lit = getParamBool ("band" + juce::String (b) + "Delta"); break;
-                default: break;
-            }
-            g.setColour (lit ? pal_.accent : pal_.track);
-            g.fillEllipse (sxp, sy (42.0f + j * 10.0f) - 1.75f, 3.5f, 3.5f);   // R36（B4）：3 → 3.5
-        }
-
-        // C6–C9：S/M/BYP/Δ 按钮列（R36/B4：28×28，hover 或选中该段时淡入）
-        //     band3 的右缘 = 电平表左边界−8 → 按钮在分区右侧且不压音量表
-        // Phase A：UI_SPEC §4.2 原话"hover 该段时淡入、移出淡出"——用 hoverT_ 驱动 alpha。
-        //         选中态常驻（selT_ 已含），hover 在上层叠加。
-        const float hoverK = hoverT_[(size_t) b].value (animNowMs());
-        const float selK   = selT_[(size_t) b].value (animNowMs());
-        const float btnA   = juce::jmax (selK, hoverK);       // 选中常驻 / hover 淡入
-        if (btnA > 0.01f)
-        {
-            const juce::String labels[4] = { "S", "M", "B", juce::String::fromUTF8 ("\xCE\x94") };
-            for (int j = 0; j < 4; ++j)
-            {
-                bool on = false;
-                switch (j)
-                {
-                    case 0: on = getParamBool ("band" + juce::String (b) + "Solo");  break;
-                    case 1: on = getParamBool ("band" + juce::String (b) + "Mute");  break;
-                    // 2026-10-14：BYP 判定用物理 Mix 值比 50%
-                    case 2: on = getParamPhysical ("band" + juce::String (b) + "Mix") < 50.0f; break;
-                    case 3: on = getParamBool ("band" + juce::String (b) + "Delta"); break;
-                    default: break;
-                }
-                auto r = bandButtonRect (b, j);      // R36（B4）：几何单一来源
-                g.setColour (on ? pal_.accent.withMultipliedAlpha (btnA)
-                                : pal_.track.withAlpha (0.92f * btnA));
-                g.fillRoundedRectangle (r, sx (6.0f));
-                g.setColour (on ? juce::Colours::white.withAlpha (0.92f * btnA)
-                                : pal_.dim.withMultipliedAlpha (btnA));
-                g.setFont (MBTheme::font (MBTheme::semiBold(), 11.5f));
-                g.drawText (labels[j], r, juce::Justification::centred);
-            }
-        }
-
+    const float W=(float)getWidth(),scale=EditorLayout(getLocalBounds()).scale;
+    const char* names[]={"LOW","LOW MID","HIGH MID","HIGH"};
+    for(int b=0;b<4;++b){
+        g.setFont(MBTheme::font(MBTheme::regular(),13*scale));g.setColour(b==selectedBand_?pal_.accent:pal_.dim);
+        g.drawText(names[b],juce::Rectangle<float>{freqToX(bandCenterFreq(b))-70*scale,plotTopPx()+12*scale,140*scale,18*scale},juce::Justification::centred);
+        if(b==selectedBand_){const juce::String labels[]={"S","M","B",juce::String::fromUTF8("Δ")};
+            for(int j=0;j<4;++j){bool on=j==0?getParamBool("band"+juce::String(b)+"Solo"):j==1?getParamBool("band"+juce::String(b)+"Mute"):j==2?isBandBypassed(b):getParamBool("band"+juce::String(b)+"Delta");
+                auto r=bandButtonRect(b,j);g.setColour(on?pal_.accent.withAlpha(.3f):pal_.surfaceA);g.fillRoundedRectangle(r,5*scale);
+                g.setColour(on?pal_.accent:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),13*scale));g.drawText(labels[j],r,juce::Justification::centred);}}
+        if(linkedFeedbackIndex_>=0 && animNowMs()<linkedFeedbackUntilMs_){
+            const float edges[]={0,freqToX(cachedX1_),freqToX(cachedX2_),freqToX(cachedX3_),plotRightPx()};
+            const float width=juce::jmin(170*scale,edges[b+1]-edges[b]-12*scale);
+            if(width>38*scale){const float x=juce::jlimit(edges[b]+6*scale,edges[b+1]-width-6*scale,freqToX(bandCenterFreq(b))-width*.5f);
+                const auto r=juce::Rectangle<float>(x,plotTopPx()+77*scale,width,47*scale);
+                const float alpha=juce::jlimit(0.0f,1.0f,(float)(linkedFeedbackUntilMs_-animNowMs())/400.0f);
+                const char* labels[]={"THRESHOLD","ATTACK","RELEASE","OUTPUT","MIX","RANGE"};
+                g.setColour(pal_.surfaceA.withMultipliedAlpha(alpha));g.fillRoundedRectangle(r,6*scale);
+                g.setColour(pal_.accent.withAlpha(.45f*alpha));g.drawRoundedRectangle(r,6*scale,scale);
+                g.setColour(pal_.dim.withMultipliedAlpha(alpha));g.setFont(MBTheme::font(MBTheme::uiMedium(),12*scale));
+                g.drawText(labels[linkedFeedbackIndex_],r.withHeight(21*scale),juce::Justification::centred,false);
+                g.setColour(pal_.text.withMultipliedAlpha(alpha));g.setFont(MBTheme::font(MBTheme::uiMedium(),15*scale));
+                g.drawText(linkedFeedbackText(b),r.withTrimmedTop(21*scale).reduced(3*scale,0),juce::Justification::centred,false);}}
         // C4+#1+#5：段中心频点 —— 绑在 **Range 填充区最顶边的中点**（= 未压缩基准），
         // 只随 Makeup 改变；Range 参数变化时只动钟型描边，频点不动（用户明确要求）
         {
@@ -854,328 +769,90 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
 
 void DisplayView::drawMeters (juce::Graphics& g)
 {
-    const float barW = sx (13.0f);
-    const float b1 = sx (kMeterX) + sx (2.0f);              // IN 柱
-    const float b2 = sx (kMeterX) + sx (4.0f) + barW;       // OUT 柱
-    const float top = plotTopPx();                          // A6/#2：条带顶端避开顶栏
-    const float bottom = plotBottomPx();                    // #4：底缘避开 global bar
 
-    // 条带底 + 网格（0…−60，每 20dB）
-    g.setColour (pal_.meterBg);
-    g.fillRect (sx (kMeterX), top, sx (kMeterW), bottom - top);
-    g.setColour (pal_.grid);
-    for (int db = 0; db >= -60; db -= 20)
-        // Phase E-4：hairline 提亮
-        drawHairlineH (g, meterY ((float) db), sx (kMeterX),
-                       sx (kMeterX) + sx (kMeterW), pal_.grid);
+    const EditorLayout l(getLocalBounds());const float s=l.scale,x=l.plotRight(),top=l.topHeight()+8*s,bottom=l.globalTop()-32*s;
+    g.setColour(pal_.panel.withAlpha(.67f));g.fillRect(x,0.0f,l.meterWidth(),l.globalTop());
+    drawHairlineV(g,x,0,l.globalTop(),pal_.gridZ);
+    const float barW=13*s,b1=x+6*s,b2=x+25*s;
+    for(const float bx:{b1,b2}){g.setColour(pal_.meterBg);g.fillRect(bx,top,barW,bottom-top);}
+    g.setColour(pal_.inFill.withAlpha(.65f));g.fillRect(b1,meterY(meterInDb_),barW,bottom-meterY(meterInDb_));
+    g.setGradientFill(juce::ColourGradient(pal_.outLevel,0,top,pal_.accent,0,bottom,false));
+    g.fillRect(b2,meterY(meterOutDb_),barW,bottom-meterY(meterOutDb_));
+    g.setColour(pal_.outLevel);g.fillRect(b1,meterY(peakInDb_),barW,2*s);g.fillRect(b2,meterY(peakOutDb_),barW,2*s);
+    const auto now=(juce::uint32)animNowMs();if(now>=nextMeterLabelMs_){labelInDb_=meterInDb_;labelOutDb_=meterOutDb_;nextMeterLabelMs_=now+250;}
+    g.setFont(MBTheme::font(MBTheme::regular(),11*s));g.setColour(pal_.text);
+    g.drawText(juce::String(labelInDb_,1),juce::Rectangle<float>{x,l.globalTop()-24*s,22*s,16*s},juce::Justification::centred,false);
+    g.drawText(juce::String(labelOutDb_,1),juce::Rectangle<float>{x+22*s,l.globalTop()-24*s,22*s,16*s},juce::Justification::centred,false);
 
-    // IN 柱：inputFill 平涂 0.35α
-    const float yIn = meterY (meterInDb_);
-    g.setColour (pal_.inFill.withAlpha (0.35f));
-    g.fillRect (b1, yIn, barW, bottom - yIn);
-
-    // OUT 柱：accent → outLevel 垂直渐变
-    juce::ColourGradient grad (pal_.accent, 0.0f, top, pal_.outLevel, 0.0f, bottom, false);
-    g.setGradientFill (grad);
-    const float yOut = meterY (meterOutDb_);
-    g.fillRect (b2, yOut, barW, bottom - yOut);
-
-    // 峰值保持顶线 2px
-    g.setColour (pal_.light ? pal_.inFill : pal_.outLevel);
-    g.fillRect (b1, meterY (peakInDb_) - 1.0f, barW, 2.0f);
-    g.fillRect (b2, meterY (peakOutDb_) - 1.0f, barW, 2.0f);
-
-    // 柱顶标签 9px SemiBold + 深色描边
-    // A6：下移至顶栏玻璃条（30px）之下，避免被遮住
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.0f));
-    g.setColour (pal_.text);
-    auto haloText = [&] (const juce::String& s, juce::Rectangle<float> r)
-    {
-        g.drawText (s, r, juce::Justification::centred);
-    };
-    haloText ("IN",  juce::Rectangle<float> (b1, sy (32.0f), barW, 11.0f));
-    haloText ("OUT", juce::Rectangle<float> (b2, sy (32.0f), barW, 11.0f));
-
-    // 柱底 dB 读数 8px Medium（B5：250ms 节流显示，柱体仍 60fps 实时）
-    g.setFont (MBTheme::font (MBTheme::medium(), 8.0f));
-    g.setColour (pal_.text);
-    const juce::uint32 nowMs2 = animNowMs();
-    if (nowMs2 >= nextMeterLabelMs_)
-    {
-        labelInDb_  = meterInDb_;
-        labelOutDb_ = meterOutDb_;
-        nextMeterLabelMs_ = nowMs2 + 250;
-    }
-    g.drawText (juce::String (labelInDb_, 1),
-                juce::Rectangle<float> (b1 - 4.0f, bottom - 10.0f, barW + 8.0f, 10.0f),
-                juce::Justification::centred);
-    g.drawText (juce::String (labelOutDb_, 1),
-                juce::Rectangle<float> (b2 - 4.0f, bottom - 10.0f, barW + 8.0f, 10.0f),
-                juce::Justification::centred);
 }
 
 void DisplayView::drawTopStrip (juce::Graphics& g)
 {
-    const float W = (float) getWidth();
-    const float h = sy (kTopStripH);
 
-    // Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）。
-    // 先把背后的频谱/网格糊化再上半透明色，玻璃条才真正"毛"起来。
-    // 15Hz 刷新：模糊是低频信息，人眼对滞后不敏感，CPU 省 4×。
-    {
-        const auto src = juce::Rectangle<float> (0.0f, 0.0f, W, h);
-        const juce::uint32 nowMsB = (juce::uint32) animNowMs();
-        if (nowMsB - blurLastBuildMs_ >= 66)      // ~15Hz
-        {
-            blurLastBuildMs_ = nowMsB;
-            buildBlurCache (src);
-        }
-        drawBlurredBackdrop (g, src);
-    }
+    const EditorLayout l (getLocalBounds()); const float s=l.scale;
+    g.setColour (pal_.surfaceA); g.fillRect (0.0f,0.0f,l.width,l.topHeight());
+    drawHairlineH (g,l.topHeight()-1,0,l.width,pal_.gridZ.withAlpha (.6f));
+    g.setColour (pal_.accent); g.fillEllipse (17*s,20*s,6*s,6*s);
+    g.setFont (MBTheme::font (MBTheme::uiMedium(),18*s));
+    g.setColour (pal_.text); g.drawText ("CRUNCH",juce::Rectangle<float>{30*s,0,75*s,l.topHeight()},juce::Justification::centredLeft);
+    const float mbX=30*s+juce::GlyphArrangement::getStringWidth(MBTheme::font(MBTheme::uiMedium(),18*s),"CRUNCH")+6*s;
+    g.setColour (pal_.accent); g.drawText ("MB",juce::Rectangle<float>{mbX,0,30*s,l.topHeight()},juce::Justification::centredLeft);
+    powerBtnRect_=l.power();
+    g.setColour (isPluginEnabled()?pal_.dim:pal_.accent);
+    const auto c=powerBtnRect_.getCentre();
+    juce::Path power; power.addCentredArc (c.x,c.y,7*s,7*s,0,.6f,juce::MathConstants<float>::twoPi-.6f,true);
+    g.strokePath (power,juce::PathStrokeType (1.6f*s)); g.drawLine(c.x,c.y-9*s,c.x,c.y-1*s,1.6f*s);
+    const char* names[]={"LOW","LOW MID","HIGH MID","HIGH"};
+    g.setFont (MBTheme::font(MBTheme::uiMedium(),13*s));
+    for(int b=0;b<4;++b){const auto r=l.bandTab(b);const bool selected=b==selectedBand_;
+        if(selected){g.setColour(pal_.accent.withAlpha(.13f));g.fillRoundedRectangle(r,5*s);g.setColour(pal_.accent);g.fillRect(r.withTop(r.getBottom()-2*s));}
+        g.setColour(selected?pal_.accent:pal_.dim);g.drawText(names[b],r,juce::Justification::centred);}
+    displayRangeBtn_=l.range(); g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),13*s));
+    const juce::String modes[]={"Auto",juce::String::fromUTF8("±3 dB"),juce::String::fromUTF8("±6 dB"),juce::String::fromUTF8("±12 dB"),juce::String::fromUTF8("±30 dB")};
+    g.drawText(modes[displayRangeMode_],displayRangeBtn_.withTrimmedRight(10*s),juce::Justification::centred);
+    const float ax=displayRangeBtn_.getRight()-7*s,ay=displayRangeBtn_.getCentreY();
+    g.drawLine(ax-3*s,ay-2*s,ax,ay+1*s,s);g.drawLine(ax,ay+1*s,ax+3*s,ay-2*s,s);
+    const auto t=l.theme();g.setColour(pal_.track);g.fillRoundedRectangle(t,6*s);
+    // Centre the circular mark and distribute its three dots evenly. The former
+    // dots were all clustered on one side, making the button look tilted.
+    const auto centre=t.getCentre();
+    g.setColour(pal_.text);
+    g.drawEllipse(juce::Rectangle<float>(16*s,16*s).withCentre(centre),1.3f*s);
+    for(int i=0;i<3;++i){const float a=-juce::MathConstants<float>::halfPi+i*juce::MathConstants<float>::twoPi/3;
+        const auto dot=centre+juce::Point<float>(std::cos(a),std::sin(a))*(4.2f*s);
+        g.fillEllipse(juce::Rectangle<float>(2.4f*s,2.4f*s).withCentre(dot));}
 
-    // Phase B-3：顶栏改**半透明玻璃**（原 100% 不透明 surface）。
-    // 对齐 Pro-MB：顶栏是压在频谱之上的半透明条，频谱从它下面透出来。
-    g.setColour (pal_.surfaceA);
-    g.fillRect (0.0f, 0.0f, W, h);
-    // 底缘 1px 分隔（Phase E-4：用 hairline 提亮，抵消 AA 发暗）
-    drawHairlineH (g, h - 1.0f, 0.0f, W, pal_.gridZ.withAlpha (0.6f));
-
-    // A9：模式信息文字已删除（用户不需要这行解释）
-    // 段名（选中段）
-    const char* names[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
-    g.setColour (pal_.accent);
-    g.fillEllipse (sx (10.0f), sy (11.0f), 8.0f, 8.0f);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 12.0f));
-    g.setColour (pal_.text);
-    g.drawText (names[selectedBand_],
-                juce::Rectangle<float> (sx (26.0f), sy (6.0f), sx (160.0f), sy (18.0f)),
-                juce::Justification::centredLeft);
-
-    // Phase（R25）：总开关（enabled）——插件级 bypass。
-    // ⚠️ 与底栏 BYPASS 胶囊**不是同一个东西**，命名与视觉都要区分：
-    //   · 本控件 = enabled：整条链旁通，直通**原始输入**（不含 Input Gain）
-    //   · 底栏 BYPASS = 四段 Mix=0 宏：段级旁通，Input/Output Gain 仍生效
-    // 放顶栏（层级高于底栏一切控件），用电源圆符号 + "POWER" 文字。
-    // Pro-MB / Future MB 的总开关同样是顶栏的电源式按钮。
-    powerBtnRect_ = juce::Rectangle<float> (sx (196.0f), sy (3.0f), sx (78.0f), sy (24.0f));
-    {
-        const bool on = isPluginEnabled();
-        g.setColour (on ? pal_.track : pal_.accent);       // 关时用 accent 强调（异常态）
-        g.fillRoundedRectangle (powerBtnRect_, sx (12.0f));
-        g.setColour (on ? pal_.dim : juce::Colours::white.withAlpha (0.92f));
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-        // U+23FC POWER SYMBOL（电源圆），与文字连排
-        g.drawText (juce::String::fromUTF8 ("\xE2\x8F\xBF") + juce::String (on ? " ON" : " OFF"),
-                    powerBtnRect_, juce::Justification::centred);
-    }
-
-    // R34（N6）：删除顶栏的 CURVE 胶囊。
-    //   它从 Phase 4.4 起就是纯装饰——全仓没有任何命中判断或 mouseDown 分支，
-    //   注释写着"接交互"但从未接上，用户点它毫无反应。
-    //   curveVisible_ 也恒为 true（DisplayView.h 初值），没有可切换的状态。
-    //   与其留一个死按钮，不如去掉（用户决定：去掉 CURVE，齿轮接真功能）。
-
-    // P1：Display Range 档位按钮（#4：从 global bar 移到顶栏，避免与 IN 读数冲突）
-    //     点击弹出二级菜单（Auto / ±3 / ±6 / ±12 / ±30）
-    displayRangeBtn_ = juce::Rectangle<float> (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f));
-    g.setColour (displayRangeMode_ == 0 ? pal_.accent.withAlpha (0.85f) : pal_.track);
-    g.fillRoundedRectangle (displayRangeBtn_, sx (12.0f));
-    g.setColour (displayRangeMode_ == 0 ? juce::Colours::white.withAlpha (0.92f) : pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-    {
-        const char* modes[5] = { "Auto", "3 dB", "6 dB", "12 dB", "30 dB" };
-        g.drawText (juce::String ("+/- ") + modes[displayRangeMode_] + "  " + juce::String::fromUTF8 ("\xE2\x96\xBC"),
-                    displayRangeBtn_, juce::Justification::centred);
-    }
-
-    // Phase D-7：MIDI Learn 按钮（顶栏，Pro-MB MIDI learn 对标）
-    // 学习模式下按钮变实心 accent，提示当前处于特殊模式。
-    midiBtnRect_ = juce::Rectangle<float> (W - sx (262.0f), sy (3.0f), sx (34.0f), sy (24.0f));
-    g.setColour (midiLearnActive_ ? pal_.accent : pal_.track);
-    g.fillRoundedRectangle (midiBtnRect_, sx (12.0f));
-    g.setColour (midiLearnActive_ ? juce::Colours::white.withAlpha (0.92f) : pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
-    g.drawText ("MIDI", midiBtnRect_, juce::Justification::centred);
-
-    auto gearBtn = juce::Rectangle<float> (W - sx (30.0f), sy (3.0f), sx (24.0f), sy (24.0f));
-    g.setColour (pal_.track);
-    g.fillRoundedRectangle (gearBtn, sx (6.0f));
-    g.setColour (pal_.text);
-    g.setFont (MBTheme::font (MBTheme::regular(), 12.0f));
-    g.drawText (juce::String::fromUTF8 ("\xE2\x9A\x99"), gearBtn, juce::Justification::centred);
-
-    // Phase（R25）：总开关关闭时，在顶栏中部显示一条明确提示。
-    // 只靠 POWER 胶囊变色不够——用户可能没注意到那个小胶囊，
-    // 却会发现"调什么都没反应"。这里给出文字说明原因。
-    if (! isPluginEnabled())
-    {
-        g.setColour (pal_.accent.withAlpha (0.14f));
-        g.fillRoundedRectangle (juce::Rectangle<float> (sx (292.0f), sy (5.0f),
-                                                        sx (206.0f), sy (20.0f)), sx (10.0f));
-        g.setColour (pal_.accent);
-        g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-        g.drawText ("PLUGIN OFF - CLICK POWER TO ENABLE",
-                    juce::Rectangle<float> (sx (292.0f), sy (5.0f), sx (206.0f), sy (20.0f)),
-                    juce::Justification::centred);
-    }
 }
 
 void DisplayView::drawGlobalBar (juce::Graphics& g)
 {
-    const float W = (float) getWidth();
-    const float y0 = (float) getHeight() - sy (kGlobalBarH);
-    const float h = sy (kGlobalBarH);
 
-    // Phase B-3：global 条同样改半透明玻璃（对齐 Pro-MB 底栏压在频谱之上）
-    // Phase E-1：背后内容先糊化（15Hz）
-    {
-        const auto src = juce::Rectangle<float> (0.0f, y0, W, h);
-        const juce::uint32 nowMsB = (juce::uint32) animNowMs();
-        if (nowMsB - blurLastBuildMs_ >= 66)
-        {
-            blurLastBuildMs_ = nowMsB;
-            buildBlurCache (src);
-        }
-        drawBlurredBackdrop (g, src);
+    const EditorLayout l(getLocalBounds());const float s=l.scale;
+    g.setColour(pal_.surfaceA);g.fillRect(0.0f,l.globalTop(),l.width,l.globalHeight());
+    drawHairlineH(g,l.globalTop(),0,l.width,pal_.gridZ);
+    globalSelectorRects_.clear();globalSelectorIds_.clear();globalBarY_=l.globalTop();
+    const juce::String labels[]={"PHASE","SLOPE","QUALITY","LOOKAHEAD","OVERSAMPLING"};
+    const juce::String ids[]={Param::ID::phaseMode,Param::ID::xoverSlope,Param::ID::linearQuality,Param::ID::lookahead,Param::ID::oversampling};
+    const auto labelFont=MBTheme::font(MBTheme::uiMedium(),13*s);
+    const auto valueFont=MBTheme::font(MBTheme::uiRegular(),13*s);
+    for(int i=0;i<5;++i){auto r=l.globalCell(i);globalSelectorRects_.add(r);globalSelectorIds_.add(ids[i]);
+        juce::String value="-";
+        if(auto* p=dynamic_cast<juce::AudioParameterChoice*>(proc_.apvts.getParameter(ids[i])))value=p->getCurrentChoiceName();
+        if(r.contains(lastMousePos_)){g.setColour(pal_.accent.withAlpha(.08f));g.fillRoundedRectangle(r,4*s);}
+        // Identical font height and text rectangle keep label and state on one baseline.
+        auto text=r.withSizeKeepingCentre(r.getWidth(),20*s);
+        const float lw=juce::GlyphArrangement::getStringWidth(labelFont,labels[i]);
+        g.setFont(labelFont);g.setColour(pal_.dim);g.drawText(labels[i],text.withWidth(lw),juce::Justification::centredLeft,false);
+        auto vr=text.withTrimmedLeft(lw+5*s).withTrimmedRight(7*s);
+        g.setFont(valueFont);g.setColour(pal_.text);g.drawText(value,vr,juce::Justification::centredLeft,false);
+        const float x=r.getRight()-3*s,y=r.getCentreY();g.setColour(pal_.dim);
+        g.drawLine(x-2*s,y-s,x,y+s,s);g.drawLine(x,y+s,x+2*s,y-s,s);
     }
-    g.setColour (pal_.surfaceA);
-    g.fillRect (0.0f, y0, W, h);
-    // Phase E-4：hairline 提亮
-    drawHairlineH (g, y0, 0.0f, W, pal_.gridZ.withAlpha (0.6f));
+    const juce::String buttons[]={"Analyzer","OUT "+juce::String(getParamPhysical(Param::ID::outputGain),1)+" dB","BYPASS"};
+    for(int i=5;i<8;++i){auto r=l.globalCell(i);const bool active=i==7?isAllBypassed():i==5?analyzerFreeze_:false;
+        g.setColour(active?pal_.accent.withAlpha(.22f):pal_.track);g.fillRoundedRectangle(r,6*s);
+        g.setColour(active?pal_.accent:pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.drawText(buttons[i-5],r,juce::Justification::centred,false);}
 
-    // 全局选择器（Phase / Slope / Quality / Lookahead / Oversampling）
-    // RESEARCH_UI §五 P1：原来是"画着 ▼ 却点不动的静态文字"。
-    // 现在每项都可点，弹出与 Display Range 同一套的自绘下拉（Pro-MB drop-down 对标）。
-    // Phase（R24）：补 Oversampling —— 2026-10-14 新增的参数，全局栏此前漏了它，
-    //   用户只能靠宿主自动化切换（教训 33：功能要包含"用户能碰到它"）。
-    //
-    // ⚠️ R34（B）：这两份列表必须在**每次重建前清空**。
-    //   此前的写法只在下面 add()，全函数没有任何 clear——而本函数由 paint()
-    //    每帧调用，于是 60fps 下每秒 +5 条、永不回收：
-    //      · 内存持续增长（矩形 + String 都有堆分配）
-    //      · 命中测试 O(n) 越来越慢（见 mouseDown 里的遍历）
-    //      · **窗口 resize 后旧尺寸的矩形仍留在表里并优先匹配**
-    //        → 点到离控件很远的地方也会弹菜单（用户实测"global 栏判定范围太大"）
-    globalSelectorRects_.clear();
-    globalSelectorIds_.clear();
-    g.setFont (MBTheme::font (MBTheme::regular(), 12.0f));
-    float x = sx (14.0f);
-    globalBarY_ = y0;
-    // R36（B4）：全局选择器改成**紧凑胶囊**。
-    //   原先每项「短标签 + 值 ▼」共占 180px，5 项 = 900px，而底栏右侧还要放
-    //   ANALYZER / OUT / BYPASS 三个胶囊 → 早在本次改动之前就已经互相覆盖
-    //   （ANALYZER 压在 Slope 的值上、OUT 压在 Oversmp 上，绘制顺序在后就盖住了）。
-    //   现在每项 110px 胶囊（"P:IIR ▼" 这种 1–2 字符前缀 + 值），5 项 550px，
-    //   右侧 3 个胶囊各就各位，既不再重叠，又都变大了。
-    auto item = [&] (const juce::String& shortLabel, const juce::String& paramId)
-    {
-        const float rowY = y0 + sy (4.0f);
-        const float rowH = sy (24.0f);
-        const float rowW = sx (106.0f);
-
-        // 当前值：Choice 型取选项表对应项（不再写死）
-        juce::String value = "-";
-        for (const auto& pi : proc_.getBackend().listParams())
-        {
-            if (pi.id != paramId || ! pi.isChoice) continue;
-            // ⚠️ getParamFast 返回的实际值就是选项索引，不是 normalized，
-            //    不能再乘 (choices.size()-1)。
-            // Phase（R19c）：换算委托给 Param::choiceIndexFromValue（单一来源）。
-            const int idx = Param::choiceIndexFromValue (
-                proc_.getBackend().getParamFast (paramId));
-            if (idx >= 0 && idx < pi.choices.size())
-                value = pi.choices[idx];
-            break;
-        }
-
-        const juce::Rectangle<float> pill (x, rowY, rowW, rowH);
-        globalSelectorRects_.add (pill);
-        globalSelectorIds_.add (paramId);
-
-        const bool hot = pill.contains (lastMousePos_);
-        g.setColour (hot ? pal_.accent.withAlpha (0.22f) : pal_.track.withAlpha (0.55f));
-        g.fillRoundedRectangle (pill, rowH * 0.28f);
-        if (hot)
-        {
-            g.setColour (pal_.accent.withAlpha (0.75f));
-            g.drawRoundedRectangle (pill, rowH * 0.28f, 1.0f);
-        }
-        g.setColour (pal_.dim);
-        g.drawText (shortLabel,
-                    pill.withTrimmedLeft (sx (7.0f)).withWidth (sx (20.0f)),
-                    juce::Justification::centredLeft);
-        g.setColour (hot ? pal_.accent : pal_.text);
-        g.drawText (value + " " + juce::String::fromUTF8 ("\xE2\x96\xBC"),
-                    pill.withTrimmedLeft (sx (27.0f)).withTrimmedRight (sx (4.0f)),
-                    juce::Justification::centredLeft);
-        x += sx (110.0f);
-    };
-    item ("P",  Param::ID::phaseMode);
-    item ("S",  Param::ID::xoverSlope);
-    item ("Q",  Param::ID::linearQuality);
-    item ("LA", Param::ID::lookahead);
-    item ("OS", Param::ID::oversampling);
-
-    // Analyzer 按钮（Pro-MB 底栏 Analyzer 对标）——占据原 IN 读数位置；
-    // 点击弹出二级菜单（Resolution / Speed / Tilt / Freeze / Pre-Post）。
-    // R36（B4）：几何收敛到 analyzerButtonRect()，字号加大后不再挤成一团。
-    auto anBtn = analyzerButtonRect();
-    g.setColour (analyzerFreeze_ ? pal_.accent : pal_.track);
-    g.fillRoundedRectangle (anBtn, sx (11.0f));
-    g.setColour (analyzerFreeze_ ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-    {
-        juce::String resTag = (analyzerFftSize_ == 1024) ? "1024"
-                           : (analyzerFftSize_ == 2048) ? "2048"
-                           : (analyzerFftSize_ == 4096) ? "4096" : "8192";
-        static const char* kSpd[3] = { "FAST", "MED", "SLOW" };
-        // R36（B4）：胶囊变高但右侧三个按钮要挤在 348px 内，文字改为紧凑写法
-        // （面板标题里已有完整 "ANALYZER" 字样，这里只是状态摘要）
-        g.drawText (juce::String ("ANZ ") + resTag + " " + kSpd[juce::jlimit (0, 2, analyzerSpeed_)]
-                    + (analyzerTilt_ > 0.01f ? " T" : "")
-                    + (analyzerFreeze_ ? " F" : ""),
-                    anBtn, juce::Justification::centred);
-    }
-
-    // OUT 按钮（Phase D-4/D-6）
-    //   · 单击 → Output 面板（sticky 语义）
-    //   · **Alt+拖 → 直接调 Output Gain**（Pro-MB Alt-drag Output = makeup gain）
-    // R36（B4）：几何收敛到 outputButtonRect()
-    auto outBtn = outputButtonRect();
-    const bool outHot = outputPanel_ != nullptr
-                     && (outputPanel_->isSticky()
-                         || outBtn.contains (lastMousePos_));
-    const bool outAlt = drag_ == DragMode::OutputGain;
-    g.setColour (outAlt ? pal_.accent
-                        : (outHot ? pal_.accent.withAlpha (0.85f) : pal_.track));
-    g.fillRoundedRectangle (outBtn, sx (11.0f));
-    g.setColour (outHot || outAlt ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.0f));
-    {
-        const juce::uint32 nowMs2 = animNowMs();
-        if (nowMs2 >= nextMeterLabelMs_)
-        {
-            labelInDb_  = meterInDb_;
-            labelOutDb_ = meterOutDb_;
-            nextMeterLabelMs_ = nowMs2 + 250;
-        }
-        // 拖动中显示正在调的增益值，否则显示 OUT 读数
-        if (outAlt && outputPanel_ != nullptr)
-            g.drawText (juce::String (outputPanel_->outputGainDb(), 1) + " dB",
-                        outBtn, juce::Justification::centred);
-        else
-            g.drawText ("OUT " + juce::String (labelOutDb_, 1),
-                        outBtn, juce::Justification::centred);
-    }
-
-    // BYPASS 胶囊（C10：可点按；命中区与绘制严格一致）
-    // R36（B4）：与 ANALYZER / OUT 胶囊同高（22 → 26）
-    auto byp = juce::Rectangle<float> (W - sx (114.0f), y0 + sy (3.0f), sx (94.0f), sy (26.0f));
-    g.setColour (isAllBypassed() ? pal_.accent : pal_.track);
-    g.fillRoundedRectangle (byp, sx (11.0f));
-    g.setColour (isAllBypassed() ? juce::Colours::white.withAlpha (0.92f) : pal_.text);
-    g.setFont (MBTheme::font (MBTheme::semiBold(), 10.5f));
-    g.drawText ("BYPASS", byp, juce::Justification::centred);
 }
 
 // Phase A：drawDrawer() 已随抽屉整体拆到 LinkedDrawer::paint()。
@@ -1519,7 +1196,7 @@ void DisplayView::timerCallback()
         //   120ms 的悬停渐变在 4Hz 巡检下只被采样 0~1 次 → 高亮"啪"地跳。
         const bool knobsBusy = (linkedDrawer_  != nullptr && linkedDrawer_->isKnobAnimating())
                             || (bandPopover_   != nullptr && bandPopover_->isKnobAnimating());
-        const bool idleNow = ! tweensBusy && ! panelBusy && ! knobsBusy
+        const bool idleNow = nowMs>=linkedFeedbackUntilMs_ && ! tweensBusy && ! panelBusy && ! knobsBusy
                           && ! spectrumHadNewFrame_ && ! uiStatePending_;
         if (idleNow)
             ++idleFrames_;
@@ -1754,22 +1431,13 @@ void DisplayView::updateCurve (double dtSeconds)
 
 float DisplayView::bellWeight (int band, float freq) const
 {
-    // B3（Pro-MB 样式）：以段几何中心为中心的钟形，宽度 = 段宽 × 1.5，
-    // 允许溢出分割线（用户验收要求）；形状 sin²（边缘归零）。
-    const float lo = (band == 0) ? 20.0f
-                   : (band == 1) ? cachedX1_
-                   : (band == 2) ? cachedX2_ : cachedX3_;
-    const float hi = (band == 0) ? cachedX1_
-                   : (band == 1) ? cachedX2_
-                   : (band == 2) ? cachedX3_ : 20000.0f;
-    if (hi <= lo || freq <= 0.0f) return 0.0f;
 
-    const float w = (std::log2 (hi) - std::log2 (lo)) * 1.5f;      // 1.5× 段宽
-    const float c = 0.5f * (std::log2 (hi) + std::log2 (lo));      // 几何中心（log 域）
-    const float u = (std::log2 (freq) - c) / w + 0.5f;
-    if (u <= 0.0f || u >= 1.0f) return 0.0f;
-    const float s = std::sin (juce::MathConstants<float>::pi * u);
-    return s * s;
+    // Reuse the continuous, normalised crossover weights for the Range envelope.
+    // The outer bands stay flat to the plot edges instead of turning into isolated bells.
+    const float t=juce::jlimit(0.0f,1.0f,std::log(juce::jmax(20.0f,freq)/20.0f)/std::log(1000.0f));
+    const float pos=t*(kCurvePoints-1);const int i=juce::jmin(kCurvePoints-2,(int)pos);
+    const auto& w=bandWeights_[(size_t)juce::jlimit(0,3,band)];return w[(size_t)i]+(w[(size_t)i+1]-w[(size_t)i])*(pos-i);
+
 }
 
 void DisplayView::refreshCurvePaths()
@@ -1834,7 +1502,7 @@ void DisplayView::refreshCurvePaths()
 void DisplayView::drawRangeBell (juce::Graphics& g)
 {
     // #1：4 段都画；非选中段低透明度，选中段正常
-    for (int b = 0; b < 4; ++b)
+    for (int b = selectedBand_; b <= selectedBand_; ++b)
     {
         const bool sel = (b == selectedBand_);
         const float a = sel ? 1.0f : 0.45f;
@@ -2091,7 +1759,7 @@ int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut)
     // R36（B4）：按钮列几何收敛到 bandButtonRect()，绘制 / 命中 / 测试共用一份。
     // band3 的"右缘"取 **IN/OUT 电平表左边界 −8px**（不是窗口右缘），
     // 这样按钮列在分区右侧、又完全不与音量表（x 886..918）重叠。
-    for (int b = 0; b < 4; ++b)
+    for (int b = selectedBand_; b <= selectedBand_; ++b)
         for (int j = 0; j < 4; ++j)
             if (bandButtonRect (b, j).contains (p))
             {
@@ -2107,31 +1775,23 @@ int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut)
 //   所以只向左变宽，不会压到 IN/OUT 电平表（在 kMeterX−8 处收口）。
 juce::Rectangle<float> DisplayView::bandButtonRect (int band, int btn) const
 {
-    const float W = (float) getWidth();
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float edge = (band < 3) ? nx[juce::jlimit (0, 2, band)]
-                                  : juce::jmin (W, sx (kMeterX) - sx (8.0f));
-    return juce::Rectangle<float> (edge - sx (44.0f),
-                                   sy (116.0f + (float) juce::jlimit (0, 3, btn) * 34.0f),
-                                   sx (28.0f), sy (28.0f));
+
+    const float s=EditorLayout(getLocalBounds()).scale;
+    const float start=juce::jlimit(10*s,juce::jmax(10*s,plotRightPx()-126*s),freqToX(bandCenterFreq(band))-60*s);
+    return {start+31*s*(float)btn,plotTopPx()+40*s,27*s,27*s};
+
 }
 
 int DisplayView::hitTestDivider (juce::Point<float> p) const
 {
-    // Phase B-2：抓取带与底部手柄位置对齐（手柄 46×22，放在绘图区底缘）。
-    // 竖直分割线仍是全高可抓（Pro-MB：整条线都能拖），底部手柄加宽命中区。
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float plotBottom = plotBottomPx();
-    for (int e = 0; e < 3; ++e)
-    {
-        const bool onLine = std::abs (p.x - nx[e]) <= sx (4.0f)
-                         && p.y >= 0.0f && p.y <= plotBottom;
-        const bool onHandle = std::abs (p.x - nx[e]) <= sx (23.0f)
-                           && p.y >= plotBottom - sy (22.0f) && p.y <= plotBottom;
-        if (onLine || onHandle)
-            return e;
-    }
+
+    const float s=EditorLayout(getLocalBounds()).scale;
+    if(p.y<plotTopPx()||p.y>plotBottomPx())return -1;
+    const float xs[]={freqToX(cachedX1_),freqToX(cachedX2_),freqToX(cachedX3_)};
+    const float y=plotTopPx()+plotHeightPx()*.44f;
+    for(int i=0;i<3;++i)if(std::abs(p.x-xs[i])<4*s||(std::abs(p.x-xs[i])<12*s&&std::abs(p.y-y)<12*s))return i;
     return -1;
+
 }
 
 bool DisplayView::hitTestCurve (juce::Point<float> p, int& bandOut) const
@@ -2254,13 +1914,7 @@ bool DisplayView::isAllBypassed() const
 
 bool DisplayView::hitTestGlobalBypass (juce::Point<float> p) const
 {
-    // global bar 的 BYPASS 胶囊：与 drawGlobalBar 绘制位置严格一致。
-    // R36（B4）：22 → 26 高、上移 2px，与 ANALYZER / OUT 胶囊同高同基线。
-    const float W = (float) getWidth();
-    const float x0 = W - sx (114.0f), x1 = W - sx (20.0f);
-    const float y0 = (float) getHeight() - sy (kGlobalBarH) + sy (3.0f);
-    const float y1 = y0 + sy (26.0f);
-    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+    return EditorLayout(getLocalBounds()).globalCell(7).contains(p);
 }
 
 void DisplayView::applyBandToggle (int band, int btn, bool exclusive, bool /*cmd*/)
@@ -2313,13 +1967,7 @@ bool DisplayView::isPluginEnabled() const
 
 bool DisplayView::hitTestPowerButton (juce::Point<float> p) const
 {
-    // Phase（R25）：顶栏 POWER 胶囊（sx196..sx274，y = 3..27）。
-    // ⚠️ 不能依赖 powerBtnRect_——那个成员在 drawTopStrip() 里赋值，
-    //    而悬停命中发生在任何绘制之前（首次悬停时矩形还是空的）。
-    //    这与 hitTestOutputButton 当年失败的原因相同（T44.2）。
-    const float x0 = sx (196.0f), x1 = sx (274.0f);
-    const float y0 = sy (3.0f),  y1 = sy (27.0f);
-    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+    return EditorLayout(getLocalBounds()).power().contains(p);
 }
 
 void DisplayView::togglePluginEnabled()
@@ -2338,20 +1986,13 @@ bool DisplayView::hitTestOutputButton (juce::Point<float> p) const
 // R36（B4）：OUT 胶囊按钮的唯一几何来源（见 analyzerButtonRect 注释）
 juce::Rectangle<float> DisplayView::outputButtonRect() const
 {
-    const float W = (float) getWidth();
-    const float barTop = (float) getHeight() - sy (kGlobalBarH);
-    return juce::Rectangle<float> (W - sx (220.0f), barTop + sy (3.0f),
-                                   sx (90.0f), sy (26.0f));
+    return EditorLayout(getLocalBounds()).globalCell(6);
 }
 
 // ---------------- Phase D-7：MIDI Learn ----------------
 bool DisplayView::hitTestMidiButton (juce::Point<float> p) const
 {
-    // 与 drawTopStrip 的绘制位置严格一致（W−262..W−228，y 3..27）
-    const float W = (float) getWidth();
-    const float x0 = W - sx (262.0f), x1 = W - sx (228.0f);
-    const float y0 = sy (3.0f), y1 = y0 + sy (24.0f);
-    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+    juce::ignoreUnused(p); return false; // MIDI Learn remains available in the settings menu.
 }
 
 int DisplayView::midiControlId (juce::Point<float> p) const
@@ -2688,10 +2329,7 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
 
 bool DisplayView::hitTestDisplayRange (juce::Point<float> p) const
 {
-    // 与 drawTopStrip 中的按钮位置严格一致：W−218..W−132，y 3..27
-    const float W = (float) getWidth();
-    const juce::Rectangle<float> r (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f));
-    return r.contains (p);
+    return EditorLayout(getLocalBounds()).range().contains(p);
 }
 
 // ---------------- Phase E-4：1px 细线 AA 提亮 ----------------
@@ -2728,59 +2366,20 @@ void DisplayView::drawHairlineV (juce::Graphics& g, float x, float y0, float y1,
 //     ——选项表从 APVTS 的 AudioParameterChoice 取（RESEARCH_UI §五 P1）
 juce::Rectangle<float> DisplayView::dropDownRect() const
 {
-    // R34（N6）：主题菜单锚在齿轮按钮下方（右上角，右对齐）
-    if (dropDownThemeMode_)
-    {
-        const float w = sx (132.0f);
-        const float rowH = sy (26.0f);            // R36（B4）：22 → 26
-        const float h = rowH * (float) juce::jmax (1, dropDownCount_);
-        const float x = (float) getWidth() - w - sx (8.0f);
-        const float y = sy (30.0f);                 // 顶栏 30px 之下
-        return juce::Rectangle<float> (x, y, w, h);
-    }
 
-    if (dropDownParamId_.isEmpty())
-    {
-        const float W = (float) getWidth();
-        const float x = W - sx (218.0f);
-        const float y = sy (27.0f);                 // 紧贴按钮下缘
-        const float w = sx (132.0f);
-        const float h = sy (26.0f) * (float) dropDownCount_;   // R36（B4）：22 → 26
-        return juce::Rectangle<float> (x, y, w, h);
-    }
+    const EditorLayout l(getLocalBounds());const float s=l.scale,w=180*s,h=28*s*juce::jmax(1,dropDownCount_);
+    if(dropDownThemeMode_)return {l.width-w-6*s,l.topHeight()+2*s,w,h};
+    if(dropDownParamId_.isEmpty())return {juce::jmin(l.range().getX(),l.width-w-6*s),l.topHeight()+2*s,w,h};
+    return {juce::jlimit(6*s,juce::jmax(6*s,l.width-w-6*s),globalBarAnchorX_),l.globalTop()-h-6*s,w,h};
 
-    // 全局选择器：**向上**展开（R35/C-a）。
-    //   原先写的是 `y = globalBarY_ + sy(8) + sy(16)`，也就是从底栏往下画——
-    //   而底栏就在窗口最底部，于是整个菜单落在组件之外被裁掉：
-    //   920×620 时只有约 8px 露出来，5 个选择器全部不可用，
-    //   而且那 8px 正好压在下拉首项上 → 点一下就静默选中第一项。
-    const float w = sx (160.0f);
-    const float rowH = sy (22.0f);              // R36（B4）：19 → 22
-    const float h = rowH * (float) juce::jmax (1, dropDownCount_);
-    const float barTop = (float) getHeight() - sy (kGlobalBarH);
-    float y = barTop - h - sy (6.0f);
-    // 不要顶穿顶栏
-    y = juce::jmax (sy (kTopStripH) + sy (2.0f), y);
-    const float x = juce::jmax (sx (8.0f),
-                        juce::jmin (globalBarAnchorX_, (float) getWidth() - w - sx (8.0f)));
-    return juce::Rectangle<float> (x, y, w, h);
 }
 
 bool DisplayView::hitTestDropDownItem (juce::Point<float> p, int& itemOut) const
 {
-    if (! dropDownOpen_)
-        return false;
-    const auto r = dropDownRect();
-    if (! r.contains (p))
-        return false;
-    // R36（B4）：主题菜单与 Display Range 同为 26px 行高；仅全局参数用 22px
-    const bool narrowRows = (! dropDownThemeMode_) && dropDownParamId_.isNotEmpty();
-    const float rowH = narrowRows ? sy (22.0f) : sy (26.0f);
-    const int idx = (int) ((p.y - r.getY()) / rowH);
-    if (idx < 0 || idx >= dropDownCount_)
-        return false;
-    itemOut = idx;
-    return true;
+
+    if(!dropDownOpen_)return false;const auto r=dropDownRect();if(!r.contains(p))return false;
+    itemOut=juce::jlimit(0,dropDownCount_-1,(int)((p.y-r.getY())/(r.getHeight()/dropDownCount_)));return true;
+
 }
 
 void DisplayView::openDropDown (int count)
@@ -2831,10 +2430,7 @@ int DisplayView::dropDownCurrentIndex() const
 //   （W−30..W−6，y 3..27）。原先齿轮只是个画上去的符号，点了没有任何反应。
 bool DisplayView::hitTestGearButton (juce::Point<float> p) const
 {
-    const float W = (float) getWidth();
-    const float x0 = W - sx (30.0f), x1 = W - sx (6.0f);
-    const float y0 = sy (3.0f),      y1 = y0 + sy (24.0f);
-    return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+    return EditorLayout(getLocalBounds()).theme().contains(p);
 }
 
 // R34（N6）：齿轮 → 设置下拉。当前提供主题切换（Blue / Red / Cream）。
@@ -2842,6 +2438,10 @@ bool DisplayView::hitTestGearButton (juce::Point<float> p) const
 // 三个调色板等于白写。
 void DisplayView::openThemeMenu()
 {
+    togglePopover(false);
+    if(linkedDrawer_) linkedDrawer_->setOpen(false);
+    if(analyzerPanel_) analyzerPanel_->clickOutside();
+    if(outputPanel_) outputPanel_->clickOutside();
     if (dropDownOpen_ && dropDownThemeMode_)
     {
         closeDropDown();             // 再点一次 = 收起
@@ -2850,7 +2450,7 @@ void DisplayView::openThemeMenu()
     dropDownParamId_.clear();
     dropDownChoices_.clear();
     dropDownThemeMode_ = true;
-    dropDownCount_     = 3;          // Blue / Red / Cream
+    dropDownCount_     = 4;          // Blue / Red / Cream
     dropDownHover_     = -1;
     dropDownOpen_      = true;
     setWantsKeyboardFocus (true);
@@ -2869,6 +2469,12 @@ void DisplayView::clickDropDownItem (int item)
     // R34（N6）：主题菜单
     if (dropDownThemeMode_)
     {
+        if (item == 3)
+        {
+            closeDropDown();
+            toggleMidiLearn();
+            return;
+        }
         const MBTheme::Theme t = (item == 1) ? MBTheme::Theme::Red
                                : (item == 2) ? MBTheme::Theme::Cream
                                              : MBTheme::Theme::Blue;
@@ -2899,6 +2505,11 @@ void DisplayView::clickDropDownItem (int item)
 void DisplayView::openGlobalParamDropDown (const juce::String& paramId,
                                            juce::Rectangle<float> anchorRect)
 {
+    togglePopover(false);
+    if(linkedDrawer_) linkedDrawer_->setOpen(false);
+    if(analyzerPanel_) analyzerPanel_->clickOutside();
+    if(outputPanel_) outputPanel_->clickOutside();
+    dropDownThemeMode_ = false;
     // 从 facade 拿该参数的选项表（Choice 型才有）
     dropDownChoices_.clear();
     for (const auto& pi : proc_.getBackend().listParams())
@@ -2938,7 +2549,7 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     const auto r = dropDownRect();
     const bool themeMode  = dropDownThemeMode_;                    // R34（N6）
     const bool globalMode = (! themeMode) && dropDownParamId_.isNotEmpty();
-    const float rowH = globalMode ? sy (19.0f) : sy (22.0f);
+    const float rowH = r.getHeight() / (float)juce::jmax(1,dropDownCount_);
 
     // 当前选中索引（三种模式统一经 dropDownCurrentIndex()，
     // 与键盘回车共用同一份推导 —— R34（N5））
@@ -2950,6 +2561,7 @@ void DisplayView::drawDropDown (juce::Graphics& g)
         labels.add ("Blue");
         labels.add ("Red");
         labels.add ("Cream");
+        labels.add (midiLearnActive_ ? "MIDI Learn: On" : "MIDI Learn: Off");
     }
     else if (globalMode)
     {
@@ -2957,7 +2569,7 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     }
     else
     {
-        const char* dr[5] = { "Auto (自动扩档)", "+/- 3 dB", "+/- 6 dB",
+        const char* dr[5] = { "Auto", "+/- 3 dB", "+/- 6 dB",
                               "+/- 12 dB", "+/- 30 dB" };
         for (int i = 0; i < dropDownCount_; ++i) labels.add (dr[i]);
     }
@@ -2988,7 +2600,7 @@ void DisplayView::drawDropDown (juce::Graphics& g)
 
     // R35（N10）：原为 `globalMode ? 10.0f : 10.0f`（两个分支相同，恒等三元），
     //   作者显然想区分两种模式字号但没写出来。这里按实际需要保留单一字号。
-    g.setFont (MBTheme::font (MBTheme::regular(), sy (10.0f)));
+    g.setFont (MBTheme::font (MBTheme::uiRegular(), 13.0f * EditorLayout(getLocalBounds()).scale));
     for (int i = 0; i < dropDownCount_; ++i)
     {
         const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
@@ -3016,6 +2628,10 @@ void DisplayView::drawDropDown (juce::Graphics& g)
 
 void DisplayView::openDisplayRangeMenu()
 {
+    togglePopover(false);
+    if(linkedDrawer_) linkedDrawer_->setOpen(false);
+    if(analyzerPanel_) analyzerPanel_->clickOutside();
+    if(outputPanel_) outputPanel_->clickOutside();
     // Phase：改用自绘下拉（Pro-MB drop-down 对标）。
     // 原来是 juce::PopupMenu —— 操作系统外观，破坏主题一致性。
     if (dropDownOpen_)
@@ -3108,6 +2724,9 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     }
 
     const auto p = e.position;
+    const EditorLayout layout(getLocalBounds());
+    for(int b=0;b<4;++b)if(layout.bandTab(b).contains(p)){selectedBand_=b;onSelectedBandChanged(b);openPopoverForBand(b);repaint();return;}
+    if(linkedDrawer_!=nullptr&&linkedDrawer_->hitTestClose(p)){linkedDrawer_->setOpen(false);repaint();return;}
 
     // -1) Phase（R25）：顶栏 POWER 胶囊（插件总开关 enabled）。
     //     放在最前面：它是最高层级的控件，任何时候点击都应立即响应，
@@ -3155,6 +2774,8 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     // 原来只有"点击弹原生菜单"，没有悬停语义，也没有 sticky。
     if (hitTestAnalyzerButton (p))
     {
+        if(linkedDrawer_) linkedDrawer_->setOpen(false);
+        if(outputPanel_) outputPanel_->clickOutside();
         if (analyzerPanel_ != nullptr)
         {
             togglePopover (false);       // R35（C-c）：双向互斥，避免被盖住
@@ -3189,8 +2810,10 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             // 2026-10-14：KNEE(k=1) 改为连续 0–48 dB，现在是可拖动滑杆。
             if (sk >= 2)
             {
-                bandPopover_->applySliderForTest (sk,
-                    bandPopover_->sliderValue (sk) > 0.5 ? 0.0 : 1.0);
+                const auto row=bandPopover_->popSliderRect(sk);
+                const float buttonStart=row.getX()+90*layout.scale;
+                if(p.x>=buttonStart)
+                    bandPopover_->applySliderForTest(sk,p.x>(buttonStart+row.getRight())*.5f?1.0:0.0);
                 bandPopover_->endSliderDrag();
             }
             repaint();
@@ -3205,7 +2828,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         // Phase C-6：Dynamics 分段按钮（Compress/Expand）
         if (bandPopover_->hitTestDynamicsSeg (p))
         {
-            bandPopover_->clickDynamicsSeg();
+            bandPopover_->clickDynamicsSeg(p.x > bandPopover_->dynamicsSegRect().getCentreX());
             repaint();
             return;
         }
@@ -3214,7 +2837,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
             const auto row = bandPopover_->hitTestExpertRow (p);
             if (row != BandPopover::ExpertRow::None)
             {
-                bandPopover_->clickExpertRow (row);
+                bandPopover_->selectExpertAt (p);
                 repaint();
                 return;
             }
@@ -3233,17 +2856,11 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     //    点击 = 打开并钉住；再点 = 收起并解除。
     if (linkedDrawer_ != nullptr && linkedDrawer_->hitTestButton (p))
     {
+        if(analyzerPanel_) analyzerPanel_->clickOutside();
+        if(outputPanel_) outputPanel_->clickOutside();
         // O6 方案1：与 Popover 互斥
         togglePopover (false);
         linkedDrawer_->clickButton();
-        repaint();
-        return;
-    }
-    // 0b) 抽屉打开时的「锁定」按钮（R36/B3）：按下态 = 钉住，再点解除
-    if (linkedDrawer_ != nullptr && linkedDrawer_->isOpen()
-        && linkedDrawer_->hitTestPin (p))
-    {
-        linkedDrawer_->setSticky (! linkedDrawer_->isSticky());
         repaint();
         return;
     }
@@ -3252,13 +2869,20 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         && ! linkedDrawer_->hitTestPanel (p))
         linkedDrawer_->clickOutside();
 
+    // Panel whitespace must not fall through into spectrum selection or dragging.
+    if(linkedDrawer_ != nullptr && linkedDrawer_->hitTestPanel(p))
+        return;
+
     // 0c) 全局栏四个 Choice 选择器（Phase / Slope / Quality / Lookahead）
     //     RESEARCH_UI §五 P1：原来是画着 ▼ 却点不动的静态文字。
-    for (int i = 0; i < globalSelectorRects_.size(); ++i)
+    const juce::String globalIds[] = {Param::ID::phaseMode, Param::ID::xoverSlope,
+        Param::ID::linearQuality, Param::ID::lookahead, Param::ID::oversampling};
+    for (int i = 0; i < 5; ++i)
     {
-        if (globalSelectorRects_[i].contains (p))
+        const auto cell = layout.globalCell(i);
+        if (cell.contains (p))
         {
-            openGlobalParamDropDown (globalSelectorIds_[i], globalSelectorRects_[i]);
+            openGlobalParamDropDown (globalIds[i], cell);
             return;
         }
     }
@@ -3303,6 +2927,8 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     //   （Pro-MB：Alt-drag Output = makeup gain，不用打开面板就能快速校正输出电平）
     if (hitTestOutputButton (p))
     {
+        if(linkedDrawer_) linkedDrawer_->setOpen(false);
+        if(analyzerPanel_) analyzerPanel_->clickOutside();
         if (e.mods.isAltDown())
         {
             drag_ = DragMode::OutputGain;
@@ -3740,11 +3366,7 @@ bool DisplayView::hitTestAnalyzerButton (juce::Point<float> p) const
 //   高度 22 → 26，宽度也跟着放宽。
 juce::Rectangle<float> DisplayView::analyzerButtonRect() const
 {
-    const float W = (float) getWidth();
-    const float barTop = (float) getHeight() - sy (kGlobalBarH);
-    // R36（B4）：选择器压缩成胶囊后，三个按钮在右侧依次排开、互不重叠
-    return juce::Rectangle<float> (W - sx (348.0f), barTop + sy (3.0f),
-                                   sx (120.0f), sy (26.0f));
+    return EditorLayout(getLocalBounds()).globalCell(5);
 }
 
 void DisplayView::syncSpectrumLayers()
@@ -3845,6 +3467,8 @@ void DisplayView::paint (juce::Graphics& g)
     //   现在时序是：parameterChanged 置脏 → 定时器消费 → 刷新副本 → repaint()。
 
     drawBackground (g);
+    g.saveState();
+    g.reduceClipRegion(juce::Rectangle<float>(0.0f, plotTopPx(), plotRightPx(), plotHeightPx()).toNearestInt());
     drawGrid (g);
     drawPartitions (g);
     // 频谱在第 4 位（分区之后、Range/曲线/刻度/分割线/段名/电平表之前）——
@@ -3853,6 +3477,7 @@ void DisplayView::paint (juce::Graphics& g)
         spectrumView_->paint (g);
     drawRangeBell (g);       // Phase 4.3：Range 钟型层
     drawResponseCurve (g);   // Phase 4.3：仿 EQ 动态总曲线
+    g.restoreState();
     drawScales (g);          // A3：刻度在上层、100% 不透明
     drawCrossovers (g);
     drawBandHeaders (g);
@@ -3862,9 +3487,9 @@ void DisplayView::paint (juce::Graphics& g)
     drawTopStrip (g);
     drawGlobalBar (g);
     // Phase D-7：MIDI Learn 高亮覆盖层（最上层，覆盖所有控件）
-    drawMidiLearnOverlay (g);
+
     // Phase：自绘 TextSelect 下拉（最上层）
-    drawDropDown (g);
+
 }
 
 void DisplayView::resized()
@@ -3901,4 +3526,7 @@ void DisplayView::resized()
     // Phase A：频谱 Path 按新坐标重建（它不是子组件，不需要 setBounds）
     if (spectrumView_ != nullptr)
         spectrumView_->invalidate();
+    // Reproject existing curve data immediately, including when audio is stopped.
+    refreshCurvePaths();
+    pushPopoverBandRange(true);
 }

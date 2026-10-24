@@ -16,7 +16,7 @@ class CrunchMBAudioProcessor;
 // LinkedDrawer — LINKED CONTROL 抽屉（UI_PLAN_V2 §3.2，从 DisplayView 拆出）
 //
 // 职责（DESIGN D4 / UI_SPEC §5.2）：
-//   · 底部梯形按钮（点开/收起，hover/click sticky 语义由宿主决定）
+//   · 顶栏按钮（点击打开或收起）
 //   · 5 个握柄旋钮：Threshold / Attack / Release / Makeup（Δ 偏移语义）
 //     + Mix（绝对值语义，v1.6 例外）
 //   · 面板玻璃底 + accent 描边，随 linkedAnim_ 滑入/滑出
@@ -31,7 +31,8 @@ class CrunchMBAudioProcessor;
 class LinkedDrawer : public juce::Component
 {
 public:
-    static constexpr int kLinkedKnobs  = 5;      // Threshold/Attack/Release/Makeup/Mix
+    static constexpr int kLinkedKnobs  = 6;      // Threshold/Attack/Release/Makeup/Mix/Range
+    std::function<void(int)> onValuesChanged;
     static constexpr int kLinkedMixIndex = 4;    // Mix 例外：绝对值语义
 
     explicit LinkedDrawer (CrunchMBAudioProcessor& processor);
@@ -42,25 +43,16 @@ public:
 
     // ---- 状态 ----
     bool  isOpen() const noexcept { return open_; }
-    bool  isSticky() const noexcept { return sticky_; }
     float anim()  const noexcept { return anim_; }
     void  setOpen (bool open);                     // 触发开/关（驱动动画）
     void  toggle();
 
-    /**
-     * Phase D-2：Pro-MB sticky 语义（与 AnalyzerPanel 同一套状态机）。
-     *   R36（B2）：hoverButton 已删除，底栏按钮改纯点击展开。
-     *   clickButton()      -> 变 sticky 并保持打开；已 sticky 则收起并解除
-     *   clickOutside()     -> 收起并解除 sticky
-     */
+    /** Click toggles the panel; clicking outside dismisses it. */
     bool clickButton();
     void clickOutside();
-    /** R36（B3）：面板标题栏的「锁定」按钮 —— 钉住/解除钉住（带按下态）。 */
-    void setSticky (bool s);
-    /** 面板标题栏「锁定」按钮的矩形（命中测试与绘制共用）。 */
-    juce::Rectangle<float> pinRect() const;
-    bool hitTestPin (juce::Point<float> p) const;
-    /** R36（B3）：hover 态需要鼠标位置（标签页与锁定按钮都用它）。 */
+    juce::Rectangle<float> closeRect() const;
+    bool hitTestClose(juce::Point<float> p) const;
+    /** R36（B3）：hover 态需要鼠标位置。 */
     void setLastMousePos (juce::Point<float> p) { lastMousePos_ = p; }
 
     /** 每帧推进动画。返回 true 表示仍在动画中（需要继续 repaint）。 */
@@ -99,7 +91,11 @@ public:
     }
 
     /** 测试钩子：直接施加一次偏移（applyOffset 为 private）。 */
-    void applyOffsetForTest (int k, double v) { applyOffset (k, v); }
+    void applyOffsetForTest (int k, double v)
+    {
+        ensureKnobs();
+        if(k>=0&&k<kLinkedKnobs)knobs_[(size_t)k]->setValue(v,true);
+    }
 
     /** 测试钩子 */
     juce::Rectangle<int> knobBoundsForTest (int k) const
@@ -146,7 +142,6 @@ private:
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
 
     bool  open_ = false;
-    bool  sticky_ = false;   // Phase D-2：sticky 面板不随鼠标移开而收起
     float anim_ = 0.0f;
     float animTarget_ = 0.0f;
     Tween tween_;
@@ -156,7 +151,9 @@ private:
     juce::Point<float> lastMousePos_ { -1.0f, -1.0f };
 
     std::array<std::unique_ptr<Knob>, kLinkedKnobs> knobs_;
-    std::array<double, kLinkedKnobs - 1> offset_ {};   // 4 个偏移旋钮的当前 Δ
+    std::array<double, kLinkedKnobs> offset_ {};   // Mix uses absolute values; other controls use offsets.
+    std::array<std::array<float,Param::kNumBands>,kLinkedKnobs> reference_ {},lastApplied_ {};
+    std::array<bool,kLinkedKnobs> haveReference_ {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LinkedDrawer)
 };
