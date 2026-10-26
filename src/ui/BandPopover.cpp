@@ -55,6 +55,38 @@ void BandPopover::setTheme (MBTheme::Theme t)
     scLow_.setPalette(pal_);scHigh_.setPalette(pal_);
     for (auto& kb : knobs_)
         if (kb != nullptr) kb->setPalette (pal_);
+    if (expertLayer_ != nullptr)
+        expertLayer_->repaint();
+    repaint();
+}
+
+void BandPopover::applyUiSnapshot (const UiPack::UiSnapshot& snap)
+{
+    pal_          = snap.palette;
+    themeTokens_  = snap.theme;
+    layoutTokens_ = snap.layout;
+    locale_       = snap.locale;
+    scLow_.setPalette (pal_);
+    scHigh_.setPalette (pal_);
+    scLow_.setThemeTokens (themeTokens_);
+    scHigh_.setThemeTokens (themeTokens_);
+    scLow_.setLabel (tr ("pop.highPass"));
+    scHigh_.setLabel (tr ("pop.lowPass"));
+
+    static const char* kKeys[kPopKnobs] = {
+        "knob.threshold", "knob.range", "knob.attack", "knob.release", "knob.output", "knob.mix"
+    };
+    for (int k = 0; k < kPopKnobs; ++k)
+    {
+        if (auto& kb = knobs_[(size_t) k])
+        {
+            kb->setPalette (pal_);
+            kb->setThemeTokens (themeTokens_);
+            kb->setLabel (tr (kKeys[k]));
+        }
+    }
+    if (expertLayer_ != nullptr)
+        expertLayer_->repaint();
     repaint();
 }
 
@@ -311,6 +343,12 @@ void BandPopover::ensureKnobs()
             kb->setBipolarOrigin (0.0);
         }
         const int kk = k;
+        static const char* kLabelKeys[kPopKnobs] = {
+            "knob.threshold", "knob.range", "knob.attack", "knob.release", "knob.output", "knob.mix"
+        };
+        kb->setPalette (pal_);
+        kb->setThemeTokens (themeTokens_);
+        kb->setLabel (tr (kLabelKeys[k]));
         kb->onValueChange = [this, kk] (double v) { applyPopoverKnob (kk, v); };
         kb->onDragStart = [this, kk]
         {
@@ -650,15 +688,17 @@ void BandPopover::paint (juce::Graphics& g)
         return;
     const float a = juce::jlimit (0.0f, 1.0f, anim_);
     const auto r = popoverRect();
+    const float scale = EditorLayout (hostBounds_, layoutTokens_).scale;
 
-    // 半透明玻璃面板 + 阴影边
-    // ---- 面板阴影：多层渐变（Phase E-3，Pro-MB 投影对标）----
-    // 原来是一层硬边黑影（alpha 0.35 + 下移 3px），看起来像"贴"在界面上。
-    // 现在用三层由深到浅、由近到远的渐变，真正"浮"起来。
-    // Pro-MB 的投影参数约 0 14px 44px rgba(0,0,0,.5)。
+    if (themeTokens_.isNeumorphic)
+    {
+        // 新拟物浮层面板：8px/16px 双重阴影 + rounded-2xl + border-0
+        UiPack::NeuPainter::drawRaisedRect (g, r, themeTokens_.radiusLg * scale,
+                                            pal_, themeTokens_.shadowCard, scale, a, false);
+    }
+    else
     {
         const float corner = r.getWidth() * (12.0f / 472.0f);
-        // 三层：近（深、偏移小）、中、远（浅、偏移大）
         struct Layer { float dy; float alpha; float expand; };
         const Layer layers[3] = {
             { 2.0f,  0.30f, 0.0f  },
@@ -667,43 +707,39 @@ void BandPopover::paint (juce::Graphics& g)
         };
         for (const auto& L : layers)
         {
-            const float k = r.getHeight() / 200.0f;      // 设计稿 200px 高 → 比例
+            const float k = r.getHeight() / 200.0f;
             auto shadow = r.translated (0.0f, L.dy * k).expanded (L.expand * k);
-            g.setColour (juce::Colours::black.withAlpha (L.alpha * a));
+            g.setColour (pal_.halo.withMultipliedAlpha (L.alpha * 1.4f * a));
             g.fillRoundedRectangle (shadow, corner + L.expand * k);
         }
+
+        g.setColour (pal_.popA.withMultipliedAlpha (a));
+        g.fillRoundedRectangle (r, corner);
+        g.setColour (pal_.accent.withAlpha (0.5f * a));
+        g.drawRoundedRectangle (r, corner, 1.0f);
     }
 
-    g.setColour (pal_.popA.withMultipliedAlpha (a));
-    g.fillRoundedRectangle (r, r.getWidth() * (12.0f / 472.0f));
-    g.setColour (pal_.accent.withAlpha (0.5f * a));
-    g.drawRoundedRectangle (r, r.getWidth() * (12.0f / 472.0f), 1.0f);
-
-    // ---- 顶栏：⚡BYP 宏 + 段名 + 频率范围 + ✕ ----
+    // ---- 顶栏：段名 + 频率范围 + ✕ ----
     {
-        const float s=EditorLayout(hostBounds_).scale;
+        const float s = scale;
         const juce::Rectangle<float> bolt(r.getX(),r.getY(),8*s,0);
-        static const char* kNames[4] = { "LOW", "LOW MID", "HIGH MID", "HIGH" };
+        static const char* kNameKeys[4] = { "band.low", "band.lowMid", "band.highMid", "band.high" };
         g.setColour (pal_.text);
-        g.setFont (MBTheme::font (MBTheme::uiMedium(), 12.0f * EditorLayout(hostBounds_).scale));
-        // R36（B6）：频率范围用 setBandFreqRange 推下来的真实 Hz 文本，
-        //   不再把像素坐标当 Hz 打印、也不再只在打开时算一次。
-        g.drawText (juce::String (kNames[juce::jlimit (0, 3, band_)]) + "  "
+        g.setFont (MBTheme::font (MBTheme::uiMedium(), 12.0f * s));
+        g.drawText (tr (kNameKeys[juce::jlimit (0, 3, band_)]) + "  "
                     + (freqText_.isNotEmpty() ? freqText_
                                               : fmtHzShort (bandHzLow_) + " - " + fmtHzShort (bandHzHigh_)),
                     juce::Rectangle<float> (bolt.getRight() + r.getWidth() * (8.0f / 472.0f),
-                                            r.getY() + 7.0f * EditorLayout(hostBounds_).scale,
+                                            r.getY() + 7.0f * s,
                                             r.getWidth() * (300.0f / 472.0f),
-                                            24.0f * EditorLayout(hostBounds_).scale),
+                                            24.0f * s),
                     juce::Justification::centredLeft);
 
         const auto closeBtn = closeRect();
         const float cs = closeBtn.getWidth();
-        g.setColour (pal_.track);
-        g.fillRoundedRectangle (closeBtn, r.getWidth() * (6.0f / 472.0f));
-        // R36：原来这里画的是 "✕"（U+2715）——Poppins 里没有这个字形，
-        //   实际渲染成两个方框（快照 03_popover_2x 右上也看到过同样的问题）。
-        //   改成两条线画出来的叉，字体缺字也不影响。
+        UiPack::NeuPainter::drawButton (g, closeBtn, pal_, themeTokens_, false,
+                                        closeBtn.contains (lastMousePos_), s, a,
+                                        r.getWidth() * (6.0f / 472.0f));
         {
             const float cx2 = closeBtn.getCentreX(), cy2 = closeBtn.getCentreY();
             const float rr  = cs * 0.24f;
@@ -715,65 +751,100 @@ void BandPopover::paint (juce::Graphics& g)
         // 分隔线
         g.setColour (pal_.grid);
         g.fillRect (r.getX() + r.getWidth() * (10.0f / 472.0f),
-                    r.getY() + 36.0f * EditorLayout(hostBounds_).scale,
+                    r.getY() + 36.0f * s,
                     r.getWidth() - r.getWidth() * (20.0f / 472.0f), 1.0f);
     }
 
-    // ---- Phase C-6：Dynamics 分段按钮（Compress / Expand，Pro-MB segmented 对标）----
+    // ---- Phase C-6：Dynamics 分段按钮（Compress / Expand）----
     {
         const auto seg = dynamicsSegRect();
         const float halfW = seg.getWidth() * 0.5f;
-        const juce::String labels[2] = { "COMPRESS", "EXPAND" };
-        for (int i = 0; i < 2; ++i)
+        const juce::String labels[2] = { tr ("pop.compress"), tr ("pop.expand") };
+        if (themeTokens_.isNeumorphic)
         {
-            const bool on = ((i == 1) == dynamicsExpand_);
-            auto cell = juce::Rectangle<float> (seg.getX() + halfW * (float) i, seg.getY(),
-                                                halfW, seg.getHeight());
-            if (on)
+            UiPack::NeuPainter::drawInsetRect (g, seg, seg.getHeight() * 0.35f, pal_,
+                                               themeTokens_.insetButton, scale, a, true);
+            for (int i = 0; i < 2; ++i)
             {
-                g.setColour (pal_.accent.withAlpha (0.90f * a));
-                g.fillRoundedRectangle (cell.reduced (r.getWidth() * 0.004f),
-                                        cell.getHeight() * 0.28f);
-                g.setColour (juce::Colours::white.withAlpha (0.95f * a));
+                const bool on = ((i == 1) == dynamicsExpand_);
+                auto cell = juce::Rectangle<float> (seg.getX() + halfW * (float) i, seg.getY(),
+                                                    halfW, seg.getHeight()).reduced (2.0f * scale);
+                if (on)
+                {
+                    UiPack::NeuPainter::drawRaisedRect (g, cell, cell.getHeight() * 0.32f,
+                                                        pal_, themeTokens_.shadowBadge, scale, a, true);
+                    g.setColour (pal_.onAccent.withAlpha (0.96f * a));
+                }
+                else
+                {
+                    g.setColour (pal_.dim.withMultipliedAlpha (a));
+                }
+                g.setFont (MBTheme::font (on ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * scale));
+                g.drawText (labels[i], cell, juce::Justification::centred);
             }
-            else
-            {
-                g.setColour (pal_.dim.withMultipliedAlpha (a));
-            }
-            g.setFont (MBTheme::font (on ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * EditorLayout(hostBounds_).scale));
-            g.drawText (labels[i], cell, juce::Justification::centred);
         }
-        // 外框（分段控件的容器感）
-        g.setColour (pal_.gridZ.withMultipliedAlpha (a));
-        g.drawRoundedRectangle (seg, seg.getHeight() * 0.28f, 1.0f);
+        else
+        {
+            for (int i = 0; i < 2; ++i)
+            {
+                const bool on = ((i == 1) == dynamicsExpand_);
+                auto cell = juce::Rectangle<float> (seg.getX() + halfW * (float) i, seg.getY(),
+                                                    halfW, seg.getHeight());
+                if (on)
+                {
+                    g.setColour (pal_.accent.withAlpha (0.90f * a));
+                    g.fillRoundedRectangle (cell.reduced (r.getWidth() * 0.004f),
+                                            cell.getHeight() * 0.28f);
+                    g.setColour (pal_.onAccent.withAlpha (0.95f * a));
+                }
+                else
+                {
+                    g.setColour (pal_.dim.withMultipliedAlpha (a));
+                }
+                g.setFont (MBTheme::font (on ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * scale));
+                g.drawText (labels[i], cell, juce::Justification::centred);
+            }
+            g.setColour (pal_.gridZ.withMultipliedAlpha (a));
+            g.drawRoundedRectangle (seg, seg.getHeight() * 0.28f, 1.0f);
+        }
     }
 
     // Approved two-row footer: Compress/Expand + Ratio, Knee + Sidechain.
-    const float scale=EditorLayout(hostBounds_).scale;
     for(int k=0;k<3;++k) {
         const auto row=popSliderRect(k);
         const bool hot=(sliderDrag_==k)||row.contains(lastMousePos_);
         g.setFont(MBTheme::font(MBTheme::uiMedium(),12*scale));
         g.setColour(pal_.dim.withMultipliedAlpha(a));
-        g.drawText(k==0?"RATIO":k==1?"KNEE":"SIDECHAIN",row.withWidth((k==2?80:46)*scale),juce::Justification::centredLeft);
+        g.drawText(k==0?tr("pop.ratio"):k==1?tr("pop.knee"):tr("pop.sidechain"),
+                   row.withWidth((k==2?80:46)*scale),juce::Justification::centredLeft);
         if(k==2) {
             const float x=row.getX()+90*scale,w=(row.getWidth()-90*scale)*.5f;
             for(int j=0;j<2;++j) {
                 const auto cell=juce::Rectangle<float>(x+j*w,row.getY(),w-4*scale,row.getHeight());
                 const bool on=(sliders_[2]>.5)==(j==1);
-                g.setColour((on?pal_.accent.withAlpha(.2f):pal_.track).withMultipliedAlpha(a));
-                g.fillRoundedRectangle(cell,5*scale);
+                UiPack::NeuPainter::drawButton(g,cell,pal_,themeTokens_,on,cell.contains(lastMousePos_),scale,a,5*scale);
                 g.setColour((on?pal_.accent:pal_.dim).withMultipliedAlpha(a));
-                g.drawText(j==0?"INT":"EXT",cell,juce::Justification::centred);
+                g.drawText(j==0?tr("pop.int"):tr("pop.ext"),cell,juce::Justification::centred);
             }
             continue;
         }
         const float fraction=juce::jlimit(0.0f,1.0f,k==0?float((sliders_[0]-1)/19):float(sliders_[1]));
         const auto track=popSliderTrackRect(k);
-        g.setColour(pal_.track.withMultipliedAlpha(a));g.fillRoundedRectangle(track,2*scale);
-        g.setColour(pal_.accent.withMultipliedAlpha(a));g.fillRoundedRectangle(track.withWidth(juce::jmax(4*scale,track.getWidth()*fraction)),2*scale);
-        g.setColour((hot?juce::Colours::white:pal_.knob).withMultipliedAlpha(a));
-        g.fillEllipse(track.getX()+track.getWidth()*fraction-5*scale,row.getCentreY()-5*scale,10*scale,10*scale);
+        if(themeTokens_.isNeumorphic)
+        {
+            UiPack::NeuPainter::drawInsetRect(g,track.expanded(0,1.5f*scale),3*scale,pal_,themeTokens_.insetButton,scale,a,true);
+            g.setColour(pal_.accent.withMultipliedAlpha(a));
+            g.fillRoundedRectangle(track.withWidth(juce::jmax(4*scale,track.getWidth()*fraction)),2*scale);
+            const juce::Rectangle<float> thumb(track.getX()+track.getWidth()*fraction-6*scale,row.getCentreY()-6*scale,12*scale,12*scale);
+            UiPack::NeuPainter::drawRaisedCircle(g,thumb,pal_,hot?themeTokens_.shadowHover:themeTokens_.shadowBadge,scale);
+        }
+        else
+        {
+            g.setColour(pal_.track.withMultipliedAlpha(a));g.fillRoundedRectangle(track,2*scale);
+            g.setColour(pal_.accent.withMultipliedAlpha(a));g.fillRoundedRectangle(track.withWidth(juce::jmax(4*scale,track.getWidth()*fraction)),2*scale);
+            g.setColour((hot?pal_.onAccent:pal_.knob).withMultipliedAlpha(a));
+            g.fillEllipse(track.getX()+track.getWidth()*fraction-5*scale,row.getCentreY()-5*scale,10*scale,10*scale);
+        }
         const auto value=k==0?juce::String(sliders_[0],1)+" : 1":juce::String(sliders_[1]*48,1)+" dB";
         g.setFont(MBTheme::font(MBTheme::regular(),12*scale));g.setColour(pal_.text.withMultipliedAlpha(a));
         g.drawText(value,row.withLeft(row.getRight()-64*scale),juce::Justification::centredRight);
@@ -782,17 +853,15 @@ void BandPopover::paint (juce::Graphics& g)
     // ---- EXPERT 右缘竖排标签（Phase C-5，Pro-MB 对标）----
     const auto er = expertRect();
     {
-        // 竖排底带：贴右缘的一条窄带，比面板底色略亮以区分
-        g.setColour (pal_.track.withAlpha (0.75f * a));
-        g.fillRoundedRectangle (er, er.getWidth() * 0.3f);
+        UiPack::NeuPainter::drawButton (g, er, pal_, themeTokens_, expertOpen_,
+                                        er.contains (lastMousePos_), scale, a, er.getWidth() * 0.3f);
         g.setColour (expertOpen_ ? pal_.accent.withAlpha (0.9f * a)
                                  : pal_.dim.withMultipliedAlpha (a));
-        g.setFont (MBTheme::font (expertOpen_ ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * EditorLayout(hostBounds_).scale));
+        g.setFont (MBTheme::font (expertOpen_ ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.0f * scale));
 
-        // R36（B4）：原来逐字符往下排（"E X P E R T"竖着一列），观感很差。
-        //   改为把「EXPERT ▸」整体旋转 −90°，沿右缘竖着读。
-        const juce::String txt = expertOpen_ ? juce::String::fromUTF8 ("EXPERT \xE2\x96\xBC")
-                                             : juce::String::fromUTF8 ("EXPERT \xE2\x96\xB6");
+        const juce::String expLabel = tr ("pop.expert");
+        const juce::String txt = expLabel + (expertOpen_ ? juce::String::fromUTF8 (" \xE2\x96\xBC")
+                                                         : juce::String::fromUTF8 (" \xE2\x96\xB6"));
         g.saveState();
         const float ecx = er.getCentreX(), ecy = er.getCentreY();
         g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, ecx, ecy));
@@ -803,31 +872,39 @@ void BandPopover::paint (juce::Graphics& g)
                     juce::Justification::centred);
         g.restoreState();
     }
-
-    // ---- EXPERT 展开内容已移到 ExpertLayer 子组件（R35/C-b）----
-    // 原因：子组件永远画在父 paint() 之后，EXPERT 框若留在这里会被
-    // 5 个 Knob 盖住右半（旋钮 3/4 压在 SC HIGH-PASS / SC LOW-PASS 数值列上）。
 }
 
 // R35（C-b）：EXPERT 展开层——由 ExpertLayer 子组件调用，合成在旋钮之上。
 void BandPopover::paintExpertLayer(juce::Graphics& g)
 {
     if(!open_||!expertOpen_||anim_<.004f)return;
-    const auto box=expertContentRect();const float s=EditorLayout(hostBounds_).scale;
-    g.setColour(pal_.surface.withAlpha(.80f*anim_));g.fillRoundedRectangle(box,7*s);
-    g.setColour(pal_.gridZ);g.drawRoundedRectangle(box,7*s,s);
-    const char* titles[]={"DETECTOR","LOOKAHEAD","SC FILTERING"};
-    const char* options[3][3]={{"Peak","RMS",""},{"Off","1 ms","3 ms"},{"Band","Free",""}};
+    const auto box=expertContentRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale;
+    if(themeTokens_.isNeumorphic)
+    {
+        UiPack::NeuPainter::drawInsetRect(g,box,themeTokens_.radiusMd*s,pal_,themeTokens_.insetWell,s,anim_,true);
+    }
+    else
+    {
+        g.setColour(pal_.surface.withAlpha(.80f*anim_));g.fillRoundedRectangle(box,7*s);
+        g.setColour(pal_.gridZ);g.drawRoundedRectangle(box,7*s,s);
+    }
+    const juce::String titles[]={tr("pop.detector"),tr("pop.lookahead"),tr("pop.scFiltering")};
+    const juce::String options[3][3]={
+        {tr("pop.peak"),tr("pop.rms"),{}},
+        {tr("pop.off"),"1 ms","3 ms"},
+        {tr("pop.band"),tr("pop.free"),{}}
+    };
     const int selected[]={sliders_[3]>.5?1:0,(int)std::lround(sliders_[4]*2),getParamNorm("band"+juce::String(juce::jmax(0,band_))+"SCFilter")>.5f?1:0};
     for(int row=0;row<3;++row){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim);
         g.drawText(titles[row],juce::Rectangle<float>(box.getX()+12*s,box.getY()+(12+row*40)*s,130*s,30*s),juce::Justification::centredLeft);
         for(int i=0;i<(row==1?3:2);++i){const auto r=expertOptionRect((ExpertRow)(row+1),i);const bool on=selected[row]==i;
-            g.setColour(on?pal_.accent.withAlpha(.2f):pal_.track);g.fillRoundedRectangle(r,4*s);
-            g.setColour(on?pal_.accent:pal_.gridZ);g.drawRoundedRectangle(r,4*s,s);
-            g.setColour(on?pal_.text:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),14*s));g.drawText(options[row][i],r,juce::Justification::centred,false);}}
+            UiPack::NeuPainter::drawButton(g,r,pal_,themeTokens_,on,r.contains(lastMousePos_),s,anim_,4*s);
+            g.setColour(on?(themeTokens_.isNeumorphic?pal_.accent:pal_.text):pal_.dim);
+            g.setFont(MBTheme::font(on?MBTheme::uiMedium():MBTheme::uiRegular(),14*s));
+            g.drawText(options[row][i],r,juce::Justification::centred,false);}}
     const float left=box.getX()+box.getWidth()*.58f;
     g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),12*s));
-    g.drawText("FREQUENCY (FREE MODE)",juce::Rectangle<float>(left,box.getY()+8*s,box.getRight()-left-12*s,22*s),juce::Justification::centredLeft);
+    g.drawText(tr("pop.freqFreeMode"),juce::Rectangle<float>(left,box.getY()+8*s,box.getRight()-left-12*s,22*s),juce::Justification::centredLeft);
 }
 
 void BandPopover::resized()

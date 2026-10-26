@@ -121,9 +121,8 @@ public:
 
     // RBJ 标准二阶低通（Low-Pass / High-Cut）与高通（High-Pass / Low-Cut）：
     //   LP: b = (1−cs)/2 · (1, +2, 1)   HP: b = (1+cs)/2 · (1, −2, 1)
-    // 修复 LOGIC-04：提供语义明确的 designLowPass / designHighPass，并扶正
-    // designLowCut（= High-Pass）与 designHighCut（= Low-Pass）的极性，使之与
-    // 下方一阶 designFirstOrderLowCut / designFirstOrderHighCut 保持一致。
+    // 提供语义明确的 designLowPass / designHighPass，并扶正 designLowCut（= High-Pass）
+    // 与 designHighCut（= Low-Pass）的极性，使之与一阶函数命名一致。
     static BiquadCoefficients designLowPass (float freq, float q, float sr)
     {
         const double w0 = juce::MathConstants<double>::twoPi * freq / sr;

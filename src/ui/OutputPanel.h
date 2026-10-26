@@ -53,6 +53,7 @@ public:
 
     void setHostBounds (juce::Rectangle<int> hostBounds);
     void setTheme (MBTheme::Theme t);
+    void applyUiSnapshot (const UiPack::UiSnapshot& snap);
 
     // ---- 当前设置 ----
     float inputGainDb()  const noexcept { return inputGainDb_; }
@@ -133,4 +134,12 @@ private:
     int   monitorIdx_   = 0;       // Future MB 对标：0=Output（默认，行为不变）
 
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
+    UiPack::ThemeTokens  themeTokens_  = UiPack::buildThemePack  (UiPack::ThemeId::Classic);
+    UiPack::LayoutTokens layoutTokens_ = UiPack::buildLayoutPack (UiPack::LayoutId::Standard);
+    const UiPack::LocalePack* locale_  = &UiPack::buildLocalePack (UiPack::LocaleId::EnUS);
+    juce::String tr (const char* key) const
+    {
+        return (locale_ != nullptr) ? locale_->get (key)
+                                    : UiPack::buildLocalePack (UiPack::LocaleId::EnUS).get (key);
+    }
 };

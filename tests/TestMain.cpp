@@ -10149,6 +10149,57 @@ static int runUiSnapshots (const juce::String& dirPath)
     dv.setSize(1040,780);dv.setTheme(MBTheme::Theme::Cream);shot("10_cream.png",1.0f);
     dv.setTheme(MBTheme::Theme::Red);shot("11_red.png",1.0f);
     dv.openPopoverForBandForTest(2);dv.snapPanelsForTest();shot("12_red_band.png",1.0f);
+
+    // ---- 四包正交新拟物（Neumorphism）快照组 ----
+    dv.closePopoverForTest(); dv.snapPanelsForTest();
+    dv.setSize (1200, 780);
+    dv.applyNeumorphismPreset (UiPack::PaletteId::NeuLight);
+    shot ("15_neumorphism_light_main.png", 1.0f);
+
+    dv.openPopoverForBandForTest (2);
+    dv.snapPanelsForTest();
+    shot ("16_neumorphism_light_popover.png", 1.0f);
+
+    dv.setLocalePack (UiPack::LocaleId::ZhCN);
+    {
+        const auto r = dv.popExpertRectForTest();
+        if (! dv.isPopoverExpertOpenForTest())
+            dv.mouseDownForTest (r.getCentreX(), r.getCentreY());
+        dv.snapPanelsForTest();
+    }
+    shot ("17_neumorphism_zh_cn_expert.png", 1.0f);
+
+    dv.closePopoverForTest();
+    dv.clickLinkedButtonForTest();
+    dv.snapPanelsForTest();
+    shot ("18_neumorphism_zh_cn_linked.png", 1.0f);
+
+    dv.clickLinkedButtonForTest();
+    dv.snapPanelsForTest();
+    dv.setPalettePack (UiPack::PaletteId::NeuTeal);
+    shot ("19_neumorphism_teal.png", 1.0f);
+
+    dv.setPalettePack (UiPack::PaletteId::NeuDark);
+    dv.openPopoverForBandForTest (1);
+    dv.snapPanelsForTest();
+    shot ("20_neumorphism_dark_popover.png", 1.0f);
+
+    // 打开齿轮四包切换面板截图
+    dv.closePopoverForTest();
+    dv.snapPanelsForTest();
+    dv.applyNeumorphismPreset (UiPack::PaletteId::NeuLight);
+    dv.setLocalePack (UiPack::LocaleId::ZhCN);
+    {
+        const auto gear = dv.gearButtonRectForTest();
+        dv.mouseDownForTest (gear.getCentreX(), gear.getCentreY());
+        dv.mouseUpForTest   (gear.getCentreX(), gear.getCentreY());
+    }
+    shot ("21_neumorphism_pack_switcher.png", 1.0f);
+
+    // 恢复默认避免影响后续静态状态
+    dv.applyClassicPreset (UiPack::PaletteId::Blue);
+    dv.setLocalePack (UiPack::LocaleId::EnUS);
+
     std::cout << "\n快照写到 " << dir.getFullPathName() << std::endl;
     return 0;
 }
@@ -10317,7 +10368,8 @@ static int runVst3Smoke(const juce::String& path, const juce::String& snapshotPa
 // ------------------------------------------------------------
 // T90 审计报告全量修复回归（并发结构切换、FL 变长块过采样/线性相位、PDC 1x 单位、
 //     全局 Mix 相位延迟对齐、向上压缩/扩展 Attack-Release 极性、双声道 LoudnessMeter、
-//     Mono 主总线 + Stereo 侧链隔离、历史环回绕、Bypass 死锁消除、同帧多参数同步与手势通知）
+//     Mono 主总线 + Stereo 侧链隔离、历史环回绕、Bypass 死锁消除、同帧多参数同步、
+//     clampCrossovers 边界不变量、enabled 旁通 PDC/表头、AnalyzerSettings 持久化同步）
 // ------------------------------------------------------------
 static void testAuditBugFixes()
 {
@@ -10515,8 +10567,6 @@ static void testAuditBugFixes()
         mb->setParamPhysicalForTest (Param::ID::globalMix, 50.0f);
         mb->handleUpdateNowIfNeeded();
 
-        // 选择一个使未对齐延迟 3216 样本恰好产生反相抵消的频率：f = 48000 / (2 * 16) = 1500 Hz
-        // 3216 * 1500 / 48000 = 100.5 个周期（反相！旧实现 50% 干湿混合会完全抵消为 0！）
         juce::AudioBuffer<float> buf (2, 512);
         juce::MidiBuffer midi;
         float steadyPeak = 0.0f;
@@ -10543,18 +10593,15 @@ static void testAuditBugFixes()
     {
         BandCompressor comp;
         comp.prepare (48000.0);
-        // Attack = 1ms（快），Release = 400ms（慢），Range = +12 dB（向上压缩）
         comp.setParameters (-20.0f, 4.0f, 1.0f, 400.0f, 12.0f, 0.0f, false);
         comp.setStereoLink (0.0f);
 
-        // 喂 5ms 低电平信号（-40 dBFS < -20 dB 阈值，目标增益 +12 dB）：1ms 快 Attack 应迅速建立 >10 dB 正增益
         float gl = 1.0f, gr = 1.0f;
         for (int i = 0; i < 240; ++i)
-            comp.processGain (0.0f, 0.01f, gl, gr);   // 仅右声道有信号！
+            comp.processGain (0.0f, 0.01f, gl, gr);   // 仅右声道有信号
         const float gainAfterAttack = comp.getSmoothedGainDb();
         const float detRightOnly    = comp.getLastDetectorDb();
 
-        // 随后切到阈值以上（0 dBFS，目标增益 0 dB）跑 5ms：400ms 慢 Release 应仍保留大部分正增益（> 8 dB）
         for (int i = 0; i < 240; ++i)
             comp.processGain (0.0f, 1.0f, gl, gr);
         const float gainDuringRelease = comp.getSmoothedGainDb();
@@ -10573,13 +10620,12 @@ static void testAuditBugFixes()
         m64.prepare (48000.0);  m64.setWindowSec (0.400);
         m512.prepare (48000.0); m512.setWindowSec (0.400);
 
-        // 先喂 0.5s 强信号，再喂 0.2s 弱信号：400ms 窗应包含一半强一半弱，64 块与 512 块结果须一致
         const int total = 33600; // 0.7s @ 48k
         for (int i = 0; i < total; ++i)
         {
             const float amp = (i < 24000) ? 0.5f : 0.05f;
             const float l =  amp * std::sin (0.1f * (float) i);
-            const float r = -amp * std::sin (0.1f * (float) i); // 反相立体声测试双通道独立滤波器
+            const float r = -amp * std::sin (0.1f * (float) i);
             m64.processSample (0, l);  m64.processSample (1, r);
             m512.processSample (0, l); m512.processSample (1, r);
             if ((i + 1) % 64 == 0)  m64.endBlock (128);
@@ -10648,7 +10694,6 @@ static void testAuditBugFixes()
         mb->setParamPhysicalForTest (Param::bandMix (2), 30.0f);
         for (int t = 0; t < 5; ++t) dv.tickForTest();
 
-        // 点击 band2 的 B 按钮：30% -> 0%（旁通），再点恢复 30%（解除旁通，不死锁）
         const auto bypRect = dv.bandButtonRectForTest (2, 2);
         dv.mouseDownForTest (bypRect.getCentreX(), bypRect.getCentreY());
         dv.mouseUpForTest   (bypRect.getCentreX(), bypRect.getCentreY());
@@ -10660,7 +10705,6 @@ static void testAuditBugFixes()
                "T90.13 Mix=30% 时 B 按钮可正常切换 0% 与恢复 30%（无死锁）",
                juce::String (mixAfterByp) + " -> " + juce::String (mixRestored));
 
-        // 同帧修改多个参数后 Popover 全部同步（不因首个 syncParam 返回 true 而提前 break）
         dv.openPopoverForBandForTest (2);
         dv.snapPopoverForTest();
         mb->setParamPhysicalForTest (Param::bandThreshold (2), -37.0f);
@@ -10671,7 +10715,6 @@ static void testAuditBugFixes()
                "T90.14 同帧多参数变更时 BandPopover 全部控件完整同步",
                juce::String (dv.getPopoverValueForTest (0)) + " / " + juce::String (dv.getPopoverValueForTest (4)));
 
-        // ValueField 非法文本失焦自动关闭编辑态（不残留 TextEditor）
         ValueField vf;
         vf.setSize (180, 36);
         vf.configure ("HIGH-PASS", "Hz", 20.0, 2000.0, 0, true);
@@ -10679,7 +10722,289 @@ static void testAuditBugFixes()
         check (! vf.applyText ("invalid_hz") && std::abs (vf.getValue() - 150.0) < 1.0e-6,
                "T90.15 ValueField 非法输入保持原值", "");
 
+        // ⑩ 新增筛查项断言：clampCrossovers 极端逆序不触发 jassert 且严格满足 1 八度链
+        {
+            float x1 = 200.0f, x2 = 1000.0f, x3 = 600.0f;
+            Param::clampCrossovers (x1, x2, x3);
+            check (x1 >= 40.0f && x2 >= x1 * 2.0f - 1.0e-3f && x3 >= x2 * 2.0f - 1.0e-3f
+                   && std::abs (x3 - 600.0f) < 1.0e-3f,
+                   "T90.16 clampCrossovers(200,1000,600) 无断言失败且保持 150/300/600 的 1 八度链",
+                   juce::String (x1) + "/" + juce::String (x2) + "/" + juce::String (x3));
+        }
+
+        // ⑪ 新增筛查项断言：enabled=关 时上报 0 延迟并归零段压缩增益，重开后恢复延迟
+        {
+            mb->setParamPhysicalForTest (Param::ID::phaseMode, 2.0f); // Linear
+            mb->handleUpdateNowIfNeeded();
+            const int latOn = mb->getLatencySamples();
+            mb->setParamPhysicalForTest (Param::ID::enabled, 0.0f);
+            mb->handleUpdateNowIfNeeded();
+            const int latOff = mb->getLatencySamples();
+            mb->setParamPhysicalForTest (Param::ID::enabled, 1.0f);
+            mb->handleUpdateNowIfNeeded();
+            const int latRestored = mb->getLatencySamples();
+            check (latOn > 0 && latOff == 0 && latRestored == latOn,
+                   "T90.17 enabled=关 时 PDC 延迟归 0，重开后恢复原延迟",
+                   juce::String (latOn) + " -> " + juce::String (latOff) + " -> " + juce::String (latRestored));
+        }
+
+        // ⑫ 新增筛查项断言：AnalyzerSettings 持久化后重开编辑器及 setStateInformation 均同步到 SpectrumView
+        {
+            dv.setAnalyzerPreOnForTest (false);
+            dv.setAnalyzerPostOnForTest (true);
+            dv.setAnalyzerFftSizeForTest (4096);
+            juce::MemoryBlock stateData;
+            mb->getStateInformation (stateData);
+
+            std::unique_ptr<juce::AudioProcessor> proc2 (createPluginFilter());
+            auto* mb2 = dynamic_cast<CrunchMBAudioProcessor*> (proc2.get());
+            proc2->setPlayConfigDetails (48000.0, 512, 2, 2);
+            proc2->prepareToPlay (48000.0, 512);
+            proc2->setStateInformation (stateData.getData(), (int) stateData.getSize());
+
+            DisplayView dv2 (*mb2);
+            dv2.setSize (1200, 780);
+            check (! dv2.spectrumPreVisibleForTest() && dv2.spectrumPostVisibleForTest()
+                   && mb2->getAnalyzerSettings().fftSize == 4096,
+                   "T90.18 AnalyzerSettings 持久化后新建编辑器自动同步 SpectrumView 图层开关与 FFT 分辨率",
+                   "pre=" + juce::String ((int) dv2.spectrumPreVisibleForTest())
+                   + " fft=" + juce::String (mb2->getAnalyzerSettings().fftSize));
+            mb2->setEditorActive (false);
+        }
+
         mb->setEditorActive (false);
+    }
+}
+
+// ------------------------------------------------------------
+// T91 四包正交 UI 架构守卫 + Neumorphism 新拟物风格包与双语/回滚/持久化验证
+// ------------------------------------------------------------
+static void testFourPackUiAndNeumorphism()
+{
+    std::cout << "\n--- T91 四包正交 UI 架构与 Neumorphism 新拟物风格验证 ---\n";
+
+    // ① 源码零硬编码颜色守卫（对齐 natalia-cli theme-tokens.test.ts）
+    {
+        juce::File uiDir = juce::File::getCurrentWorkingDirectory().getChildFile ("src/ui");
+        if (! uiDir.isDirectory())
+            uiDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
+                        .getParentDirectory().getParentDirectory().getParentDirectory()
+                        .getParentDirectory().getChildFile ("src/ui");
+
+        if (uiDir.isDirectory())
+        {
+            juce::Array<juce::File> files;
+            uiDir.findChildFiles (files, juce::File::findFiles, true, "*.h;*.cpp");
+            juce::StringArray offenders;
+            for (const auto& f : files)
+            {
+                const auto rel = f.getRelativePathFrom (uiDir).replaceCharacter ('\\', '/');
+                if (rel == "packs/palettes/BuiltInPalettes.h" || rel == "core/UiComposition.h")
+                    continue;
+                const auto lines = juce::StringArray::fromLines (f.loadFileAsString());
+                for (int idx = 0; idx < lines.size(); ++idx)
+                {
+                    const auto trimmed = lines[idx].trim();
+                    if (trimmed.startsWith ("//") || trimmed.startsWith ("*"))
+                        continue;
+                    if (trimmed.contains ("Colours::")
+                        || trimmed.containsIgnoreCase ("0xff"))
+                    {
+                        offenders.add (rel + ":" + juce::String (idx + 1));
+                    }
+                }
+            }
+            check (offenders.isEmpty(),
+                   "T91.1 UI 组件与 ThemePack 零硬编码颜色守卫（色彩仅存在于 PalettePack）",
+                   offenders.joinIntoString (", "));
+        }
+    }
+
+    // ② 语言包键集 100% 对齐且无空值守卫（对齐 natalia-cli locale-dictionaries.test.ts）
+    {
+        const auto& en = UiPack::buildLocalePack (UiPack::LocaleId::EnUS);
+        const auto& zh = UiPack::buildLocalePack (UiPack::LocaleId::ZhCN);
+        bool parityOk = (en.entries.size() == zh.entries.size()) && ! en.entries.empty();
+        juce::String missingDetail;
+        for (const auto& kv : en.entries)
+        {
+            const auto it = zh.entries.find (kv.first);
+            if (kv.second.isEmpty() || it == zh.entries.end() || it->second.isEmpty())
+            {
+                parityOk = false;
+                missingDetail = kv.first;
+                break;
+            }
+        }
+        check (parityOk,
+               "T91.2 en-US 与 zh-CN 语言包键集 100% 对齐且无空串（共 "
+               + juce::String ((int) en.entries.size()) + " 项）",
+               missingDetail);
+    }
+
+    // ③ 6 套内置配色包槽位完备性与 neumorphism-style-pack 色值精确对齐
+    {
+        const auto neuLight = UiPack::buildPalettePack (UiPack::PaletteId::NeuLight);
+        const bool exactTokens =
+               neuLight.bg.getARGB()          == 0xffe0e5ecu
+            && neuLight.bgLight.getARGB()     == 0xfff0f0f3u
+            && neuLight.panel.getARGB()       == 0xffd1d9e6u
+            && neuLight.shadowDark.getARGB()  == 0xffb8bcc2u
+            && neuLight.shadowLight.getARGB() == 0xffffffffu
+            && neuLight.accent.getARGB()      == 0xff6d5dfcu
+            && neuLight.text.getARGB()        == 0xff333333u
+            && neuLight.dim.getARGB()         == 0xff6b7280u;
+        check (exactTokens,
+               "T91.3 NeuLight 配色包精确匹配 neumorphism-style-pack 标准 Token (#e0e5ec / #6d5dfc / #b8bcc2 / #ffffff)",
+               neuLight.bg.toDisplayString (true));
+    }
+
+    // ④ 组合验证门禁（VerificationGate）：放行合法新拟物组合，拦截纯白/纯黑背景、粗边框、反向悬停阴影
+    {
+        UiPack::UiComposition comp;
+        const auto okVerdict = comp.applyPacks (UiPack::ThemeId::Neumorphism,
+                                                UiPack::PaletteId::NeuLight,
+                                                UiPack::LayoutId::Sculpted,
+                                                UiPack::LocaleId::ZhCN);
+        check (okVerdict.ok, "T91.4 合法四包组合 (Neumorphism + NeuLight + Sculpted + zh-CN) 通过门禁", okVerdict.reason);
+
+        UiPack::UiSnapshot badWhite = comp.snapshot();
+        badWhite.palette.bg = juce::Colour (0xffffffffu);
+        check (! UiPack::UiComposition::verifySnapshot (badWhite).ok,
+               "T91.5 门禁拦截新拟物禁忌：禁止纯白 (#ffffff) 背景", "");
+
+        UiPack::UiSnapshot badBorder = comp.snapshot();
+        badBorder.theme.borderWidth = 2.0f;
+        check (! UiPack::UiComposition::verifySnapshot (badBorder).ok,
+               "T91.6a 门禁拦截新拟物禁忌：禁止 border-2 及以上粗边框", "");
+
+        UiPack::UiSnapshot badHover = comp.snapshot();
+        badHover.theme.shadowHover.offset = badHover.theme.shadowButton.offset + 2.0f;
+        check (! UiPack::UiComposition::verifySnapshot (badHover).ok,
+               "T91.6b 门禁拦截新拟物禁忌：禁止 hover 放大阴影（违反 Hover Shadowing）", "");
+    }
+
+    // ⑤ DisplayView 端到端：保持旧默认启动、原子切换新拟物、单包正交混搭、一键回滚、齿轮切换卡片点击与全界面渲染
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+
+        DisplayView dv (*mb);
+        dv.setSize (1200, 780);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+
+        // 默认启动仍为原深色界面（Classic + Blue + Standard + EnUS）
+        const auto rev0 = dv.getUiRevision();
+        check (dv.getUiSnapshot().themeId   == UiPack::ThemeId::Classic
+            && dv.getUiSnapshot().paletteId == UiPack::PaletteId::Blue
+            && dv.getUiSnapshot().layoutId  == UiPack::LayoutId::Standard
+            && dv.getUiSnapshot().localeId  == UiPack::LocaleId::EnUS,
+               "T91.7 默认启动保持 Classic + Blue + Standard + en-US 兼容原界面", "");
+
+        // 原子切换至 Neumorphism 套装，检查子组件旋钮同步进入新拟物态
+        dv.openPopoverForBandForTest (1);
+        dv.snapPanelsForTest();
+        const auto vNeu = dv.applyNeumorphismPreset (UiPack::PaletteId::NeuLight);
+        const auto rev1 = dv.getUiRevision();
+        check (vNeu.ok && rev1 > rev0
+            && dv.getUiSnapshot().isNeumorphic()
+            && dv.getUiSnapshot().layout.sunkenPlotWell
+            && dv.outputPanelForTest()->numericControlForTest (0).isNeumorphicForTest(),
+               "T91.8 原子切换 Neumorphism 预设：revision 递增且全部子面板旋钮同帧进入新拟物态", "");
+
+        // 正交单包替换：仅切换语言包到 zh-CN，验证 Theme/Palette/Layout 不受影响
+        dv.setLocalePack (UiPack::LocaleId::ZhCN);
+        const auto rev2 = dv.getUiRevision();
+        check (rev2 > rev1
+            && dv.getUiSnapshot().themeId   == UiPack::ThemeId::Neumorphism
+            && dv.getUiSnapshot().paletteId == UiPack::PaletteId::NeuLight
+            && dv.getUiSnapshot().layoutId  == UiPack::LayoutId::Sculpted
+            && dv.getUiSnapshot().localeId  == UiPack::LocaleId::ZhCN
+            && MBTheme::isCjkMode(),
+               "T91.9 正交替换 LocalePack(zh-CN) 不扰动 Theme/Palette/Layout 且启用 CJK 字体链", "");
+
+        // 原子回滚：从 zh-CN 回滚回 en-US（保持 Neumorphism + NeuLight + Sculpted）
+        dv.rollbackUiPacks();
+        const auto rev3 = dv.getUiRevision();
+        check (rev3 > rev2
+            && dv.getUiSnapshot().themeId  == UiPack::ThemeId::Neumorphism
+            && dv.getUiSnapshot().localeId == UiPack::LocaleId::EnUS
+            && ! MBTheme::isCjkMode(),
+               "T91.10 rollbackUiPacks() 无条件原子回滚到上一版本组合并恢复字体链", "");
+
+        // 齿轮菜单四包切换卡片交互验证
+        dv.applyClassicPreset (UiPack::PaletteId::Blue);
+        const auto gear = dv.gearButtonRectForTest();
+        dv.mouseDownForTest (gear.getCentreX(), gear.getCentreY());
+        dv.mouseUpForTest   (gear.getCentreX(), gear.getCentreY());
+        check (dv.isThemeMenuOpenForTest(), "T91.11a 点击齿轮打开设置菜单与四包切换卡片", "");
+
+        const auto neuPresetBtn = dv.packOptionRectForTest (0, 0);
+        dv.mouseDownForTest (neuPresetBtn.getCentreX(), neuPresetBtn.getCentreY());
+        dv.mouseUpForTest   (neuPresetBtn.getCentreX(), neuPresetBtn.getCentreY());
+        const auto zhBtn = dv.packOptionRectForTest (4, 1);
+        dv.mouseDownForTest (zhBtn.getCentreX(), zhBtn.getCentreY());
+        dv.mouseUpForTest   (zhBtn.getCentreX(), zhBtn.getCentreY());
+        const auto tealBtn = dv.packOptionRectForTest (2, 4);
+        dv.mouseDownForTest (tealBtn.getCentreX(), tealBtn.getCentreY());
+        dv.mouseUpForTest   (tealBtn.getCentreX(), tealBtn.getCentreY());
+        check (dv.getUiSnapshot().themeId   == UiPack::ThemeId::Neumorphism
+            && dv.getUiSnapshot().paletteId == UiPack::PaletteId::NeuTeal
+            && dv.getUiSnapshot().layoutId  == UiPack::LayoutId::Sculpted
+            && dv.getUiSnapshot().localeId  == UiPack::LocaleId::ZhCN,
+               "T91.11b 齿轮四包卡片点击切换 Preset / Palette(NeuTeal) / Locale(zh-CN) 实时生效", "");
+
+        // 离屏全组件快照渲染验证（含底板 #e0e5ec 采样与内凹视窗像素差异验证）
+        dv.closePopoverForTest();
+        const auto gearClose = dv.gearButtonRectForTest();
+        dv.mouseDownForTest (gearClose.getCentreX(), gearClose.getCentreY());
+        dv.mouseUpForTest   (gearClose.getCentreX(), gearClose.getCentreY());
+        dv.applyNeumorphismPreset (UiPack::PaletteId::NeuLight);
+        juce::Image img (juce::Image::ARGB, 1200, 780, true);
+        {
+            juce::Graphics g (img);
+            dv.paintForTest (g);
+        }
+        // 采样频谱内凹槽上边缘内壁（左上暗影）与下边缘内壁（右下高光），验证左上光源物理极性
+        const EditorLayout lay (dv.getLocalBounds(), dv.getUiSnapshot().layout);
+        const auto well = lay.plotWellRect();
+        const auto topEdgePx = img.getPixelAt ((int) well.getCentreX(), (int) well.getY() + 2);
+        const auto botEdgePx = img.getPixelAt ((int) well.getCentreX(), (int) well.getBottom() - 2);
+        check (img.isValid() && botEdgePx.getBrightness() > topEdgePx.getBrightness(),
+               "T91.12 新拟物内凹频谱槽渲染符合固定左上光源物理（上内壁暗影 < 下内壁高光）",
+               "top=" + juce::String (topEdgePx.getBrightness(), 3)
+               + " bot=" + juce::String (botEdgePx.getBrightness(), 3));
+
+        // 工程状态序列化与跨编辑器恢复持久化验证
+        dv.setUiPacks (UiPack::ThemeId::Neumorphism,
+                       UiPack::PaletteId::NeuDark,
+                       UiPack::LayoutId::Sculpted,
+                       UiPack::LocaleId::ZhCN);
+        juce::MemoryBlock stateBlock;
+        mb->getStateInformation (stateBlock);
+
+        std::unique_ptr<juce::AudioProcessor> proc2 (createPluginFilter());
+        auto* mb2 = dynamic_cast<CrunchMBAudioProcessor*> (proc2.get());
+        proc2->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc2->prepareToPlay (48000.0, 512);
+        proc2->setStateInformation (stateBlock.getData(), (int) stateBlock.getSize());
+
+        DisplayView dv2 (*mb2);
+        dv2.setSize (1200, 780);
+        check (dv2.getUiSnapshot().themeId   == UiPack::ThemeId::Neumorphism
+            && dv2.getUiSnapshot().paletteId == UiPack::PaletteId::NeuDark
+            && dv2.getUiSnapshot().layoutId  == UiPack::LayoutId::Sculpted
+            && dv2.getUiSnapshot().localeId  == UiPack::LocaleId::ZhCN,
+               "T91.13 四包组合状态经 getStateInformation/setStateInformation 完整持久化并恢复", "");
+
+        // 清理全局 CJK 标志，保持进程干净
+        dv2.setLocalePack (UiPack::LocaleId::EnUS);
+        dv.applyClassicPreset (UiPack::PaletteId::Blue);
+        dv.setLocalePack (UiPack::LocaleId::EnUS);
+        mb->setEditorActive (false);
+        mb2->setEditorActive (false);
     }
 }
 
@@ -10803,6 +11128,7 @@ int main (int argc, char** argv)
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
     testAuditBugFixes();          // T90 审计报告全量修复回归
+    testFourPackUiAndNeumorphism(); // T91 四包正交架构与 Neumorphism 新拟物验证
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

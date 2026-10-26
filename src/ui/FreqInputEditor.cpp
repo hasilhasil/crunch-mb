@@ -1,4 +1,5 @@
 #include "FreqInputEditor.h"
+#include "EditorLayout.h"
 
 // ============================================================
 // FreqInputEditor 实现（从 DisplayView 拆出）
@@ -99,32 +100,42 @@ void FreqInputEditor::paint (juce::Graphics& g)
     if (! active_)
         return;
 
-    // 以 920×620 设计稿为基准等比缩放（与 DisplayView 的 sx/sy 一致）
-    const float W = (float) getWidth();
-    const float H = (float) getHeight();
-    const float bw = W * (72.0f / 920.0f), bh = H * (24.0f / 620.0f);
+    const EditorLayout l (getLocalBounds(), layout_);
+    const float s  = l.scale;
+    const float bw = 92.0f * s, bh = 28.0f * s;
 
-    float tx = x_ - bw * 0.5f, ty = y_ - bh - H * (10.0f / 620.0f);
-    tx = juce::jlimit (2.0f, W - bw - 2.0f, tx);
-    if (ty < H * (30.0f / 620.0f))     // 顶栏高度
-        ty = y_ + H * (10.0f / 620.0f);
+    float tx = x_ - bw * 0.5f, ty = y_ - bh - 10.0f * s;
+    tx = juce::jlimit (4.0f * s, juce::jmax (4.0f * s, l.plotRight() - bw - 4.0f * s), tx);
+    if (ty < l.topHeight() + 4.0f * s)
+        ty = y_ + 10.0f * s;
 
     auto box = juce::Rectangle<float> (tx, ty, bw, bh);
-    g.setColour (pal_.surface.withAlpha (0.97f));
-    g.fillRoundedRectangle (box, W * (5.0f / 920.0f));
-    g.setColour (pal_.accent);
-    g.drawRoundedRectangle (box, W * (5.0f / 920.0f), 1.2f);
+    if (theme_.isNeumorphic)
+    {
+        // 新拟物输入框：聚焦松弛内凹（insetFocus）+ 微强调光环
+        UiPack::NeuPainter::drawRaisedRect (g, box.expanded (3.0f * s), theme_.radiusMd * s,
+                                            pal_, theme_.shadowHover, s, 0.96f, false);
+        UiPack::NeuPainter::drawInsetRect  (g, box, theme_.radiusSm * s,
+                                            pal_, theme_.insetFocus, s, 1.0f, true);
+    }
+    else
+    {
+        g.setColour (pal_.surface.withAlpha (0.97f));
+        g.fillRoundedRectangle (box, 5.0f * s);
+        g.setColour (pal_.accent);
+        g.drawRoundedRectangle (box, 5.0f * s, 1.2f * s);
+    }
 
     // 文本 + 闪烁光标
     const juce::String label = text_ + (cursorVisible_ ? "|" : " ");
     g.setColour (pal_.text);
-    g.setFont (MBTheme::font (MBTheme::regular(), 11.0f));
+    g.setFont (MBTheme::font (MBTheme::uiMedium(), 13.0f * s));
     g.drawText (label, box, juce::Justification::centred);
 
-    // 单位提示
+    // 单位提示（来自当前激活语言包）
     g.setColour (pal_.dim);
-    g.setFont (MBTheme::font (MBTheme::regular(), 8.0f));
-    g.drawText ("Hz  (Enter \xE7\xA1\xAE\xE8\xAE\xA4 / Esc \xE5\x8F\x96\xE6\xB6\x88)",
-                box.withY (box.getBottom() + 1.0f).withHeight (H * (11.0f / 620.0f)),
+    g.setFont (MBTheme::font (MBTheme::uiRegular(), 9.5f * s));
+    g.drawText (hintText_,
+                box.withY (box.getBottom() + 2.0f * s).withHeight (14.0f * s).expanded (30.0f * s, 0.0f),
                 juce::Justification::centredTop);
 }

@@ -70,6 +70,7 @@ public:
     void snapToCurrent();
     void setHostBounds (juce::Rectangle<int> hostBounds);
     void setTheme (MBTheme::Theme t);
+    void applyUiSnapshot (const UiPack::UiSnapshot& snap);
     /** 供绘制 hover 态使用（DisplayView 在 mouseMove 时更新）。 */
     void setLastMousePos (juce::Point<float> p) { lastMousePos_ = p; }
 
@@ -251,6 +252,14 @@ private:
 
     CrunchMBAudioProcessor& proc_;
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
+    UiPack::ThemeTokens  themeTokens_  = UiPack::buildThemePack  (UiPack::ThemeId::Classic);
+    UiPack::LayoutTokens layoutTokens_ = UiPack::buildLayoutPack (UiPack::LayoutId::Standard);
+    const UiPack::LocalePack* locale_  = &UiPack::buildLocalePack (UiPack::LocaleId::EnUS);
+    juce::String tr (const char* key) const
+    {
+        return (locale_ != nullptr) ? locale_->get (key)
+                                    : UiPack::buildLocalePack (UiPack::LocaleId::EnUS).get (key);
+    }
 
     bool  open_ = false;
     float anim_ = 0.0f;

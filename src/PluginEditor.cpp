@@ -13,7 +13,7 @@
 CrunchMBAudioProcessorEditor::CrunchMBAudioProcessorEditor (CrunchMBAudioProcessor& p)
     : juce::AudioProcessorEditor (p), proc (p)
 {
-    // 修复 MISC-01：使用编辑器私有 LookAndFeel 实例设置默认字体，避免污染宿主同进程其它 JUCE 插件
+    // 使用编辑器私有 LookAndFeel 实例设置默认字体，避免污染宿主同进程其它 JUCE 插件
     if (auto face = MBTheme::regular())
         editorLookAndFeel_.setDefaultSansSerifTypeface (face);
     setLookAndFeel (&editorLookAndFeel_);
@@ -45,6 +45,6 @@ void CrunchMBAudioProcessorEditor::resized()
 
 void CrunchMBAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // 显示区由 DisplayView 全权绘制；此处仅兜底背景
-    g.fillAll (juce::Colour (0xff101214));
+    // 显示区由 DisplayView 全权绘制；此处从当前激活配色包读取背景槽位（零硬编码颜色）
+    g.fillAll (MBTheme::palette ((MBTheme::Theme) proc.getUiPackSettings().paletteId).bg);
 }

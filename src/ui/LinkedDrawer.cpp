@@ -32,12 +32,29 @@ LinkedDrawer::~LinkedDrawer() = default;
 void LinkedDrawer::setTheme (MBTheme::Theme t)
 {
     pal_ = MBTheme::palette (t);
-    // R34（N6/N8）：必须把新调色板下发给 5 个 Knob。
-    // Knob 是独立子组件、自带 pal_，只 repaint() 自己是刷不动它们的——
-    // 齿轮接上主题切换后，抽屉旋钮会停留在旧配色。
-    // 对照 BandPopover::setTheme，那里一直是循环设置的。
     for (auto& kb : knobs_)
         if (kb != nullptr) kb->setPalette (pal_);
+    repaint();
+}
+
+void LinkedDrawer::applyUiSnapshot (const UiPack::UiSnapshot& snap)
+{
+    pal_          = snap.palette;
+    themeTokens_  = snap.theme;
+    layoutTokens_ = snap.layout;
+    locale_       = snap.locale;
+    static const char* kKeys[kLinkedKnobs] = {
+        "knob.threshold", "knob.attack", "knob.release", "knob.makeup", "knob.mix", "knob.range"
+    };
+    for (int k = 0; k < kLinkedKnobs; ++k)
+    {
+        if (auto& kb = knobs_[(size_t) k])
+        {
+            kb->setPalette (pal_);
+            kb->setThemeTokens (themeTokens_);
+            kb->setLabel (tr (kKeys[k]));
+        }
+    }
     repaint();
 }
 
@@ -162,7 +179,12 @@ void LinkedDrawer::ensureKnobs()
         kb->setDecimals (cfgs[k].dec);
         kb->setKnobDiameter (52.0f);
         kb->setShowLabel (true);
-        kb->setPalette (pal_);                           // 修复 P2-13：首次创建即同步当前主题调色板
+        kb->setPalette (pal_);                           // 首次创建即同步当前主题调色板
+        kb->setThemeTokens (themeTokens_);
+        static const char* kLabelKeys[kLinkedKnobs] = {
+            "knob.threshold", "knob.attack", "knob.release", "knob.makeup", "knob.mix", "knob.range"
+        };
+        kb->setLabel (tr (kLabelKeys[k]));
         kb->setLinkedMark (false);                       // §5.2：⊞ 联动标识
         if (k != kLinkedMixIndex)
         {
@@ -295,27 +317,34 @@ void LinkedDrawer::setParamPhysical (const juce::String& id, float physical) con
 
 void LinkedDrawer::paint (juce::Graphics& g)
 {
-
-    const EditorLayout l(hostBounds_);const float s=l.scale;const auto btn=buttonRect();
-    g.setColour(open_?pal_.accent.withAlpha(.15f):pal_.track);g.fillRoundedRectangle(btn,6*s);
+    const EditorLayout l(hostBounds_,layoutTokens_);const float s=l.scale;const auto btn=buttonRect();
+    const bool btnHov = btn.contains(lastMousePos_);
+    UiPack::NeuPainter::drawButton(g,btn,pal_,themeTokens_,open_,btnHov,s,1.0f,6*s);
     g.setColour(open_?pal_.accent:pal_.dim);
     const float x=btn.getX()+13*s,y=btn.getCentreY();
     g.drawRoundedRectangle({x,y-4*s,10*s,7*s},3*s,1.2f*s);g.drawRoundedRectangle({x+5*s,y-1*s,10*s,7*s},3*s,1.2f*s);
     g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));
-    g.drawText("LINKED CONTROL",btn.withTrimmedLeft(36*s).withTrimmedRight(10*s),juce::Justification::centredLeft,false);
+    g.drawText(tr("top.linkedControl"),btn.withTrimmedLeft(36*s).withTrimmedRight(10*s),juce::Justification::centredLeft,false);
     if(anim_<.001f)return;
     const auto r=panelRect();const float a=juce::jlimit(0.0f,1.0f,anim_);
-    g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);
-    g.setColour(pal_.gridZ.withMultipliedAlpha(a));g.drawRoundedRectangle(r,12*s,s);
+    if(themeTokens_.isNeumorphic)
+    {
+        UiPack::NeuPainter::drawRaisedRect(g,r,themeTokens_.radiusLg*s,pal_,themeTokens_.shadowCard,s,a,false);
+    }
+    else
+    {
+        g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);
+        g.setColour(pal_.gridZ.withMultipliedAlpha(a));g.drawRoundedRectangle(r,12*s,s);
+    }
+    g.setColour(pal_.gridZ.withMultipliedAlpha((themeTokens_.isNeumorphic?0.35f:1.0f)*a));
     g.drawLine(r.getX()+14*s,r.getY()+42*s,r.getRight()-14*s,r.getY()+42*s,s);
     g.setColour(pal_.accent.withMultipliedAlpha(a));g.setFont(MBTheme::font(MBTheme::uiMedium(),14*s));
-    g.drawText("LINKED CONTROL",juce::Rectangle<float>{r.getX()+18*s,r.getY()+6*s,180*s,30*s},juce::Justification::centredLeft);
+    g.drawText(tr("linked.title"),juce::Rectangle<float>{r.getX()+18*s,r.getY()+6*s,220*s,30*s},juce::Justification::centredLeft);
     const auto close=closeRect().reduced(8*s);g.setColour(pal_.dim.withMultipliedAlpha(a));
     g.drawLine(close.getX(),close.getY(),close.getRight(),close.getBottom(),1.5f*s);g.drawLine(close.getRight(),close.getY(),close.getX(),close.getBottom(),1.5f*s);
     g.setFont(MBTheme::font(MBTheme::uiRegular(),12*s));
-    g.drawText("THRESHOLD / ATTACK / RELEASE / MAKEUP / RANGE  |  RELATIVE OFFSET",juce::Rectangle<float>{r.getX()+18*s,r.getBottom()-30*s,r.getWidth()-165*s,20*s},juce::Justification::centredLeft,false);
-    g.drawText("MIX  |  ALL BANDS",juce::Rectangle<float>{r.getRight()-145*s,r.getBottom()-30*s,125*s,20*s},juce::Justification::centredRight,false);
-
+    g.drawText(tr("linked.relativeFooter"),juce::Rectangle<float>{r.getX()+18*s,r.getBottom()-30*s,r.getWidth()-165*s,20*s},juce::Justification::centredLeft,false);
+    g.drawText(tr("linked.mixFooter"),juce::Rectangle<float>{r.getRight()-145*s,r.getBottom()-30*s,125*s,20*s},juce::Justification::centredRight,false);
 }
 
 void LinkedDrawer::resized()

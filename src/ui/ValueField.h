@@ -19,11 +19,14 @@ public:
         editor_.onEscapeKey = [this] { finishEdit(false, true); };
         editor_.onFocusLost = [this] { if(editing_) finishEdit(true, true); };
     }
+    bool isEditingForTest() const noexcept { return editing_; }
     void configure(juce::String label, juce::String unit, double low, double high, int decimals, bool logarithmic=false)
     { label_=label; unit_=unit; low_=low; high_=high; decimals_=decimals; logarithmic_=logarithmic; }
+    void setLabel(juce::String label) { label_=std::move(label); repaint(); }
     void setValue(double value) { value_=juce::jlimit(low_,high_,value); repaint(); }
     double getValue() const { return value_; }
     void setPalette(MBTheme::Palette palette) { pal_=palette; resized();repaint(); }
+    void setThemeTokens(const UiPack::ThemeTokens& tokens) { theme_=tokens; resized(); repaint(); }
     void setScale(float scale) { if(std::abs(scale_-scale)<.0001f)return;scale_=scale;resized();repaint(); }
     bool applyText(const juce::String& input)
     {
@@ -41,9 +44,23 @@ public:
         const auto r=getLocalBounds().toFloat(); auto value=valueRect();
         g.setFont(MBTheme::font(MBTheme::uiRegular(),13*scale_));g.setColour(pal_.dim);
         g.drawText(label_,r.withWidth(r.getWidth()*.49f),juce::Justification::centredLeft,false);
-        const bool selected=hasKeyboardFocus(true);
-        g.setColour(selected?pal_.accent.withAlpha(.16f):pal_.track);g.fillRoundedRectangle(value,5*scale_);
-        g.setColour(selected?pal_.accent:pal_.gridZ);g.drawRoundedRectangle(value,5*scale_,scale_);
+        const bool selected=hasKeyboardFocus(true)||editing_;
+        if(theme_.isNeumorphic)
+        {
+            // neumorphism-SKILL.md：输入框默认深凹槽（insetInput），聚焦时内阴影收缩松弛（insetFocus）
+            const auto& spec = selected ? theme_.insetFocus : theme_.insetInput;
+            UiPack::NeuPainter::drawInsetRect(g, value, theme_.radiusMd * scale_, pal_, spec, scale_, 1.0f, true);
+            if(selected)
+            {
+                g.setColour(pal_.accent.withAlpha(.42f));
+                g.drawRoundedRectangle(value, theme_.radiusMd * scale_, 1.0f * scale_);
+            }
+        }
+        else
+        {
+            g.setColour(selected?pal_.accent.withAlpha(.16f):pal_.track);g.fillRoundedRectangle(value,5*scale_);
+            g.setColour(selected?pal_.accent:pal_.gridZ);g.drawRoundedRectangle(value,5*scale_,scale_);
+        }
         g.setFont(MBTheme::font(MBTheme::uiMedium(),15*scale_));g.setColour(pal_.text);
         if(!editing_)g.drawText(juce::String(value_,decimals_)+" "+unit_,value.reduced(5*scale_,0),juce::Justification::centred,false);
     }
@@ -54,7 +71,7 @@ public:
         editor_.setColour(juce::TextEditor::backgroundColourId,pal_.surface);
         editor_.setColour(juce::TextEditor::textColourId,pal_.text);
         editor_.setColour(juce::TextEditor::highlightColourId,pal_.accent.withAlpha(.35f));
-        editor_.setColour(juce::TextEditor::outlineColourId,juce::Colours::transparentBlack);
+        editor_.setColour(juce::TextEditor::outlineColourId,pal_.bg.withAlpha(0.0f));
         editor_.setColour(juce::TextEditor::focusedOutlineColourId,pal_.accent);
     }
     void mouseDown(const juce::MouseEvent&) override
@@ -91,14 +108,15 @@ private:
         {
             if(!closeOnInvalid)
             {
-                editor_.setColour(juce::TextEditor::outlineColourId,juce::Colours::red);
+                editor_.setColour(juce::TextEditor::outlineColourId,pal_.accent2);
                 return;
             }
         }
-        editor_.setColour(juce::TextEditor::outlineColourId,juce::Colours::transparentBlack);
+        editor_.setColour(juce::TextEditor::outlineColourId,pal_.bg.withAlpha(0.0f));
         editing_=false;editor_.setVisible(false);repaint();
     }
     MBTheme::Palette pal_=MBTheme::palette(MBTheme::Theme::Blue);
+    UiPack::ThemeTokens theme_=UiPack::buildThemePack(UiPack::ThemeId::Classic);
     juce::String label_,unit_;juce::TextEditor editor_;
     double value_=0,low_=0,high_=1,start_=0;int decimals_=1;float scale_=1;
     bool logarithmic_=false,editing_=false,gesture_=false;

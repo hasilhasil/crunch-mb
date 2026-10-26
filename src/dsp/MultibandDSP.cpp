@@ -7,7 +7,7 @@ void MultibandDSP::prepare (double sampleRate, int maxBlockSize, int numChannels
     numCh_      = juce::jlimit (1, 2, numChannels);
 
     // 预分配按最大 4x 过采样容量一次性分配工作缓冲与 2x/4x 过采样器，
-    // 运行时切换 Oversampling (Off/2x/4x) 不再重分配 vector 或重建 Oversampling 实例（修复 BUG-01）。
+    // 运行时切换 Oversampling (Off/2x/4x) 不再重分配 vector 或重建 Oversampling 实例。
     const int maxProcBlock = maxBlock_ * 4;
 
     for (int b = 0; b < Param::kNumBands; ++b)
@@ -143,7 +143,7 @@ void MultibandDSP::setStructure (const StructureParams& s)
 
 int MultibandDSP::getLatencySamples() const noexcept
 {
-    // 修复 BUG-02：统一返回 1× 宿主采样率下的样本数（crossover 与 lookahead 运行在 procRate_ 下，需除以 osFactor_）
+    // 统一返回 1× 宿主采样率下的样本数（crossover 与 lookahead 运行在 procRate_ 下，需除以 osFactor_）
     const int os = juce::jmax (1, osFactor_);
     return (crossover_.getLatencySamples() + laSamples_) / os + getOversamplingLatencySamples();
 }
@@ -260,15 +260,6 @@ void MultibandDSP::process (float* const* channels, int numSamples,
     // 可能与 buffer 不一致——实测 mono 场景 mainInCh=2 而 buffer 只有 1 通道）。
     const int useCh = juce::jlimit (1, 2, numChannels);
 
-    // 2026-10-14：过采样包装。整条链跑在 procRate_ 下，这里只负责上/下采样。
-    //
-    // ⚠️ 这里的 `numSamples <= maxBlock_` 守卫**不能**改成音频线程分块循环。
-    // JUCE 的 `dsp::Oversampling` 内部按 initProcessing() 时给的块大小预分配
-    // FIR 状态；本次实测：改成"按 maxBlock_ 分块、每块传子块"后，
-    // processSamplesUp 返回的块大小与本次处理的 n 不符，copy 回 channels 时
-    // 多写 (maxBlock_ − n) 个样本 → 堆损坏（0xC0000374 / 0xC0000005）。
-    // 若将来要支持"宿主给出超过 maxBlock_ 的块"，正确位置是在
-    // prepareToPlay 里把 maxBlock_ 一开始就设得足够大，而不是在音频线程分片。
     auto* os = activeOversampler();
     if (osFactor_ > 1 && os != nullptr)
     {
@@ -277,7 +268,6 @@ void MultibandDSP::process (float* const* channels, int numSamples,
         for (int b = 0; b < Param::kNumBands; ++b)
             anyExt = anyExt || extEnabled_[b];
 
-        // 修复 P0-2 & LOGIC-03：
         // 1) 上采样与降采样均严格传入 .getSubBlock(0, chunkN)，消除 numSamples < maxBlock_ 时
         //    上采样整块尾部陈旧垃圾及侧链越界读取（0xC0000005）；
         // 2) 当 numSamples > maxBlock_ 时按 maxBlock_ 切片依次通过过采样器，绝不回退到 1× 采样率。
@@ -355,7 +345,7 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         for (int ch = 0; ch < chans; ++ch)
             juce::FloatVectorOperations::multiply (chPtr[ch], inGain_, n);
 
-        // 1b) Auto-Gain：测**干声**响度（各通道独立滤波器状态，修复 BUG-03）
+        // 1b) Auto-Gain：测**干声**响度（各通道独立滤波器状态）
         if (autoGainEnabled_)
         {
             for (int ch = 0; ch < chans; ++ch)
@@ -372,7 +362,7 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
         float* bH[2]  = { bandStore_[3][0].data(), bandStore_[3][1].data() };
         crossover_.process (inC, bL, bLM, bHM, bH, chans, n);
 
-        // 3) 侧链分频（仅当有段启用 EXT 且侧链总线有信号；补齐 + done 偏移修复 LOGIC-03）
+        // 3) 侧链分频（仅当有段启用 EXT 且侧链总线有信号；补齐 + done 偏移）
         bool scReady = false;
         if (sidechain != nullptr && sidechainChannels > 0)
         {
@@ -445,9 +435,9 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
             }
         }
 
-        // 4b) 修复 BUG-04 / P1-6：干声参考（dryStore_）取自分频后、Lookahead 延迟后的四段未压缩信号之和。
+        // 4b) 干声参考（dryStore_）取自分频后、Lookahead 延迟后的四段未压缩信号之和。
         //     这使干声参考天然具备与湿声完全一致的 Linear Phase FIR 延迟、Lookahead 延迟以及
-        //     LR4/LR8 分频全通相位，彻底消除 globalMix != 100% 时的梳状滤波/回声及 Monitor=Input 的 PDC 偏移。
+        //     LR4/LR8 分频全通相位，消除 globalMix != 100% 时的梳状滤波/回声及 Monitor=Input 的 PDC 偏移。
         for (int ch = 0; ch < chans; ++ch)
         {
             float* dry = dryStore_[(size_t) ch].data();

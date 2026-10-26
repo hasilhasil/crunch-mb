@@ -45,6 +45,27 @@ void OutputPanel::setTheme(MBTheme::Theme theme)
     menuLookAndFeel_.setColour(juce::PopupMenu::highlightedBackgroundColourId,pal_.accent);
     repaint();
 }
+void OutputPanel::applyUiSnapshot(const UiPack::UiSnapshot& snap)
+{
+    pal_          = snap.palette;
+    themeTokens_  = snap.theme;
+    layoutTokens_ = snap.layout;
+    locale_       = snap.locale;
+    const char* labelKeys[3] = { "knob.inputGain", "knob.outputGain", "knob.mix" };
+    for (int i = 0; i < 3; ++i)
+    {
+        knobs_[(size_t) i].setPalette (pal_);
+        knobs_[(size_t) i].setThemeTokens (themeTokens_);
+        knobs_[(size_t) i].setLabel (tr (labelKeys[i]));
+    }
+    monitorBox_.setColour(juce::ComboBox::backgroundColourId,pal_.track);
+    monitorBox_.setColour(juce::ComboBox::textColourId,pal_.text);
+    monitorBox_.setColour(juce::ComboBox::outlineColourId,themeTokens_.isNeumorphic?pal_.bg.withAlpha(0.0f):pal_.gridZ);
+    menuLookAndFeel_.setColour(juce::PopupMenu::backgroundColourId,pal_.surface);
+    menuLookAndFeel_.setColour(juce::PopupMenu::textColourId,pal_.text);
+    menuLookAndFeel_.setColour(juce::PopupMenu::highlightedBackgroundColourId,pal_.accent);
+    repaint();
+}
 void OutputPanel::layoutControls()
 {
     const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale,cell=(r.getWidth()-32*s)/3;
@@ -87,17 +108,25 @@ void OutputPanel::clickRow(int row)
 }
 void OutputPanel::paint(juce::Graphics& g)
 {
-    if(!open_||anim_<.004f)return;const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale,a=anim_;
-    g.setColour(juce::Colours::black.withAlpha(.25f*a));g.fillRoundedRectangle(r.translated(0,5*s).expanded(3*s),12*s);
-    g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);g.setColour(pal_.gridZ);g.drawRoundedRectangle(r,12*s,s);
+    if(!open_||anim_<.004f)return;const auto r=panelRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale,a=anim_;
+    if(themeTokens_.isNeumorphic)
+    {
+        UiPack::NeuPainter::drawRaisedRect(g,r,themeTokens_.radiusLg*s,pal_,themeTokens_.shadowCard,s,a,false);
+    }
+    else
+    {
+        g.setColour(pal_.halo.withMultipliedAlpha(.38f*a));g.fillRoundedRectangle(r.translated(0,5*s).expanded(3*s),12*s);
+        g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);g.setColour(pal_.gridZ);g.drawRoundedRectangle(r,12*s,s);
+    }
     g.setColour(pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
-    g.drawText("OUTPUT",r.withTrimmedLeft(18*s).withHeight(42*s),juce::Justification::centredLeft);
-    g.setColour(pal_.gridZ);g.drawLine(r.getX()+16*s,r.getY()+42*s,r.getRight()-16*s,r.getY()+42*s,s);
+    g.drawText(tr("output.title"),r.withTrimmedLeft(18*s).withHeight(42*s),juce::Justification::centredLeft);
+    g.setColour(pal_.gridZ.withMultipliedAlpha(themeTokens_.isNeumorphic?0.35f:1.0f));
+    g.drawLine(r.getX()+16*s,r.getY()+42*s,r.getRight()-16*s,r.getY()+42*s,s);
     for(int i=0;i<2;++i){auto cell=toggleRect(i);bool on=i==0?globalBypass_:autoGain_;
-        g.setColour(on?pal_.accent.withAlpha(.18f):pal_.track);g.fillRoundedRectangle(cell,5*s);
+        UiPack::NeuPainter::drawButton(g,cell,pal_,themeTokens_,on,false,s,a,5*s);
         g.setColour(on?pal_.accent:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),14*s));
-        g.drawText(i==0?"Global Bypass":"Auto Gain",cell.withTrimmedLeft(12*s).withTrimmedRight(40*s),juce::Justification::centredLeft);
-        g.drawText(on?"ON":"OFF",cell.withTrimmedLeft(cell.getWidth()-40*s),juce::Justification::centred);}
+        g.drawText(i==0?tr("output.globalBypass"):tr("output.autoGain"),cell.withTrimmedLeft(12*s).withTrimmedRight(40*s),juce::Justification::centredLeft);
+        g.drawText(on?tr("output.on"):tr("output.off"),cell.withTrimmedLeft(cell.getWidth()-40*s),juce::Justification::centred);}
     g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),14*s));
-    g.drawText("Monitor",juce::Rectangle<float>(r.getX()+20*s,r.getY()+254*s,100*s,36*s),juce::Justification::centredLeft);
+    g.drawText(tr("output.monitor"),juce::Rectangle<float>(r.getX()+20*s,r.getY()+254*s,100*s,36*s),juce::Justification::centredLeft);
 }

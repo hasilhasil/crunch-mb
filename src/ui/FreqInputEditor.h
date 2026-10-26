@@ -55,6 +55,14 @@ public:
     void tickCursor (juce::uint32 nowMs);
 
     void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); repaint(); }
+    void applyUiSnapshot (const UiPack::UiSnapshot& snap)
+    {
+        pal_    = snap.palette;
+        theme_  = snap.theme;
+        layout_ = snap.layout;
+        hintText_ = snap.t ("freq.hint");
+        repaint();
+    }
 
     // ---- T64 测试钩子 ----
     juce::String textForTest() const noexcept { return text_; }
@@ -73,4 +81,7 @@ private:
     bool  cursorVisible_ = true;
     juce::uint32 lastBlinkMs_ = 0;
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
+    UiPack::ThemeTokens  theme_  = UiPack::buildThemePack  (UiPack::ThemeId::Classic);
+    UiPack::LayoutTokens layout_ = UiPack::buildLayoutPack (UiPack::LayoutId::Standard);
+    juce::String hintText_ = juce::String::fromUTF8 ("Hz  (Enter \xE7\xA1\xAE\xE8\xAE\xA4 / Esc \xE5\x8F\x96\xE6\xB6\x88)");
 };

@@ -158,13 +158,19 @@ Monitor 会用所选信号替换正常输出。常规使用及导出前应检查
 
 ## 状态保存与兼容性
 
-处理参数与 Analyzer 设置通过宿主工程状态保存。主题和窗口尺寸目前不作为工程状态保存，重新创建编辑器会采用默认主题/尺寸。
+处理参数、Analyzer 设置与四包正交 UI 组合状态（Theme / Palette / Layout / Language）均通过宿主工程状态保存；重新创建编辑器或重开工程时会自动恢复所选主题、配色、布局与语言。窗口尺寸采用默认尺寸或宿主保存尺寸。
 
 本版沿用既有参数 ID 和状态数据格式，**更换 VST3 类标识**，不再声明替代旧 VST2/VST3 身份。旧工程、FL 收藏 `.fst` 和包含旧身份的预设不保证自动识别，需要重新扫描并从新条目加载。参数数据格式保持兼容不等于宿主会自动把旧实例迁移到新身份。
 
 从 v0.1.4 起固定的产品代码为 `K7mB`；Windows VST3 音频组件 CID 为 `ABCDEF019182FAEB4B696C6F4B376D42`。后续版本保持这一身份不变。构建末尾检查实际二进制工厂生成的元数据，身份发生意外变化时构建失败。
 
 ## 版本记录
+
+### 四包正交 UI 架构与 Neumorphism 新拟物风格更新
+
+- **四包正交可原子替换架构（`src/ui/core/` + `src/ui/packs/`）**：将界面拆分为独立的 **Theme 包**（圆角/间距/双阴影物理几何，严格零颜色字面量）、**Palette 配色包**（`Blue / Red / Cream / NeuLight / NeuTeal / NeuDark` 六套等集语义槽位）、**Layout 布局包**（`Standard` 全出血与 `Sculpted` 内凹屏幕槽）与 **Locale 语言包**（`en-US` / `zh-CN` 81 键 100% 对齐 + CJK 字体回退链），经 `UiComposition` 门禁校验后支持单点原子切换与无条件一键回滚，并随工程状态持久化。
+- **Neumorphism 新拟物风格引擎（`NeuPainter`）**：实现固定左上光源双阴影立体渲染、Hover Shadowing（悬停遮光缩影）、Extrude-to-Intrude（按压/激活由外凸转内凹且零位移）、Focus Relaxation（输入框聚焦内阴影收缩）与内凹频谱视窗。
+- **补充边界加固**：修复 `Param::clampCrossovers` 逆序入参边界收敛、`enabled = false` 旁通时 PDC 延迟归零与实时电平/抽头更新、重开编辑器及加载预设时的 `AnalyzerSettings` 同步下发，以及 `fullSync` 唤醒解耦（`T90.16~T90.18`、`T91.1~T91.13`）。
 
 ### v1.0.4 — 审计修复更新（DSP 稳定性、PDC 延迟对齐与 UI 自动化完善）
 

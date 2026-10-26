@@ -66,6 +66,7 @@ public:
 
     /** 主题切换。 */
     void setTheme (MBTheme::Theme t);
+    void applyUiSnapshot (const UiPack::UiSnapshot& snap);
 
     // ---- 命中测试（宿主鼠标分发用）----
     bool hitTestButton (juce::Point<float> p) const;
@@ -140,6 +141,14 @@ private:
 
     CrunchMBAudioProcessor& proc_;
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
+    UiPack::ThemeTokens  themeTokens_  = UiPack::buildThemePack  (UiPack::ThemeId::Classic);
+    UiPack::LayoutTokens layoutTokens_ = UiPack::buildLayoutPack (UiPack::LayoutId::Standard);
+    const UiPack::LocalePack* locale_  = &UiPack::buildLocalePack (UiPack::LocaleId::EnUS);
+    juce::String tr (const char* key) const
+    {
+        return (locale_ != nullptr) ? locale_->get (key)
+                                    : UiPack::buildLocalePack (UiPack::LocaleId::EnUS).get (key);
+    }
 
     bool  open_ = false;
     float anim_ = 0.0f;
