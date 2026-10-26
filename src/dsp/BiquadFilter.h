@@ -119,12 +119,12 @@ public:
         return c;
     }
 
-    // ⚠️ 2026-09-23 修正（Phase 3 诊断发现）：从 Compressor "逐字节复用"的版本中
-    // designLowCut / designHighCut 的 b 系数完全错位（LP 写成了 "−(1+cs)"，
-    // 数值与符号均非 RBJ 低通；DC 增益恒 0）。
-    // 兄弟项目 BiquadFilter.h 同款错位仍存在（未擅改）；本插件副本按 RBJ 标准修正：
+    // RBJ 标准二阶低通（Low-Pass / High-Cut）与高通（High-Pass / Low-Cut）：
     //   LP: b = (1−cs)/2 · (1, +2, 1)   HP: b = (1+cs)/2 · (1, −2, 1)
-    static BiquadCoefficients designLowCut (float freq, float q, float sr)
+    // 修复 LOGIC-04：提供语义明确的 designLowPass / designHighPass，并扶正
+    // designLowCut（= High-Pass）与 designHighCut（= Low-Pass）的极性，使之与
+    // 下方一阶 designFirstOrderLowCut / designFirstOrderHighCut 保持一致。
+    static BiquadCoefficients designLowPass (float freq, float q, float sr)
     {
         const double w0 = juce::MathConstants<double>::twoPi * freq / sr;
         const double cs = std::cos (w0);
@@ -142,7 +142,7 @@ public:
         return c;
     }
 
-    static BiquadCoefficients designHighCut (float freq, float q, float sr)
+    static BiquadCoefficients designHighPass (float freq, float q, float sr)
     {
         const double w0 = juce::MathConstants<double>::twoPi * freq / sr;
         const double cs = std::cos (w0);
@@ -158,6 +158,16 @@ public:
         c.b0 /= a0; c.b1 /= a0; c.b2 /= a0;
         c.a1 /= a0; c.a2 /= a0;
         return c;
+    }
+
+    static BiquadCoefficients designLowCut (float freq, float q, float sr)
+    {
+        return designHighPass (freq, q, sr);
+    }
+
+    static BiquadCoefficients designHighCut (float freq, float q, float sr)
+    {
+        return designLowPass (freq, q, sr);
     }
 
     static BiquadCoefficients designNotch (float freq, float q, float sr)

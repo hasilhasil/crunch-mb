@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include <array>
+#include <atomic>
 #include <complex>
 #include <vector>
 
@@ -59,6 +61,15 @@ public:
         return buf_[(readPos_ + i) % capacity_];
     }
 
+    /** 用 n 个 val 预填环形缓冲（reset 时预填 blockSize 个 0，消除固定延迟环 dly_ 的可变块长漂移）。 */
+    void fillZeros (size_t n) noexcept
+    {
+        readPos_ = 0;
+        writePos_ = juce::jmin (n, capacity_ - 1);
+        for (size_t i = 0; i < writePos_; ++i)
+            buf_[i] = T {};
+    }
+
     /** 只前移读位置 n 格（数据已在别处消费过时用，避免多余搬运）。 */
     void advanceRead (size_t n) noexcept
     {
@@ -87,59 +98,58 @@ public:
         numCh_     = juce::jmax (1, numChannels);
 
         const int order = juce::roundToInt (std::log2 ((float) fftSize_));
-        fft_ = std::make_unique<juce::dsp::FFT> (order);
+        fft_       = std::make_unique<juce::dsp::FFT> (order);
+        designFft_ = std::make_unique<juce::dsp::FFT> (order);
 
         fftIn_.assign  ((size_t) fftSize_, {});
         fftOut_.assign ((size_t) fftSize_, {});
-        irSpectrum_.assign ((size_t) fftSize_, {});
+        designIn_.assign ((size_t) fftSize_, {});
+        irSpectrumSlots_[0].assign ((size_t) fftSize_, {});
+        irSpectrumSlots_[1].assign ((size_t) fftSize_, {});
+        activeIrSlot_.store (0, std::memory_order_relaxed);
+        writeIrSlot_ = 1;
 
         // 固定容量 FIFO（**音频线程零分配**）
-        // 原实现用 std::vector + insert/erase/push_back：虽然 prepare() 里 reserve
-        // 了 blockSize_+maxBlockSize+8，但稳态峰值恰好可能达到这个上界
-        // （输入侧每轮 push blockSize_、erase blockSize_；输出侧 push blockSize_
-        //  而只 erase numSamples），边缘情况下仍会触发重新分配——
-        // 违反 TECH_SPEC §4 的"音频线程零分配"红线。
-        // 现改为固定容量环形缓冲 + 显式读写位置，容量一次性分配，音频线程只读写。
-        const size_t fifoCap = (size_t) blockSize_ + (size_t) juce::jmax (1, maxBlockSize) + 16;
+        // 在 reset() 中向 outFifo_ 预填 blockSize_ 个 0，使任意固定或可变块长 s 下：
+        //   · 恒满足 inFifo.size() + outFifo.size() == blockSize_（卷积后恒 ≥ s，永不欠载）
+        //   · 真实延迟精确恒等于 blockSize_ + (L−1)/2（彻底消除原 dly_ 在 s != maxBlockSize 时的漂移）
+        const size_t fifoCap = (size_t) blockSize_ * 2 + (size_t) juce::jmax (4096, maxBlockSize) + 64;
         inFifo_.assign  ((size_t) numCh_, Ring<float> (fifoCap));
         outFifo_.assign ((size_t) numCh_, Ring<float> (fifoCap));
         overlap_.assign ((size_t) numCh_, std::vector<float> ((size_t) blockSize_, 0.0f));
         outTmp_.assign ((size_t) blockSize_, 0.0f);
 
-        // 固定输出延迟环（callSize 样本）：FIFO 块卷积的真实延迟 = (B−s)+D，
-        // 随宿主调用块大小 s 漂移；补一个 s 样本延迟环后总延迟恒 = B + D
-        // = pad + (L−1)/2（断言④），与调用块大小无关。
-        callSize_ = juce::jmax (1, maxBlockSize);
-        dly_.assign ((size_t) numCh_, std::vector<float> ((size_t) callSize_, 0.0f));
-        dlyPos_.assign ((size_t) numCh_, 0);
-
         irLength_ = 0;
         latency_  = 0;
+        reset();
     }
 
-    // 非实时（消息线程）：IR 变更不 reset（保持在途音频连续——EQ 同款结论）
+    // 非实时（消息线程）：使用独立的 designFft_ / designIn_ 写入未激活的频域核槽位，
+    // 再原子切换 activeIrSlot_，避免与音频线程 processOneChannel 的 fftIn_ / irSpectrum 竞争。
     void setImpulseResponse (const float* ir, int length)
     {
-        if (fft_ == nullptr)
+        if (designFft_ == nullptr)
             return;
 
-        irLength_ = juce::jmin (length, blockSize_ + 1);
-        std::fill (fftIn_.begin(), fftIn_.end(), std::complex<float> {});
-        for (int i = 0; i < irLength_; ++i)
-            fftIn_[(size_t) i] = std::complex<float> (ir[(size_t) i], 0.0f);
+        const int len = juce::jmin (length, blockSize_ + 1);
+        std::fill (designIn_.begin(), designIn_.end(), std::complex<float> {});
+        for (int i = 0; i < len; ++i)
+            designIn_[(size_t) i] = std::complex<float> (ir[(size_t) i], 0.0f);
 
-        fft_->perform (fftIn_.data(), irSpectrum_.data(), false);
+        const int slot = writeIrSlot_ & 1;
+        designFft_->perform (designIn_.data(), irSpectrumSlots_[(size_t) slot].data(), false);
 
-        latency_ = blockSize_ + (irLength_ - 1) / 2;    // pad + (L−1)/2（断言④）
+        irLength_ = len;
+        latency_  = blockSize_ + (len - 1) / 2;    // pad + (L−1)/2（断言④）
+        activeIrSlot_.store (slot, std::memory_order_release);
+        writeIrSlot_ = slot ^ 1;
     }
 
     void reset()
     {
         for (auto& fifo : inFifo_)  fifo.clear();
-        for (auto& fifo : outFifo_) fifo.clear();
+        for (auto& fifo : outFifo_) fifo.fillZeros ((size_t) blockSize_);
         for (auto& ov   : overlap_) std::fill (ov.begin(), ov.end(), 0.0f);
-        for (auto& d    : dly_)     std::fill (d.begin(), d.end(), 0.0f);
-        std::fill (dlyPos_.begin(), dlyPos_.end(), 0);
     }
 
     void process (const float* const* input, float* const* output, int numChannels, int numSamples) noexcept
@@ -184,9 +194,10 @@ private:
 
             inFifo.advanceRead ((size_t) blockSize_);   // 只前移读位置，不搬数据
 
+            const auto& irSpec = irSpectrumSlots_[(size_t) (activeIrSlot_.load (std::memory_order_acquire) & 1)];
             fft_->perform (fftIn_.data(), fftOut_.data(), false);
             for (int i = 0; i < fftSize_; ++i)
-                fftOut_[(size_t) i] *= irSpectrum_[(size_t) i];
+                fftOut_[(size_t) i] *= irSpec[(size_t) i];
             fft_->perform (fftOut_.data(), fftIn_.data(), true);
 
             // 输出块先落到预分配的 outTmp_ 再入环（避免边算边改环）
@@ -210,18 +221,6 @@ private:
                 output[i] = 0.0f;
             outFifo.clear();
         }
-
-        // 固定延迟环（callSize 样本）→ 总延迟恒 = blockSize + (L−1)/2
-        auto& dly = dly_[(size_t) channel];
-        int pos = dlyPos_[(size_t) channel];
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const float y = output[i];
-            output[i] = dly[(size_t) pos];
-            dly[(size_t) pos] = y;
-            if (++pos == callSize_) pos = 0;
-        }
-        dlyPos_[(size_t) channel] = pos;
     }
 
     double sampleRate_ = 48000.0;
@@ -230,13 +229,13 @@ private:
     int    irLength_   = 0;
     int    latency_    = 0;
     int    numCh_      = 2;
-    int    callSize_   = 512;
-
-    std::vector<std::vector<float>> dly_;     // 固定输出延迟环（callSize 样本/通道）
-    std::vector<int> dlyPos_;
 
     std::unique_ptr<juce::dsp::FFT> fft_;
-    std::vector<std::complex<float>> irSpectrum_;
+    std::unique_ptr<juce::dsp::FFT> designFft_;
+    std::array<std::vector<std::complex<float>>, 2> irSpectrumSlots_;
+    std::atomic<int> activeIrSlot_ { 0 };
+    int writeIrSlot_ = 1;
+    std::vector<std::complex<float>> designIn_;
     std::vector<Ring<float>> inFifo_, outFifo_;          // 固定容量 FIFO（音频线程零分配）
     std::vector<std::vector<float>> overlap_;
     std::vector<float> outTmp_;                          // 输出块暂存（prepare 预分配）

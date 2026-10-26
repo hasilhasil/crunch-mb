@@ -141,7 +141,7 @@ OUTPUT 包含 Input Gain、Output Gain、Mix、Global Bypass、Auto Gain 和 Mon
 
 **200% 不表示压缩强度翻倍**，而是并行叠加。若干声与处理声完全一致且同相，200% 的幅度可比 100% 高约 6 dB；相位、延迟和动态处理会影响实际结果。
 
-干声取自 Input Gain 之后、分频之前，处理声取自四段求和之后；混合发生在 Auto Gain 和 Output Gain 之前。当前干声支路未单独对齐分频/Lookahead 延迟，使用有延迟的模式做并行混合时，叠加结果可能发生相位变化。
+干声参考取自分频后、Lookahead 延迟后的四段未压缩信号之和，处理声取自四段求和之后；混合发生在 Auto Gain 和 Output Gain 之前。干声支路与处理声具备相同的分频相位和 Lookahead/Linear Phase 延迟，并行混合时不会产生延迟回声或梳状滤波抵消。
 
 ### Monitor 监听哪里？
 
@@ -150,7 +150,7 @@ Monitor 会用所选信号替换正常输出。常规使用及导出前应检查
 | 选项 | 当前实际来源 |
 |---|---|
 | Output | 正常处理输出 |
-| Input | 输入增益后、分频前的干声 |
+| Input | 与处理声相位/延迟对齐的未压缩干声 |
 | Band 1～4 | 对应频段分频后的信号，再应用 Output Gain；不是该段最终动态处理输出 |
 | Gain Reduction | 四段增益包络的平均衰减量直接作为音频输出 |
 
@@ -165,6 +165,13 @@ Monitor 会用所选信号替换正常输出。常规使用及导出前应检查
 从 v0.1.4 起固定的产品代码为 `K7mB`；Windows VST3 音频组件 CID 为 `ABCDEF019182FAEB4B696C6F4B376D42`。后续版本保持这一身份不变。构建末尾检查实际二进制工厂生成的元数据，身份发生意外变化时构建失败。
 
 ## 版本记录
+
+### v1.0.4 — 审计修复更新（DSP 稳定性、PDC 延迟对齐与 UI 自动化完善）
+
+- **跨线程与变长缓冲安全**：预分配最大 4x 过采样缓冲与双过采样器实例，为线性相位 FIR 核更新引入双缓冲与独立 FFT，修复播放中切换过采样/线性相位质量或拖动分频点的并发竞争；修复 FL Studio 变长块下过采样上采样未截断子块及外部侧链越界读取问题。
+- **PDC 延迟与相位对齐**：统一过采样下分频器与 Lookahead 的 1× 宿主采样率延迟换算；将线性相位 `FirFilter` 改为 `outFifo_` 预填零样本架构，彻底消除变长块下的延迟漂移与欠载；全局 `Mix` 与 `Monitor = Input` 干声参考对齐分频相位与 Lookahead 延迟。
+- **动态与响度算法修正**：修复向上压缩（`Range > 0`）与扩展模式（`Expand`）下 Attack / Release 时间常数反置问题；支持 `StereoLink < 100%` 时右声道驱动表头与动态曲线；`LoudnessMeter` 改为双通道独立滤波并按 400ms 时间窗积分，关闭 Auto-Gain 时平滑释放增益。
+- **UI 交互与宿主自动化**：为全部面板旋钮、滑杆及画布拖拽补齐 `beginChangeGesture` / `endChangeGesture`；统一单段 Bypass 判定阈值消除 `Mix < 50%` 时的按钮死锁；修复同帧多参数变更时 Popover 漏同步、中频段中心拖拽撞墙挤压带宽、`ValueField` 非法输入失焦残留等问题。详见 [`audit/AUDIT_FIX_CHANGELOG.md`](audit/AUDIT_FIX_CHANGELOG.md)。
 
 ### v0.1.4 — 2026-10-22（测试版）
 

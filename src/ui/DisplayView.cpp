@@ -272,10 +272,37 @@ void DisplayView::onBandBypassChanged (int band, bool bypassed)
 
 DisplayView::~DisplayView()
 {
+    endActiveDragGestures();
     // R35（N4）：必须先摘掉回调。processor 的生命周期长于编辑器，
     // 残留的回调会指向已释放的 DisplayView（参数一变就是 use-after-free）。
     proc_.setUiWakeCallback (nullptr);
     stopTimer();
+}
+
+void DisplayView::beginGestureForParam (const juce::String& id)
+{
+    if (id.isEmpty() || activeGestureParams_.contains (id))
+        return;
+    if (auto* p = proc_.apvts.getParameter (id))
+    {
+        p->beginChangeGesture();
+        activeGestureParams_.add (id);
+    }
+}
+
+void DisplayView::beginCrossoverDragGestures()
+{
+    beginGestureForParam (Param::ID::xover1);
+    beginGestureForParam (Param::ID::xover2);
+    beginGestureForParam (Param::ID::xover3);
+}
+
+void DisplayView::endActiveDragGestures()
+{
+    for (const auto& id : activeGestureParams_)
+        if (auto* p = proc_.apvts.getParameter (id))
+            p->endChangeGesture();
+    activeGestureParams_.clearQuick();
 }
 
 void DisplayView::setTheme (MBTheme::Theme t)
@@ -348,15 +375,14 @@ void DisplayView::uiWakeFromParam (const juce::String& id)
 // 真正的取值仍由各组件向 backend 读——副本不持有第二份真源。
 void DisplayView::syncUiFromParams (bool fullSync)
 {
-    // ---- popover ----
+    // ---- popover（修复 UI-04：移除提前 break，同帧内多参数变更全部同步）----
     if (bandPopover_ != nullptr && bandPopover_->isOpen())
     {
         if (fullSync)
             bandPopover_->syncFromParams();
         else
             for (const auto& id : pendingParamIds_)
-                if (bandPopover_->syncParam (id))
-                    break;                  // 已在内部按需刷新
+                bandPopover_->syncParam (id);
     }
 
     // ---- LINKED 抽屉（只有 MIX 是绝对值，偏移旋钮按定义不需要回读）----
@@ -439,22 +465,20 @@ void DisplayView::drawGrid (juce::Graphics& g)
     const float bottom = plotBottomPx();
     const float top = plotTopPx();        // #2：网格不伸进顶栏区域
 
-    // 横线：曲线/ Range 增益域（步长同右轴刻度：±6→1dB、±12→2dB、±30→10dB）
+    // 横线：曲线/ Range 增益域（修复 P2-15：步长严格同右轴刻度：±6→1dB、±12→2dB、±30→10dB）
     //      0 线用 gridZ 强调（Pro-MB 的 0 基准线）
-    const int steps = (int) std::floor (curveRangeDisplay_ / 1.0f);
-    for (int i = -steps; i <= steps; ++i)
+    const float R = curveRangeDisplay_;
+    const float step = (R <= 6.5f) ? 1.0f : (R <= 12.5f) ? 2.0f : 10.0f;
+    for (float db = -std::floor (R / step) * step; db <= R + 1.0e-4f; db += step)
     {
-        const float db = (float) i;
-        if (std::abs (db) > curveRangeDisplay_ + 1.0e-4f) continue;
-        g.setColour (std::abs (db) < 0.01f ? pal_.gridZ : pal_.grid);
-        // Phase E-4：hairline 提亮，抵消 AA 发暗
-        drawHairlineH (g, gainToY (db), 0.0f, (float) getWidth(),
-                       std::abs (db) < 0.01f ? pal_.gridZ : pal_.grid);
+        const bool isZero = std::abs (db) < 0.01f;
+        drawHairlineH (g, gainToY (db), 0.0f, plotRightPx(),
+                       isZero ? pal_.gridZ : pal_.grid);
     }
     for (int db = 0; db >= -100; db -= 20)
     {
         g.setColour (pal_.grid.withAlpha (0.55f));
-        drawHairlineH (g, specDbToY ((float) db), 0.0f, (float) getWidth(),
+        drawHairlineH (g, specDbToY ((float) db), 0.0f, plotRightPx(),
                        pal_.grid.withAlpha (0.55f));
     }
     for (float f : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
@@ -1333,11 +1357,7 @@ void DisplayView::updateCurve (double dtSeconds)
         const float mk = proc_.getBackend().getParamFast (Param::bandMakeup (b));
         const float rangeDb = proc_.getBackend().getParamFast (Param::bandRange (b));
         bandRangeDb_[(size_t) b] = rangeDb;
-        // ⚠️ band{i}Mix 是 0-100 的物理百分比参数，getParamFast 返回实际值，
-        //    必须比 50.0f（不是 0.5f）。上一轮 facade 迁移时这里误按
-        //    normalized 0..1 比较，导致 BYP 永不触发——所有段都显示 live 曲线。
-        //    与 isBandBypassed() 的判据保持严格一致。
-        const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 50.0f;
+        const bool bypassed = isBandBypassed (b);
 
         // Phase：SPI（Smart Parameter Interpolation，Pro-MB 对标）
         // 原来 raw/live 直接取参数瞬时值 → 宿主自动化、切 preset、
@@ -1418,7 +1438,9 @@ void DisplayView::updateCurve (double dtSeconds)
                 mx = juce::jmax (mx, std::abs (bandRangeDb_[(size_t) b]));
             const float autoTarget = (mx <= 3.0f) ? 3.0f : (mx <= 6.0f) ? 6.0f
                                    : (mx <= 12.0f) ? 12.0f : 30.0f;
-            target = juce::jmax (curveRangeDb_, autoTarget);      // 只升不降
+            // 修复 P2-15：非拖拽稳态下允许带滞后自动回落（避免一旦触发 ±30 dB 就永久锁死）
+            if (autoTarget >= curveRangeDb_ || mx <= autoTarget * 0.90f)
+                target = autoTarget;
         }
         else
         {
@@ -1463,8 +1485,7 @@ void DisplayView::refreshCurvePaths()
         for (int b = 0; b < 4; ++b)
         {
             const float rangeDb = rangeDisplay_[(size_t) b];
-            // ⚠️ 同 updateCurve：band{i}Mix 是 0-100 物理值，须比 50.0f。
-            const bool bypassed = proc_.getBackend().getParamFast (Param::bandMix (b)) < 50.0f;
+            const bool bypassed = isBandBypassed (b);
 
             auto& fill = rangeFillPath_[(size_t) b];
             auto& edge = rangeEdgePath_[(size_t) b];
@@ -1491,7 +1512,7 @@ void DisplayView::refreshCurvePaths()
         }
         cachedRange_ = rangeDisplay_[(size_t) selectedBand_];
         cachedRangeBand_ = selectedBand_;
-        rangeBypassed_ = proc_.getBackend().getParamFast (Param::bandMix (selectedBand_)) < 50.0f;
+        rangeBypassed_ = isBandBypassed (selectedBand_);
     }
     curvePathsValid_ = true;
 }
@@ -1501,17 +1522,15 @@ void DisplayView::refreshCurvePaths()
 
 void DisplayView::drawRangeBell (juce::Graphics& g)
 {
-    // #1：4 段都画；非选中段低透明度，选中段正常
-    for (int b = selectedBand_; b <= selectedBand_; ++b)
+    // 只绘制当前选中段的 Range 钟型层（非选中段保持背景纯净）
+    const int b = juce::jlimit (0, Param::kNumBands - 1, selectedBand_);
     {
-        const bool sel = (b == selectedBand_);
-        const float a = sel ? 1.0f : 0.45f;
         if (! rangeFillPath_[(size_t) b].isEmpty())
         {
-            g.setColour (pal_.accent.withAlpha (0.14f * a));
+            g.setColour (pal_.accent.withAlpha (0.14f));
             g.fillPath (rangeFillPath_[(size_t) b]);
         }
-        g.setColour (pal_.accent.withAlpha (0.55f * a));
+        g.setColour (pal_.accent.withAlpha (0.55f));
         g.strokePath (rangeEdgePath_[(size_t) b], juce::PathStrokeType (1.2f));
 
         // ---- Phase C-4：Range 滑杆手柄（Pro-MB range slider 对标）----
@@ -1749,9 +1768,9 @@ float DisplayView::paramRangeMaxOf (const juce::String& id) const
 
 bool DisplayView::isBandBypassed (int band) const
 {
-    // D9 方案 A：Bypass = Mix<50% 宏。band{i}Mix 是浮点参数（0..100），
-    // getRawParameterValue 返回物理百分比，必须直接比 50.0f。
-    return getParamPhysical ("band" + juce::String (band) + "Mix") < 50.0f;
+    // 修复 UI-05：统一与 toggleBypass / MBBackend::isBypassed 使用 <= 0.5f（0.5%）物理百分比作为 Bypass 判据，
+    // 消除 Mix 处于 (0.5%, 50%) 时 UI 显示为 Bypass 但点击 B 按钮无法解除 Bypass 的死锁。
+    return getParamPhysical ("band" + juce::String (band) + "Mix") <= 0.5f;
 }
 
 int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const
@@ -1824,55 +1843,53 @@ void DisplayView::applyDividerFreq (int index, float freq)
     if (index == 0) x1 = freq;
     if (index == 1) x2 = freq;
     if (index == 2) x3 = freq;
-    Param::clampCrossovers (x1, x2, x3);       // ≥1 八度链（D3 / §3.8）
-    setParamPhysical (Param::ID::xover1, x1);
-    setParamPhysical (Param::ID::xover2, x2);
-    setParamPhysical (Param::ID::xover3, x3);
+    proc_.getBackend().setCrossovers (x1, x2, x3);   // ≥1 八度链统一钳制并回写
 }
 
 void DisplayView::applyCenterFreq (int band, float freq)
 {
     // P2 + #1：横拖频点 = 改该段"中心频率"
-    //   · band1/2（两缘自由）：整段平移
-    //   · band0（左缘锁 20Hz）/ band3（右缘锁 20kHz）：中心移动时**活动边跟随**，
-    //     左缘/右缘固定 → 中心左移=收缩、右移=扩宽（修"只能单向拖"的 bug）
+    //   · band1/2（两缘自由）：整段等比（保持倍频程带宽）平移；修复 UI-03 撞墙时双边同步停止、绝不挤压带宽
+    //   · band0（左缘锁 20Hz）/ band3（右缘锁 20kHz）：中心移动时活动边跟随
     float x1 = cachedX1_, x2 = cachedX2_, x3 = cachedX3_;
     const float kLo = 20.0f, kHi = 20000.0f;
 
     if (band == 0)
     {
-        // 右缘 = 中心² / 左缘(20)
-        const float maxC = std::sqrt (kLo * x2 * 0.5f);      // 保证 x1 ≤ x2/2（≥1 八度）
-        const float newC = juce::jlimit (kLo, maxC, freq);
-        x1 = juce::jlimit (kLo, x2 * 0.5f, (newC * newC) / kLo);
+        // 右缘 = 中心² / 左缘(20)，且满足 40 ≤ x1 ≤ x2/2
+        const float minC = std::sqrt (kLo * 40.0f);
+        const float maxC = std::sqrt (kLo * x2 * 0.5f);
+        const float newC = juce::jlimit (minC, juce::jmax (minC, maxC), freq);
+        x1 = juce::jlimit (40.0f, x2 * 0.5f, (newC * newC) / kLo);
     }
     else if (band == 3)
     {
-        // 左缘 = 中心² / 右缘(20k)；中心下界由"x3 ≥ x2·2"决定：minC = sqrt(2·x2·kHi)
+        // 左缘 = 中心² / 右缘(20k)；满足 x2·2 ≤ x3 ≤ 10000
         const float minC = std::sqrt (2.0f * x2 * kHi);
-        const float newC = juce::jlimit (minC, kHi, freq);
-        x3 = juce::jlimit (x2 * 2.0f, kHi, (newC * newC) / kHi);
+        const float maxC = std::sqrt (10000.0f * kHi);
+        const float newC = juce::jlimit (juce::jmin (minC, maxC), maxC, freq);
+        x3 = juce::jlimit (x2 * 2.0f, 10000.0f, (newC * newC) / kHi);
     }
     else
     {
-        float lo = (band == 1) ? x1 : x2;
-        float hi = (band == 1) ? x2 : x3;
+        const float lo = (band == 1) ? x1 : x2;
+        const float hi = (band == 1) ? x2 : x3;
         if (hi <= lo) return;
-        const float oldC = std::sqrt (lo * hi);
-        float newC = juce::jlimit (lo, hi, freq);
-        const float shift = std::log2 (newC / oldC);
-        float newLo = lo * std::pow (2.0f, shift);
-        float newHi = hi * std::pow (2.0f, shift);
-        if (newLo < kLo)    { newHi *= kLo / newLo;    newLo = kLo; }
-        if (newHi > kHi)    { newLo *= kHi / newHi;    newHi = kHi; }
+        const float ratio = juce::jmax (2.0f, hi / lo);
+        const float oldC  = std::sqrt (lo * hi);
+        const float minLo = (band == 1) ? 40.0f : (x1 * 2.0f);
+        const float maxHi = (band == 1) ? (x3 * 0.5f) : 10000.0f;
+        const float maxLo = juce::jmax (minLo, maxHi / ratio);
+
+        const float scale = juce::jmax (0.01f, freq / oldC);
+        const float newLo = juce::jlimit (minLo, maxLo, lo * scale);
+        const float newHi = newLo * ratio;
         if (band == 1) { x1 = newLo; x2 = newHi; }
         else           { x2 = newLo; x3 = newHi; }
     }
 
     Param::clampCrossovers (x1, x2, x3);
-    setParamPhysical (Param::ID::xover1, x1);
-    setParamPhysical (Param::ID::xover2, x2);
-    setParamPhysical (Param::ID::xover3, x3);
+    proc_.getBackend().setCrossovers (x1, x2, x3);
     cachedX1_ = x1; cachedX2_ = x2; cachedX3_ = x3;
     weightsDirty_ = true;
     curvePathsValid_ = false;
@@ -1898,7 +1915,10 @@ void DisplayView::toggleBypass (int band, bool forceBypass)
         setParamNorm (id, 0.0f);
     }
     else
-        setParamNorm (id, bypassMemo_[(size_t) band] / 100.0f);   // 已 bypass → 恢复
+    {
+        const float restore = bypassMemo_[(size_t) band] > 0.5f ? bypassMemo_[(size_t) band] : 100.0f;
+        setParamNorm (id, restore / 100.0f);       // 已 bypass → 恢复
+    }
 }
 
 bool DisplayView::isAllBypassed() const
@@ -1997,27 +2017,13 @@ bool DisplayView::hitTestMidiButton (juce::Point<float> p) const
 
 int DisplayView::midiControlId (juce::Point<float> p) const
 {
-    // 把屏幕坐标映射成稳定的控件 id。id 空间分段，避免相互碰撞：
-    //   0..3   : 四个分割线（crossover 1..3 + 保留 1）
-    //   10..13: 四段频点（band level dot）
-    //   20..23: 四段 S 按钮
-    //   30..33: 四段 M 按钮
-    //   40..43: 四段 BYP 按钮
-    //   50..53: 四段 Δ 按钮
-    //   100    : 全局 BYPASS
-    //   101    : Display Range
-    //   102    : Analyzer
-    //   103    : OUT
-    //   104    : LINKED CONTROL
-    //   105    : MIDI Learn（自身不可学）
-    const float W = (float) getWidth();
-    const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    // 修复 UI-01：与当前 EditorLayout / bandButtonRect / hitTestDivider 几何完全对齐
+    const EditorLayout l (getLocalBounds());
 
     // 分割线
-    for (int e = 0; e < 3; ++e)
-        if (std::abs (p.x - nx[e]) <= sx (23.0f)
-            && p.y >= (float) getHeight() - sy (kGlobalBarH) - sy (22.0f))
-            return 0 + e;
+    const int div = hitTestDivider (p);
+    if (div >= 0)
+        return div;
 
     // 按钮列（S/M/BYP/Δ）
     int b = -1, j = -1;
@@ -2029,20 +2035,13 @@ int DisplayView::midiControlId (juce::Point<float> p) const
     if (hitTestFreqDot (p, dotBand) != 0 && dotBand >= 0)
         return 10 + dotBand;
 
-    // 全局条按钮
-    const float barY = (float) getHeight() - sy (kGlobalBarH);
-    if (p.y >= barY)
-    {
-        if (hitTestGlobalBypass (p)) return 100;
-        if (hitTestDisplayRange (p))  return 101;
-        if (hitTestAnalyzerButton (p)) return 102;
-        if (hitTestOutputButton (p))  return 103;
-        // LINKED CONTROL 梯形按钮（居中，宽 456，高 29）
-        const float cw = sx (456.0f), ch = sy (29.0f);
-        const float cx = (W - cw) * 0.5f;
-        const float cy = (float) getHeight() - sy (kGlobalBarH) - ch + sy (1.0f);
-        if (p.x >= cx && p.x <= cx + cw && p.y >= cy && p.y <= cy + ch) return 104;
-    }
+    // 顶栏与全局条按钮
+    if (hitTestGlobalBypass (p))   return 100;
+    if (hitTestDisplayRange (p))   return 101;
+    if (hitTestAnalyzerButton (p)) return 102;
+    if (hitTestOutputButton (p))   return 103;
+    if (l.linkedButton().contains (p)) return 104;
+
     return -1;
 }
 
@@ -2112,33 +2111,34 @@ void DisplayView::drawMidiLearnOverlay (juce::Graphics& g)
         }
     };
 
-    const float W = (float) getWidth();
+    const EditorLayout l (getLocalBounds());
+    const float s = l.scale;
     const float nx[3] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
-    const float barY = (float) getHeight() - sy (kGlobalBarH);
+    const float handleY = plotTopPx() + plotHeightPx() * 0.44f;
 
     for (int e = 0; e < 3; ++e)
-        highlight (juce::Rectangle<float> (nx[e] - sx (23.0f), barY - sy (22.0f),
-                                           sx (46.0f), sy (22.0f)), e);
+        highlight (juce::Rectangle<float> (nx[e] - 11.0f * s, handleY - 11.0f * s,
+                                           22.0f * s, 22.0f * s), e);
 
     for (int b = 0; b < 4; ++b)
     {
-        const float edge = (b < 3) ? nx[b] : juce::jmin (W, sx (kMeterX) - sx (8.0f));
-        const float bx = edge - sx (40.0f);
-        for (int j = 0; j < 4; ++j)
-            highlight (juce::Rectangle<float> (bx, sy (118.0f + j * 30.0f), sx (24.0f), sy (24.0f)),
-                       20 + b * 10 + j);
-        // 频点
-        int dotBand = -1;
-        juce::Point<float> dp ((float) getWidth() * 0.5f, (float) getHeight() * 0.5f);
-        (void) dotBand; (void) dp;
+        if (b == selectedBand_)
+        {
+            for (int j = 0; j < 4; ++j)
+                highlight (bandButtonRect (b, j), 20 + b * 10 + j);
+        }
+        float dx = 0.0f, dy = 0.0f;
+        getFreqDotPos (b, dx, dy);
+        highlight (juce::Rectangle<float> (dx - 10.0f * s, dy - 10.0f * s,
+                                           20.0f * s, 20.0f * s), 10 + b);
     }
 
-    // 全局条按钮
-    highlight (juce::Rectangle<float> (W - sx (218.0f), sy (3.0f), sx (86.0f), sy (24.0f)), 101);
-    highlight (juce::Rectangle<float> (W * 0.5f - sx (150.0f), barY + sy (5.0f), sx (104.0f), sy (22.0f)), 102);
-    highlight (juce::Rectangle<float> (W - sx (196.0f), barY + sy (5.0f), sx (78.0f), sy (22.0f)), 103);
-    highlight (juce::Rectangle<float> ((W - sx (456.0f)) * 0.5f, barY - sy (29.0f) + sy (1.0f),
-                                       sx (456.0f), sy (29.0f)), 104);
+    // 顶栏与全局条按钮（与 EditorLayout 严格对齐）
+    highlight (l.globalCell (7), 100);
+    highlight (l.range(),        101);
+    highlight (l.globalCell (5), 102);
+    highlight (l.globalCell (6), 103);
+    highlight (l.linkedButton(), 104);
 }
 
 // #7：自绘频率输入框 —— Phase A 已拆为 FreqInputEditor 组件。
@@ -2694,9 +2694,7 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
     else                x3 = newLo;
 
     Param::clampCrossovers (x1, x2, x3);
-    setParamPhysical (Param::ID::xover1, x1);
-    setParamPhysical (Param::ID::xover2, x2);
-    setParamPhysical (Param::ID::xover3, x3);
+    proc_.getBackend().setCrossovers (x1, x2, x3);
     cachedX1_ = x1; cachedX2_ = x2; cachedX3_ = x3;
     weightsDirty_ = true;
     curvePathsValid_ = false;
@@ -2706,6 +2704,7 @@ void DisplayView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 void DisplayView::mouseDown (const juce::MouseEvent& e)
 {
     ensureTimerRunning();      // Phase E-2：任何交互都唤醒定时器
+    endActiveDragGestures();
     // Phase D-3：每次 mouseDown 都重置拖拽状态——新手势开始。
     // ⚠️ 不清零的后果：若上一次 mouseDown 布防了 BandSweep 而 mouseUp 从未到达
     //    （鼠标移出窗口、模态吞掉事件、测试里只按不松），drag_ 会卡在 BandSweep，
@@ -2931,6 +2930,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
         if(analyzerPanel_) analyzerPanel_->clickOutside();
         if (e.mods.isAltDown())
         {
+            beginGestureForParam (Param::ID::outputGain);
             drag_ = DragMode::OutputGain;
             dragStartY_ = p.y;
             dragStartOutputGainDb_ = outputPanel_ != nullptr
@@ -3011,6 +3011,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     if (onDot)
     {
         if (selectedBand_ != dotBand) { selectedBand_ = dotBand; onSelectedBandChanged (dotBand); }  // Phase A
+        beginGestureForParam ("band" + juce::String (dotBand) + "Makeup");
         drag_ = DragMode::Makeup;
         dragBand_ = dotBand;
         dragStartY_ = p.y;
@@ -3028,6 +3029,7 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     const int div = hitTestDivider (p);
     if (div >= 0)
     {
+        beginCrossoverDragGestures();
         drag_ = DragMode::Divider;
         dragIndex_ = div;
         return;
@@ -3199,6 +3201,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
         {
             // Range 缘拖动接管：**本帧立即应用**（内联一次 Range 计算）
             rangePending_ = false;
+            beginGestureForParam ("band" + juce::String (rangePendingBand_) + "Range");
             const float dbPerPx = (2.0f * curveRangeDb_) / plotHeightPx();
             const float startRange = proc_.getBackend().getParamFast ("band" + juce::String (rangePendingBand_) + "Range");
             const float newRange = juce::jlimit (-30.0f, 30.0f,
@@ -3218,6 +3221,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 
         drag_ = DragMode::Makeup;
         dragBand_ = curvePendingBand_ >= 0 ? curvePendingBand_ : selectedBand_;
+        beginGestureForParam ("band" + juce::String (dragBand_) + "Makeup");
         dragStartY_ = curveDownY_;
         dragStartX_ = curveDownX_;
         dragStartMakeup_ = proc_.getBackend().getParamFast ("band" + juce::String (dragBand_) + "Makeup");
@@ -3256,6 +3260,8 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
             {
                 dragAxisLocked_ = true;
                 dragAxisIsX_ = std::abs (dx) > std::abs (dy);
+                if (dragAxisIsX_)
+                    beginCrossoverDragGestures();
             }
         }
 
@@ -3279,6 +3285,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 void DisplayView::mouseUp (const juce::MouseEvent& e)
 {
     ensureTimerRunning();      // R32：松手后按钮/参数状态可能还要几帧才稳定
+    endActiveDragGestures();
     drag_ = DragMode::None;
     dragIndex_ = -1;
     dragBand_ = -1;

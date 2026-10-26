@@ -4366,62 +4366,55 @@ static void testPopoverControls()
         dv.mouseUpForTest (er.getCentreX(), er.getCentreY());
         check (dv.isPopoverExpertOpenForTest(), "T40.16 EXPERT 展开（为测行点击）", "");
 
-        const auto ec = dv.popExpertContentRectForTest();
-        // 5 行等分：0=Detector 1=Lookahead 2=Filtering 3=SC Low 4=SC High
-        const float rowDetY  = ec.getY() + ec.getHeight() * 0.10f;
-        const float rowLkaY  = ec.getY() + ec.getHeight() * 0.30f;
-
-        // Detector 行：翻转 Peak/RMS
+        auto* pop = dv.bandPopoverForTest();
+        // R37 重绘后：EXPERT 左侧三行改为显式分段按钮 expertOptionRect(row, option)，右侧高低通改为连续 ValueField
+        // Detector 行：翻转 Peak(0) → RMS(1)
         const float detBefore = normOf ("band2Detector");
-        dv.mouseDownForTest (ec.getCentreX(), rowDetY);
-        dv.mouseUpForTest (ec.getCentreX(), rowDetY);
+        const auto detOpt1 = pop->expertOptionRect (BandPopover::ExpertRow::Detector, 1);
+        dv.mouseDownForTest (detOpt1.getCentreX(), detOpt1.getCentreY());
+        dv.mouseUpForTest   (detOpt1.getCentreX(), detOpt1.getCentreY());
         const float detAfter = normOf ("band2Detector");
         std::cout << "  EXPERT Detector: " << detBefore << " -> " << detAfter << std::endl;
         check (std::abs (detAfter - detBefore) > 0.5f,
-               "T40.17 EXPERT Detector 行可点（翻转 Peak/RMS）",
+               "T40.17 EXPERT Detector 分段按钮可点（Peak→RMS）",
                juce::String (detBefore) + " -> " + juce::String (detAfter));
 
-        // Lookahead 行：循环 Off→1ms→3ms（全局参数）
+        // Lookahead 行：点选 1ms（option 1，全局参数）
         const float lkaBefore = normOf ("lookahead");
-        dv.mouseDownForTest (ec.getCentreX(), rowLkaY);
-        dv.mouseUpForTest (ec.getCentreX(), rowLkaY);
+        const auto lkaOpt1 = pop->expertOptionRect (BandPopover::ExpertRow::Lookahead, 1);
+        dv.mouseDownForTest (lkaOpt1.getCentreX(), lkaOpt1.getCentreY());
+        dv.mouseUpForTest   (lkaOpt1.getCentreX(), lkaOpt1.getCentreY());
         const float lkaAfter = normOf ("lookahead");
         std::cout << "  EXPERT Lookahead: " << lkaBefore << " -> " << lkaAfter << std::endl;
         check (std::abs (lkaAfter - lkaBefore) > 0.01f,
-               "T40.18 EXPERT Lookahead 行可点（Off→1ms→3ms 循环）",
+               "T40.18 EXPERT Lookahead 分段按钮可点（Off→1ms）",
                juce::String (lkaBefore) + " -> " + juce::String (lkaAfter));
 
-        // ⑧ Phase：侧链滤波三行（Filtering / SC High-Pass / SC Low-Pass）
-        const float rowFilY = ec.getY() + ec.getHeight() * 0.50f;
-        const float rowLoY  = ec.getY() + ec.getHeight() * 0.70f;
-        const float rowHiY  = ec.getY() + ec.getHeight() * 0.90f;
-
-        // Filtering：Band → Free
+        // ⑧ Phase：侧链滤波（Filtering 分段按钮 + SC High-Pass / SC Low-Pass ValueField）
         const float filBefore = normOf ("band2SCFilter");
-        dv.mouseDownForTest (ec.getCentreX(), rowFilY);
-        dv.mouseUpForTest (ec.getCentreX(), rowFilY);
+        const auto filOpt1 = pop->expertOptionRect (BandPopover::ExpertRow::Filtering, 1);
+        dv.mouseDownForTest (filOpt1.getCentreX(), filOpt1.getCentreY());
+        dv.mouseUpForTest   (filOpt1.getCentreX(), filOpt1.getCentreY());
         const float filAfter = normOf ("band2SCFilter");
         std::cout << "  SC Filtering: " << filBefore << " -> " << filAfter << std::endl;
         check (std::abs (filAfter - filBefore) > 0.5f,
-               "T40.19 EXPERT Filtering 行可点（Band↔Free）",
+               "T40.19 EXPERT Filtering 分段按钮可点（Band→Free）",
                juce::String (filBefore) + " -> " + juce::String (filAfter));
 
-        // SC High-Pass：20 → 100 → 500 → 2000 循环
+        // SC High-Pass ValueField
         const float loBefore = phys ("band2SCLow");
-        dv.mouseDownForTest (ec.getCentreX(), rowLoY);
-        dv.mouseUpForTest (ec.getCentreX(), rowLoY);
+        pop->sidechainFieldForTest (false).applyText ("250 Hz");
         const float loAfter = phys ("band2SCLow");
         std::cout << "  SC High-Pass: " << loBefore << " -> " << loAfter << " Hz" << std::endl;
-        check (loAfter != loBefore, "T40.20 EXPERT SC High-Pass 行可点（频率档循环）",
+        check (loAfter != loBefore, "T40.20 EXPERT SC High-Pass ValueField 可写入",
                juce::String (loBefore) + " -> " + juce::String (loAfter));
 
-        // SC Low-Pass：500 → 2000 → 5000 → 20000 循环
+        // SC Low-Pass ValueField
         const float hiBefore = phys ("band2SCHigh");
-        dv.mouseDownForTest (ec.getCentreX(), rowHiY);
-        dv.mouseUpForTest (ec.getCentreX(), rowHiY);
+        pop->sidechainFieldForTest (true).applyText ("8000 Hz");
         const float hiAfter = phys ("band2SCHigh");
         std::cout << "  SC Low-Pass: " << hiBefore << " -> " << hiAfter << " Hz" << std::endl;
-        check (hiAfter != hiBefore, "T40.21 EXPERT SC Low-Pass 行可点（频率档循环）",
+        check (hiAfter != hiBefore, "T40.21 EXPERT SC Low-Pass ValueField 可写入",
                juce::String (hiBefore) + " -> " + juce::String (hiAfter));
 
         // 收起，避免影响后续
@@ -4763,16 +4756,10 @@ static void testOutputPanelSticky()
         dv.mouseUpForTest (btnX, btnY);
         check (dv.isOutputStickyForTest(), "T44.7 前置：Output 面板已 sticky", "");
 
-        const auto pr = dv.outputPanelRectForTest();
-        // R24：面板从 3 行扩到 5 行（InputGain / OutputGain / Mix / GlobalBypass /
-        //   AutoGain）。这里用与 OutputPanel::hitTestRow 相同的精确行几何取
-        //   **第 2 行（row 1 = Output Gain）**，而不是早先按高度比例估的"第一行"。
-        const float kRowH = 22.0f, kNumRows = 5.0f;
-        const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-        const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-        const float rowY = top + rowH * 1.0f + rowH * 0.5f;   // 第 2 行 = Output Gain
-        dv.mouseDownForTest (pr.getCentreX(), rowY);
-        dv.mouseUpForTest (pr.getCentreX(), rowY);
+        // R37 重绘后：Output Gain 改为独立旋钮控件 numericControlForTest(1)
+        auto& ogKnob = dv.outputPanelForTest()->numericControlForTest (1);
+        for (int s = 0; s < 10; ++s)
+            ogKnob.mouseWheelForTest (20.0f, 20.0f, 1.0f);   // 10 × 0.1 = +1.0 dB
 
         const float ogAfter = [&] {
             for (auto* pp : proc->getParameters())
@@ -5997,23 +5984,22 @@ static void testChoiceIndexSemantics()
         for (int t = 0; t < 20; ++t) dv.tickForTest();
         check (dv.isPopoverExpertOpenForTest(), "T55.4a EXPERT 已展开", "");
 
-        const auto ec = dv.popExpertContentRectForTest();
-        const float laRow = ec.getY() + ec.getHeight() * 0.30f;   // 第 2 行 = Lookahead
-
-        // 从 Off 起，连点 3 次，应依次到 1ms / 3ms / Off
+        // R37 重绘后：Lookahead 为显式 3 段按钮（索引 1 / 2 / 0）
+        auto* pop = dv.bandPopoverForTest();
         api.setParamNormFast (Param::ID::lookahead, 0.0f);
         const int expect[3] = { 1, 2, 0 };
         bool allOk = true;
         for (int step = 0; step < 3; ++step)
         {
-            dv.mouseDownForTest (ec.getCentreX(), laRow);
-            dv.mouseUpForTest (ec.getCentreX(), laRow);
+            const auto optRect = pop->expertOptionRect (BandPopover::ExpertRow::Lookahead, expect[step]);
+            dv.mouseDownForTest (optRect.getCentreX(), optRect.getCentreY());
+            dv.mouseUpForTest   (optRect.getCentreX(), optRect.getCentreY());
             const float got = api.getParam (Param::ID::lookahead).value;
             std::cout << "  step " << step << ": lookahead = " << got
                       << " (expect " << expect[step] << ")" << std::endl;
             if (std::abs (got - (float) expect[step]) > 0.01f) allOk = false;
         }
-        check (allOk, "T55.4 lookahead 循环 Off→1ms→3ms→Off 不跳档", "");
+        check (allOk, "T55.4 lookahead 分段选择 Off→1ms→3ms→Off 索引准确", "");
     }
 
     // ③ 结构缓存不失配：phaseMode / xoverSlope 改动后，UI 缓存值应与参数一致
@@ -7984,16 +7970,10 @@ static void testAutoGainUiRow()
     check (! dv.outputPanelAutoGainForTest(),
            "T76.3 打开时面板副本与参数一致（关）", "");
 
-    // ④ 点第 5 行（row 4 = Auto-Gain）→ 参数应翻转为开
-    const auto pr = dv.outputPanelRectForTest();
-    // 行几何与 OutputPanel::hitTestRow 相同：top = y + H*(7/(N*22+14))
-    // R24/R29：kNumRows 3→4→5→6（加了 InputGain / AutoGain / Monitor）。
-    //   行序：0=InputGain 1=OutputGain 2=Mix 3=GlobalBypass 4=AutoGain 5=Monitor
-    const float kRowH = 22.0f, kNumRows = 6.0f;
-    const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-    const float rowY = top + rowH * 4.0f + rowH * 0.5f;      // 第 5 行（Auto-Gain）中心
-    const float rowX = pr.getCentreX();
+    // ④ R37 重绘后：Auto-Gain 为 OutputPanel 右侧开关按钮 toggleRect(1)
+    const auto agBtn = dv.outputPanelForTest()->toggleRect (1);
+    const float rowX = agBtn.getCentreX();
+    const float rowY = agBtn.getCentreY();
 
     dv.mouseDownForTest (rowX, rowY);
     dv.mouseUpForTest (rowX, rowY);
@@ -8054,22 +8034,16 @@ static void testInputGainAndOversamplingUi()
     for (int t = 0; t < 20; ++t) dv.tickForTest();
     check (dv.isOutputOpenForTest(), "T77.1 Output 面板可打开", "");
 
-    const auto pr = dv.outputPanelRectForTest();
-    const float kRowH = 22.0f, kNumRows = 5.0f;
-    const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-    const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-
-    // ① 点 Input Gain 行（row 0）→ 参数 +3 dB
+    // ① R37 重绘后：Input Gain 为 Output 面板第 0 个旋钮控件（滚轮/拖拽/输入调整）
     {
-        const float rowY = top + rowH * 0.0f + rowH * 0.5f;
-        const float rowX = pr.getCentreX();
         const float before = mb->apvts.getRawParameterValue (Param::ID::inputGain)->load();
-        dv.mouseDownForTest (rowX, rowY);
-        dv.mouseUpForTest (rowX, rowY);
+        auto& igKnob = dv.outputPanelForTest()->numericControlForTest (0);
+        for (int s = 0; s < 30; ++s)
+            igKnob.mouseWheelForTest (20.0f, 20.0f, 1.0f);   // 30 × 0.1 = +3.0 dB
         const float after = mb->apvts.getRawParameterValue (Param::ID::inputGain)->load();
         std::cout << "  Input Gain: " << before << " -> " << after << std::endl;
-        check (std::abs (after - (before + 3.0f)) < 0.01f,
-               "T77.2 点 Input Gain 行 → 参数 +3 dB",
+        check (std::abs (after - (before + 3.0f)) < 0.05f,
+               "T77.2 Input Gain 旋钮调整 → 参数 +3 dB",
                juce::String (before) + " -> " + juce::String (after));
     }
 
@@ -8527,17 +8501,17 @@ static void testAllFeaturesCombined()
     // 结构参数变化需要驱动消息线程
     mb->handleUpdateNowIfNeeded();
 
-    // ---- ① 延迟上报 = 分频 + lookahead + 过采样 ----
+    // ---- ① 延迟上报 = 分频 + lookahead + 过采样（均统一为 1× 宿主采样率样本数） ----
     {
         const int osLat = mb->getDSP().getOversamplingLatencySamples();
         const int xoLat = mb->getDSP().getCrossoverLatencySamples();
         const int total = mb->getLatencySamples();
-        const int laExpected = (int) std::lround (0.003 * 48000.0 * 4.0);
+        const int laExpected = (int) std::lround (0.003 * 48000.0);
         std::cout << "  延迟: xover=" << xoLat << " lookahead(期望 " << laExpected
                   << ") + oversmp=" << osLat << " => 总上报 " << total << std::endl;
-        check (total >= laExpected + osLat,
-               "T81.1 组合延迟 ≥ lookahead + 过采样（叠加正确）",
-               juce::String (total) + " >= " + juce::String (laExpected + osLat));
+        check (total == xoLat + laExpected + osLat,
+               "T81.1 组合延迟 = 分频 + lookahead(1x) + 过采样(1x)",
+               juce::String (total) + " == " + juce::String (xoLat + laExpected + osLat));
     }
 
     // ---- ② 喂足量音频，主链路 + 侧链两路 ----
@@ -8791,36 +8765,24 @@ static void testMonitorModes()
     check (dv.outputPanelMonitorForTest() == 0,
            "T82.10 面板 Monitor 副本初始为 Output", "");
 
-    // 点 Monitor 行（row 5）→ 副本变 1 且参数写入
+    // R37 重绘后：Monitor 为 OutputPanel 的下拉框 ComboBox
     {
-        const auto pr = dv.outputPanelRectForTest();
-        const float kRowH = 22.0f, kNumRows = 6.0f;
-        const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-        const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-        const float rowY = top + rowH * 5.0f + rowH * 0.5f;
-        dv.mouseDownForTest (pr.getCentreX(), rowY);
-        dv.mouseUpForTest (pr.getCentreX(), rowY);
+        dv.outputPanelForTest()->selectMonitorForTest (1);
         const float v = mb->apvts.getRawParameterValue (Param::ID::monitorMode)->load();
-        std::cout << "  点 Monitor 行后 monitorMode = " << v << std::endl;
+        std::cout << "  选 Monitor=Input 后 monitorMode = " << v << std::endl;
         check (std::abs (v - 1.0f) < 0.01f,
-               "T82.11 点 Monitor 行 → 参数变为 1（Input）", juce::String (v));
+               "T82.11 选 Monitor=Input → 参数变为 1", juce::String (v));
         check (dv.outputPanelMonitorForTest() == 1,
                "T82.12 面板副本同步为 1", "");
     }
 
-    // 再点一次 → 2（Band 1）
+    // 再选 2（Band 1）
     {
-        const auto pr = dv.outputPanelRectForTest();
-        const float kRowH = 22.0f, kNumRows = 6.0f;
-        const float top  = pr.getY() + pr.getHeight() * (7.0f / (kNumRows * kRowH + 14.0f));
-        const float rowH = pr.getHeight() * (kRowH / (kNumRows * kRowH + 14.0f));
-        const float rowY = top + rowH * 5.0f + rowH * 0.5f;
-        dv.mouseDownForTest (pr.getCentreX(), rowY);
-        dv.mouseUpForTest (pr.getCentreX(), rowY);
+        dv.outputPanelForTest()->selectMonitorForTest (2);
         const float v = mb->apvts.getRawParameterValue (Param::ID::monitorMode)->load();
-        std::cout << "  再点 Monitor 行后 monitorMode = " << v << std::endl;
+        std::cout << "  选 Monitor=Band1 后 monitorMode = " << v << std::endl;
         check (std::abs (v - 2.0f) < 0.01f,
-               "T82.13 再点一次 → 参数变为 2（Band 1）", juce::String (v));
+               "T82.13 选 Monitor=Band1 → 参数变为 2", juce::String (v));
     }
 }
 
@@ -9060,8 +9022,8 @@ static void testHostEnvironmentAdaptation()
         check (finite, juce::String ("T84.1 SR=") + juce::String ((int) sr) + " 输出有限", "");
         check (peak > 0.02f, juce::String ("T84.2 SR=") + juce::String ((int) sr) + " 非静音",
                juce::String (peak));
-        // 延迟应随采样率缩放（3ms lookahead @ 4x 过采样）
-        const int expectLa = (int) std::lround (0.003 * sr * 4.0);
+        // 延迟应随采样率缩放（3ms lookahead @ 1× 宿主采样率单位 + 过采样滤波器延迟）
+        const int expectLa = (int) std::lround (0.003 * sr);
         check (mb->getLatencySamples() >= expectLa,
                juce::String ("T84.3 SR=") + juce::String ((int) sr) + " 延迟随采样率缩放",
                juce::String (mb->getLatencySamples()) + " >= " + juce::String (expectLa));
@@ -10352,6 +10314,375 @@ static int runVst3Smoke(const juce::String& path, const juce::String& snapshotPa
     return gFail==0?0:1;
 }
 
+// ------------------------------------------------------------
+// T90 审计报告全量修复回归（并发结构切换、FL 变长块过采样/线性相位、PDC 1x 单位、
+//     全局 Mix 相位延迟对齐、向上压缩/扩展 Attack-Release 极性、双声道 LoudnessMeter、
+//     Mono 主总线 + Stereo 侧链隔离、历史环回绕、Bypass 死锁消除、同帧多参数同步与手势通知）
+// ------------------------------------------------------------
+static void testAuditBugFixes()
+{
+    std::cout << "\n--- T90 审计报告全量修复回归 ---\n";
+
+    // ① FL Studio 变长块（含 < maxBlockSize 与 > maxBlockSize）+ 4x 过采样 + EXT 侧链无越界/无垃圾污染
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 1024, 4, 2);
+        proc->prepareToPlay (48000.0, 1024);
+        mb->setParamPhysicalForTest (Param::ID::oversampling, 2.0f);   // 4x
+        mb->setParamPhysicalForTest (Param::bandExt (0), 1.0f);
+        mb->setParamPhysicalForTest (Param::bandExt (2), 1.0f);
+        mb->handleUpdateNowIfNeeded();
+
+        const int varSizes[] = { 13, 64, 1, 257, 128, 511, 2048, 37, 1024 };
+        juce::MidiBuffer midi;
+        bool allFinite = true;
+        float peakOut = 0.0f;
+        long sampleIdx = 0;
+        for (int round = 0; round < 4 && allFinite; ++round)
+        {
+            for (int bs : varSizes)
+            {
+                juce::AudioBuffer<float> buf (4, bs);
+                for (int i = 0; i < bs; ++i, ++sampleIdx)
+                {
+                    const float m = 0.35f * (float) std::sin (6.283185 * 330.0 * sampleIdx / 48000.0);
+                    const float s = 0.50f * (float) std::sin (6.283185 * 110.0 * sampleIdx / 48000.0);
+                    buf.setSample (0, i, m);
+                    buf.setSample (1, i, m);
+                    buf.setSample (2, i, s);
+                    buf.setSample (3, i, s);
+                }
+                mb->processBlock (buf, midi);
+                for (int i = 0; i < bs; ++i)
+                {
+                    const float y = buf.getSample (0, i);
+                    if (! std::isfinite (y)) { allFinite = false; break; }
+                    peakOut = juce::jmax (peakOut, std::abs (y));
+                }
+                if (! allFinite) break;
+            }
+        }
+        check (allFinite && peakOut > 0.05f && peakOut < 1.5f,
+               "T90.1 变长块(1..2048) + 4x 过采样 + EXT 侧链输出有限且无越界垃圾",
+               juce::String (peakOut));
+    }
+
+    // ② Linear Phase (FirFilter) 在任意随机变长块下脉冲峰位恒精确等于 getLatencySamples()，零欠载
+    {
+        LinearPhaseCrossover lpc;
+        lpc.prepare (48000.0, 1024, 1, Param::LinearQuality::Medium);
+        lpc.setParameters (200.0f, 1000.0f, 6000.0f, 24);
+        lpc.reset();
+
+        const int expectedLat = lpc.getLatencySamples(); // 3072
+        const int totalN = 8192;
+        std::vector<float> inSig ((size_t) totalN, 0.0f);
+        inSig[100] = 1.0f;                               // 第 100 个样本打单位脉冲
+        std::vector<float> sumOut ((size_t) totalN, 0.0f);
+
+        const int seq[] = { 17, 63, 1, 129, 500, 33, 256, 7, 1024, 89 };
+        int pos = 0, step = 0;
+        std::vector<float> bL (1024), bLM (1024), bHM (1024), bH (1024);
+        while (pos < totalN)
+        {
+            const int n = juce::jmin (seq[step++ % 10], totalN - pos);
+            const float* inPtr[1] = { inSig.data() + pos };
+            float* pL[1]  = { bL.data() };
+            float* pLM[1] = { bLM.data() };
+            float* pHM[1] = { bHM.data() };
+            float* pH[1]  = { bH.data() };
+            lpc.process (inPtr, pL, pLM, pHM, pH, 1, n);
+            for (int i = 0; i < n; ++i)
+                sumOut[(size_t) (pos + i)] = bL[(size_t) i] + bLM[(size_t) i]
+                                           + bHM[(size_t) i] + bH[(size_t) i];
+            pos += n;
+        }
+        int peakIdx = -1;
+        float maxVal = 0.0f;
+        for (int i = 0; i < totalN; ++i)
+            if (std::abs (sumOut[(size_t) i]) > maxVal)
+            {
+                maxVal = std::abs (sumOut[(size_t) i]);
+                peakIdx = i;
+            }
+        check (peakIdx == 100 + expectedLat && std::abs (maxVal - 1.0f) < 1.0e-4f,
+               "T90.2 Linear Phase 随机变长块下延迟精确恒等于 B+D（无漂移/无欠载）",
+               "peakIdx=" + juce::String (peakIdx) + " expect=" + juce::String (100 + expectedLat)
+               + " amp=" + juce::String (maxVal, 5));
+    }
+
+    // ③ 4x 过采样 + Lookahead + Linear Phase 下真实脉冲延迟与 getLatencySamples() (1× 单位) 严格对齐
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 256, 2, 2);
+        proc->prepareToPlay (48000.0, 256);
+        for (int b = 0; b < 4; ++b)
+        {
+            mb->setParamPhysicalForTest (Param::bandThreshold (b), 0.0f);
+            mb->setParamPhysicalForTest (Param::bandRatio (b), 1.0f);
+        }
+        mb->setParamPhysicalForTest (Param::ID::phaseMode, 2.0f);      // Linear
+        mb->setParamPhysicalForTest (Param::ID::linearQuality, 0.0f);  // Low (1536 @ 4x => 384 @ 1x)
+        mb->setParamPhysicalForTest (Param::ID::lookahead, 2.0f);      // 3 ms (144 @ 1x)
+        mb->setParamPhysicalForTest (Param::ID::oversampling, 2.0f);   // 4x
+        mb->handleUpdateNowIfNeeded();
+
+        const int reportedLat = mb->getLatencySamples();
+        juce::MidiBuffer midi;
+        int peakPos = -1;
+        float peakAmp = 0.0f;
+        for (int blk = 0; blk < 16; ++blk)
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            buf.clear();
+            if (blk == 0)
+            {
+                buf.setSample (0, 10, 0.5f);
+                buf.setSample (1, 10, 0.5f);
+            }
+            mb->processBlock (buf, midi);
+            for (int i = 0; i < 256; ++i)
+            {
+                const float a = std::abs (buf.getSample (0, i));
+                if (a > peakAmp) { peakAmp = a; peakPos = blk * 256 + i; }
+            }
+        }
+        const int measuredLat = peakPos - 10;
+        check (std::abs (measuredLat - reportedLat) <= 2,
+               "T90.3 4x 过采样 + Linear + Lookahead 真实脉冲延迟与 PDC 上报误差 ≤ 2 样本",
+               "measured=" + juce::String (measuredLat) + " reported=" + juce::String (reportedLat));
+    }
+
+    // ④ 多线程并发：音频线程连续 processBlock 的同时消息线程高频切换过采样/相位/质量/分频点
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+
+        std::atomic<bool> stopFlag { false };
+        std::atomic<bool> audioOk  { true };
+        std::thread audioThread ([&]
+        {
+            const int sizes[] = { 31, 64, 128, 257, 512 };
+            int step = 0;
+            juce::MidiBuffer midi;
+            while (! stopFlag.load (std::memory_order_relaxed))
+            {
+                const int n = sizes[step++ % 5];
+                juce::AudioBuffer<float> buf (2, n);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float v = 0.25f * std::sin (0.05f * (float) i);
+                    buf.setSample (0, i, v);
+                    buf.setSample (1, i, v);
+                }
+                mb->processBlock (buf, midi);
+                for (int i = 0; i < n; ++i)
+                    if (! std::isfinite (buf.getSample (0, i)))
+                        audioOk.store (false, std::memory_order_relaxed);
+            }
+        });
+
+        for (int iter = 0; iter < 120; ++iter)
+        {
+            mb->setParamPhysicalForTest (Param::ID::oversampling, (float) (iter % 3));
+            mb->setParamPhysicalForTest (Param::ID::phaseMode,    (float) ((iter / 2) % 3));
+            mb->setParamPhysicalForTest (Param::ID::linearQuality,(float) ((iter / 3) % 3));
+            mb->setParamPhysicalForTest (Param::ID::xover1, 120.0f + (float) (iter % 20) * 10.0f);
+            mb->reapplyStructureAndLatency();
+        }
+        stopFlag.store (true, std::memory_order_relaxed);
+        audioThread.join();
+        check (audioOk.load(), "T90.4 音频线程与结构重配并发 120 轮无崩溃、无 NaN", "");
+    }
+
+    // ⑤ 全局 Mix (50%) 在 Linear Phase + Lookahead 下无梳状滤波抵消
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+        for (int b = 0; b < 4; ++b)
+        {
+            mb->setParamPhysicalForTest (Param::bandThreshold (b), 0.0f);
+            mb->setParamPhysicalForTest (Param::bandRatio (b), 1.0f);
+        }
+        mb->setParamPhysicalForTest (Param::ID::phaseMode, 2.0f);   // Linear (3072 samples)
+        mb->setParamPhysicalForTest (Param::ID::lookahead, 2.0f);   // 3 ms (144 samples => total 3216)
+        mb->setParamPhysicalForTest (Param::ID::globalMix, 50.0f);
+        mb->handleUpdateNowIfNeeded();
+
+        // 选择一个使未对齐延迟 3216 样本恰好产生反相抵消的频率：f = 48000 / (2 * 16) = 1500 Hz
+        // 3216 * 1500 / 48000 = 100.5 个周期（反相！旧实现 50% 干湿混合会完全抵消为 0！）
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        float steadyPeak = 0.0f;
+        for (int blk = 0; blk < 20; ++blk)
+        {
+            for (int i = 0; i < 512; ++i)
+            {
+                const long k = (long) (blk * 512 + i);
+                const float v = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 1500.0 * k / 48000.0);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            mb->processBlock (buf, midi);
+            if (blk >= 16)
+                for (int i = 0; i < 512; ++i)
+                    steadyPeak = juce::jmax (steadyPeak, std::abs (buf.getSample (0, i)));
+        }
+        check (std::abs (steadyPeak - 0.5f) < 0.02f,
+               "T90.5 Linear+Lookahead 下 Global Mix=50% 无反相梳状抵消（幅度保持 0.5）",
+               juce::String (steadyPeak, 4));
+    }
+
+    // ⑥ BandCompressor：向上压缩 Attack/Release 时间常数极性正确 + StereoLink=0% 右声道表头可见
+    {
+        BandCompressor comp;
+        comp.prepare (48000.0);
+        // Attack = 1ms（快），Release = 400ms（慢），Range = +12 dB（向上压缩）
+        comp.setParameters (-20.0f, 4.0f, 1.0f, 400.0f, 12.0f, 0.0f, false);
+        comp.setStereoLink (0.0f);
+
+        // 喂 5ms 低电平信号（-40 dBFS < -20 dB 阈值，目标增益 +12 dB）：1ms 快 Attack 应迅速建立 >10 dB 正增益
+        float gl = 1.0f, gr = 1.0f;
+        for (int i = 0; i < 240; ++i)
+            comp.processGain (0.0f, 0.01f, gl, gr);   // 仅右声道有信号！
+        const float gainAfterAttack = comp.getSmoothedGainDb();
+        const float detRightOnly    = comp.getLastDetectorDb();
+
+        // 随后切到阈值以上（0 dBFS，目标增益 0 dB）跑 5ms：400ms 慢 Release 应仍保留大部分正增益（> 8 dB）
+        for (int i = 0; i < 240; ++i)
+            comp.processGain (0.0f, 1.0f, gl, gr);
+        const float gainDuringRelease = comp.getSmoothedGainDb();
+
+        check (gainAfterAttack > 10.0f && gainDuringRelease > 8.0f,
+               "T90.6 向上压缩快 Attack(1ms) / 慢 Release(400ms) 方向正确（未颠倒）",
+               "atk=" + juce::String (gainAfterAttack, 2) + " rel=" + juce::String (gainDuringRelease, 2));
+        check (detRightOnly > -45.0f,
+               "T90.7 StereoLink=0% 纯右声道输入时检测器表头正常响应",
+               juce::String (detRightOnly, 2));
+    }
+
+    // ⑦ LoudnessMeter 400ms 时间窗与块大小无关 + historyCounter_ 跨 4096 块不清空
+    {
+        LoudnessMeter m64, m512;
+        m64.prepare (48000.0);  m64.setWindowSec (0.400);
+        m512.prepare (48000.0); m512.setWindowSec (0.400);
+
+        // 先喂 0.5s 强信号，再喂 0.2s 弱信号：400ms 窗应包含一半强一半弱，64 块与 512 块结果须一致
+        const int total = 33600; // 0.7s @ 48k
+        for (int i = 0; i < total; ++i)
+        {
+            const float amp = (i < 24000) ? 0.5f : 0.05f;
+            const float l =  amp * std::sin (0.1f * (float) i);
+            const float r = -amp * std::sin (0.1f * (float) i); // 反相立体声测试双通道独立滤波器
+            m64.processSample (0, l);  m64.processSample (1, r);
+            m512.processSample (0, l); m512.processSample (1, r);
+            if ((i + 1) % 64 == 0)  m64.endBlock (128);
+            if ((i + 1) % 512 == 0) m512.endBlock (1024);
+        }
+        check (std::abs (m64.getLoudnessDb() - m512.getLoudnessDb()) < 0.35f,
+               "T90.8 LoudnessMeter 双通道独立且 400ms 积分窗跨块大小(64 vs 512)一致",
+               juce::String (m64.getLoudnessDb(), 2) + " vs " + juce::String (m512.getLoudnessDb(), 2));
+
+        CrunchMBAudioProcessor hp;
+        for (int i = 0; i < 4100; ++i)
+            hp.pushHistoryPoint (-12.0f, -15.0f);
+        std::vector<float> hIn, hOut;
+        unsigned cnt = 0; int written = 0;
+        hp.readHistoryPoints (4096, hIn, hOut, cnt, written);
+        check (cnt == 4100u && written == 4096,
+               "T90.9 historyCounter_ 超过 4096 块后不归 1，完整保留 4096 点历史",
+               "cnt=" + juce::String (cnt) + " written=" + juce::String (written));
+    }
+
+    // ⑧ Mono 主总线 + Stereo 侧链通道隔离（侧链绝不串入主输出）
+    {
+        CrunchMBAudioProcessor mp;
+        juce::AudioProcessor::BusesLayout layout;
+        layout.inputBuses.add  (juce::AudioChannelSet::mono());
+        layout.inputBuses.add  (juce::AudioChannelSet::stereo());
+        layout.outputBuses.add (juce::AudioChannelSet::mono());
+        if (mp.setBusesLayout (layout))
+        {
+            mp.prepareToPlay (48000.0, 256);
+            juce::AudioBuffer<float> buf (3, 256);
+            buf.clear (0, 0, 256); // 主输入静音
+            for (int i = 0; i < 256; ++i)
+            {
+                buf.setSample (1, i, 0.8f); // 侧链 L 强信号
+                buf.setSample (2, i, 0.8f); // 侧链 R 强信号
+            }
+            juce::MidiBuffer midi;
+            mp.processBlock (buf, midi);
+            check (buf.getMagnitude (0, 0, 256) < 1.0e-6f && buf.getMagnitude (1, 0, 256) < 1.0e-6f,
+                   "T90.10 Mono 主总线 + Stereo 侧链不串音且侧链残留已清零", "");
+        }
+    }
+
+    // ⑨ UI 与 API 修复：Mix=30% B 按钮不死锁、同帧多参数同步、API 分频钳制与版本号 1.0.4
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* mb = dynamic_cast<CrunchMBAudioProcessor*> (proc.get());
+        proc->setPlayConfigDetails (48000.0, 512, 2, 2);
+        proc->prepareToPlay (48000.0, 512);
+
+        auto& api = mb->getBackend();
+        check (api.getPluginVersion() == "1.0.4", "T90.11 MBBackend 版本号与 CMake 1.0.4 一致",
+               api.getPluginVersion());
+
+        api.setParam (Param::ID::xover1, 200.0f);
+        api.setParam (Param::ID::xover2, 1000.0f);
+        api.setParam (Param::ID::xover3, 6000.0f);
+        auto res = api.setParam (Param::ID::xover1, 2200.0f); // 超过 xover2/2 = 500
+        check (res.applied && std::abs (api.getParam (Param::ID::xover1).value - 500.0f) < 1.0f,
+               "T90.12 MBBackend::setParam(xover1) 执行 1 八度间距钳制",
+               juce::String (api.getParam (Param::ID::xover1).value));
+
+        DisplayView dv (*mb);
+        dv.setSize (1200, 780);
+        mb->setParamPhysicalForTest (Param::bandMix (2), 30.0f);
+        for (int t = 0; t < 5; ++t) dv.tickForTest();
+
+        // 点击 band2 的 B 按钮：30% -> 0%（旁通），再点恢复 30%（解除旁通，不死锁）
+        const auto bypRect = dv.bandButtonRectForTest (2, 2);
+        dv.mouseDownForTest (bypRect.getCentreX(), bypRect.getCentreY());
+        dv.mouseUpForTest   (bypRect.getCentreX(), bypRect.getCentreY());
+        const float mixAfterByp = api.getParamFast (Param::bandMix (2));
+        dv.mouseDownForTest (bypRect.getCentreX(), bypRect.getCentreY());
+        dv.mouseUpForTest   (bypRect.getCentreX(), bypRect.getCentreY());
+        const float mixRestored = api.getParamFast (Param::bandMix (2));
+        check (mixAfterByp < 0.1f && std::abs (mixRestored - 30.0f) < 0.5f,
+               "T90.13 Mix=30% 时 B 按钮可正常切换 0% 与恢复 30%（无死锁）",
+               juce::String (mixAfterByp) + " -> " + juce::String (mixRestored));
+
+        // 同帧修改多个参数后 Popover 全部同步（不因首个 syncParam 返回 true 而提前 break）
+        dv.openPopoverForBandForTest (2);
+        dv.snapPopoverForTest();
+        mb->setParamPhysicalForTest (Param::bandThreshold (2), -37.0f);
+        mb->setParamPhysicalForTest (Param::bandMakeup (2),     9.5f);
+        dv.tickForTest();
+        check (std::abs (dv.getPopoverValueForTest (0) - (-37.0)) < 0.2
+            && std::abs (dv.getPopoverValueForTest (4) - 9.5)     < 0.2,
+               "T90.14 同帧多参数变更时 BandPopover 全部控件完整同步",
+               juce::String (dv.getPopoverValueForTest (0)) + " / " + juce::String (dv.getPopoverValueForTest (4)));
+
+        // ValueField 非法文本失焦自动关闭编辑态（不残留 TextEditor）
+        ValueField vf;
+        vf.setSize (180, 36);
+        vf.configure ("HIGH-PASS", "Hz", 20.0, 2000.0, 0, true);
+        vf.setValue (150.0);
+        check (! vf.applyText ("invalid_hz") && std::abs (vf.getValue() - 150.0) < 1.0e-6,
+               "T90.15 ValueField 非法输入保持原值", "");
+
+        mb->setEditorActive (false);
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -10471,6 +10802,7 @@ int main (int argc, char** argv)
     testKnobScaleAndStates();         // T89 R36 旋钮行程/刻度/四态 + 频率文本同步
     testHairlinePixelAlignment();  // T51 Phase E-4 1px 细线像素对齐
     testBackendFacade();          // T52 Phase IMBBackend facade（TECH_SPEC §10.4）
+    testAuditBugFixes();          // T90 审计报告全量修复回归
 
     std::cout << "\n====================================\n"
               << "PASS " << gPass << " / FAIL " << gFail << std::endl;

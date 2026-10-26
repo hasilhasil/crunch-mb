@@ -73,6 +73,7 @@ private:
     static constexpr int kPoints = SpectrumEngine::kDisplayPoints;
 
     std::vector<float> freqs_;
+    juce::uint32 freqsVersion_ = 0;
     std::array<float, kPoints> pre_ {}, post_ {};
     bool hasFrame_ = false;
 

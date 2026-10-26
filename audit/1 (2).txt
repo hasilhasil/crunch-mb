@@ -1,0 +1,146 @@
+我把整个项目（`CMakeLists.txt`、`src/` 下的 Processor / DSP / API / UI 全部源码，以及 `tests/TestMain.cpp` 和 `_review/` 记录）做了一遍完整的**只读筛查**。
+
+虽然现有离线回归套件（1008 项）全部通过，但因为测试主要在**单线程顺序调用**且 **`numSamples == maxBlockSize`（定长满块）** 的条件下运行，筛查中发现了多处在实际 DAW（尤其是 FL Studio 变长缓冲、播放中切参数、过采样、线性相位、自动化）下会触发的**高危崩溃竞争、DSP 信号/延迟错误和 UI 状态问题**。
+
+按严重程度整理如下：
+
+---
+
+### 一、 P0 级：跨线程竞争与内存安全（播放中操作可致 DAW 崩溃 / 爆音）
+
+1. **消息线程 `applyStructure()` 与音频线程 `processBlock()` 无同步并发重分配（UAF 崩溃）**
+   - **位置**：`src/PluginProcessor.cpp:113-125, 215-219`、`src/dsp/MultibandDSP.cpp:110-130`、`src/dsp/CrossoverBank.cpp:120-128`、`src/dsp/LinearPhaseCrossover.h:126-135`
+   - **问题**：
+     - 当播放过程中切换 **`Oversampling`**（Off ↔ 2x ↔ 4x）或调用 `setStateInformation` 时，消息线程在 `handleAsyncUpdate() -> applyStructure() -> dsp_.setStructure()` 中直接调用 `MultibandDSP::prepare()`，对 `bandStore_`、`scStore_`、`gStore_`、`outStore_`、`dryStore_`、`laBuf_` 执行 `std::vector::assign()` 重分配，并 `reset()`/`make_unique` 重建 `oversampler_`、调用 `osIn_.setSize()`，而此时音频线程 `process()` 正在无锁读写这些指针和 `oversampler_`。
+     - 当 `Phase Mode == Linear` 下切换 **`Linear Quality`**（Low ↔ Medium ↔ High）时，消息线程调用 `FirFilter::prepare()` 重分配 `fft_`、`inFifo_`、`outFifo_`、`dly_` 等容器，与音频线程 `FirFilter::processOneChannel()` 直接竞争。
+     - 在 `Linear Phase` 下拖动分频点（`xover1..3`）或改斜率时，消息线程 `FirFilter::setImpulseResponse()` 直接复用音频线程正在使用的同一个成员 `fftIn_`、`irSpectrum_` 和 `fft_->perform()`，造成数据竞争和频域核撕裂。
+
+2. **过采样（2x / 4x）在 `numSamples < maxBlock_` 时处理整块未初始化/陈旧尾部垃圾 + 侧链越界读**
+   - **位置**：`src/dsp/MultibandDSP.cpp:277-325`
+   - **问题**：
+     - `osIn_` 在 `prepare()` 中按 `maxBlock_`（例如 1024）分配（且 `setSize(2, maxBlock_, false, false, false)` 未清零）。
+     - 在 `process()` 第 281 行：
+       ```cpp
+       const juce::dsp::AudioBlock<const float> inBlock (osIn_);
+       auto up = oversampler_->processSamplesUp (inBlock);
+       ```
+       这里**漏掉了 `.getSubBlock (0, (size_t) numSamples)`**（第 319 行降采样时写了 `getSubBlock`，上采样时没写）。
+     - 在 FL Studio 等**变长块宿主**（或支持 sample-accurate 自动化切块的宿主）中，只要当次 `numSamples < maxBlock_`（如 `maxBlock_=1024, numSamples=128`）：
+       1. `processSamplesUp` 会把 `128` 个真实样本 + **`896` 个陈旧/未初始化垃圾样本**一起上采样成 `4096` 个样本，直接污染 `oversampler_` 的多相 IIR 状态；
+       2. 随后的 `processChain` 会对全部 `4096` 个样本推进分频器、压缩包络、线性相位 FIFO、Lookahead 环和响度计；
+       3. 若同时开启 `EXT` 侧链（第 296-301 行），`upN = 4096` 会读取 `sidechain[ch][i / osFactor_]` 直到索引 `1023`，而宿主传入的 `sidechain` 只有 `numSamples (128)` 个样本，触发**缓冲区越界读取（`0xC0000005`）**。
+     - 反之，若宿主传入 `numSamples > maxBlock_`（第 277 行条件不成立），代码会跳过上采样直接掉入第 325 行的 `processChain`，把 **1× 采样率**的音频直接喂给按 **2×/4× `procRate_`** 设计的分频器和时间常数（所有分频点频率偏移 1~2 个八度）。
+
+3. **`SpectrumEngine` 存在两处跨线程数据竞争 + 停止播放后 200Hz 死循环刷新（导致 UI 永不降频）**
+   - **位置**：`src/dsp/SpectrumEngine.cpp:99, 119, 157-162, 212-337`、`src/ui/SpectrumView.cpp:29-30`
+   - **问题**：
+     - **`freqs_` 数据竞争（UB）与采样率切换失效**：后台分析线程在 `analyseTick()` 中对 `std::vector<float> freqs_` 执行 `clear()` 和 `push_back()`，UI 线程在 `getFrequencies()` 中无锁读取并拷贝 `freqs_`。此外，`SpectrumView::updateFromEngine()` 和 `getFrequencies()` 都以 `freqs_.size() == 512` 作为跳过条件——一旦首次填满 512 点，后续宿主切换采样率（`fMax = min(22100, sr * 0.5)` 改变）时 UI 永远不会更新频率轴。
+     - **`AbstractFifo::reset()` 竞争**：编辑器刚打开时（第 271-272 行），后台消费线程调用 `fifoPre_.reset(); fifoPost_.reset();`，而音频生产线程一直在无条件调用 `pushSamples()`。`juce::AbstractFifo::reset()` 在并发读写下非线程安全（消费侧应改用 `finishedRead(getNumReady())` 排空）。
+     - **静音衰减 `lastHeartbeatMs_` 漏更新 & 200Hz 无限发布风暴**：
+       - 第 302-303 行 `if (lastHeartbeatMs_ == 0) lastHeartbeatMs_ = nowMs;` 只在首帧赋值，后续每 5ms 唤醒一次都不更新 `lastHeartbeatMs_`，100ms 后 `dt` 恒被钳在 `0.1s`（衰减速度比预期快约 20 倍）。
+       - 当频谱衰减到底（`-99.5 dB`）后，第 245 行虽置 `starvedSinceMs_ = 0`，但 5ms 后下一轮循环第 292 行又因 `nowMs - lastDataMs_ >= kHoldMs` 把 `starvedSinceMs_` 重新置回非零，导致停止播放期间后台线程以 **200Hz 无限调用 `publishDecayFrame()` 并递增 `publishVersion_`**。
+       - 这直接导致 UI 线程 `DisplayView::timerCallback()` 每帧都收到 `spectrumHadNewFrame_ == true`，每帧重建 4 条 512 点 `juce::Path`，且 **Phase E-2 的空闲降频（60Hz → 4Hz）一旦播过一次音频就永久失效**。
+     - **Freeze（冻结）被静音衰减抹掉**：用户开启频谱 `Freeze` 后停止 DAW 播放观察频谱时，600ms 后进入 `publishDecayFrame()` 未检查 `frozen_.load()`，会把冻结的频谱直接拉回 `-100 dB`。
+
+---
+
+### 二、 P1 级：DSP 音频与延迟补偿（PDC）错误
+
+4. **过采样（2x / 4x）下向宿主上报的延迟（PDC）放大了 2 倍 / 4 倍**
+   - **位置**：`src/PluginProcessor.cpp:138-147`、`src/dsp/MultibandDSP.cpp:135-138`（以及测试 `tests/TestMain.cpp:9062`）
+   - **问题**：
+     - JUCE 的 `AudioProcessor::setLatencySamples()` 和 `preTapRing_` 均以**宿主 1× 采样率样本数**为单位。
+     - 在过采样下，`crossover_`（Linear Phase FIR）和 `laBuf_`（Lookahead）运行在 `procRate_ = sampleRate_ * osFactor` 下：FIR 的 `3072` 个过采样样本对应宿主 **1× 采样率下的 `3072 / osFactor` 个样本**；3ms Lookahead 在 `procRate_` 下是 `576` 个过采样样本，但在宿主 1× 采样率下仍然是 **3ms = `144` 个样本**。
+     - 然而 `updateLatency()` 把 `dsp_.getCrossoverLatencySamples()`（`procRate_` 样本数）和乘了 `osFactor` 的 `laSamples`（`procRate_` 样本数）直接与 1× 单位的 `getOversamplingLatencySamples()` 相加并传给 `setLatencySamples(lat)`。
+     - 结果：开启 2x/4x 过采样时，只要开了 Lookahead 或 Linear Phase，**DAW 的延迟补偿（PDC）和频谱 `preTapLatency_` 都会错上 2~4 倍**（而且 Linear Phase 在 4x 过采样下仍用固定 2048/4096/8192 点 FFT，频率分辨率降低了 4 倍）。
+     - 同时 `preTapLatency_` 是普通 `int`（`PluginProcessor.h:169`），在消息线程写、音频线程逐样本读，应改为 `std::atomic<int>`。
+
+5. **`FirFilter`（Linear Phase 分频器）在 `numSamples != maxBlockSize` 或变长块下延迟漂移与 FIFO 欠载爆音**
+   - **位置**：`src/dsp/LinearPhaseCrossover.h:116-123, 140-147, 168-231`
+   - **问题**：
+     - `FirFilter` 没有在 `reset()` 时向 `outFifo_` 预填 `blockSize_` 个零样本，而是让 `outFifo_` 初始为空，并在末尾串联了一个长度为 `callSize_ = maxBlockSize` 的固定延迟环 `dly_`。
+     - 当宿主的实际 `numSamples`（记为 $s$）小于 `prepareToPlay` 的 `maxBlockSize` 时（几乎所有 DAW 的常态），首次触发 FFT 前输出的零样本数是 $B - (B \bmod s)$，加上 `dly_` 的 `maxBlockSize`，真实延迟变成 $(B - s) + \text{maxBlockSize} + D \neq B + D$，与上报的 `getLatencySamples() = B + D` 不一致。
+     - 更严重的是：在 FL Studio 等**变长块**宿主中，当累计输入样本数满足 $(N_{\text{total}} \bmod B) > T_{\text{initial\_zeros}}$ 时，`outFifo_` 会发生**欠载（`have < numSamples`）**，在音频流中插入零样本（产生爆音/断音）并使后续延迟发生永久性漂移。
+     - **根因提示**：如果在 `reset()` 中直接向 `outFifo_` 预推入 `blockSize_` 个 `0.0f` 并去掉 `dly_`，则对任意变长块序列，`outFifo_` 剩余水位恒为 $B - (N_{\text{total}} \bmod B) \in [1, B]$，永远不会欠载，且真实延迟恒精确等于 $B + D$。
+
+6. **全局 `Mix`（`globalMix != 100%`）与 `Monitor = Input` 未对齐分频器相位与延迟（产生强烈梳状滤波/回声）**
+   - **位置**：`src/dsp/MultibandDSP.cpp:378-380, 524-534, 577-580`
+   - **问题**：
+     - 每段内部的 `band{i}Mix` 混合的是分频后、Lookahead 延迟后的同相信号 `bandStore_`，因此无相位抵消。
+     - 但全局 `globalMix`（0–200%）混合的干声参考 `dryStore_` 取自分频前、Lookahead 前的原始输入：
+       - 在 **Linear Phase**（1536~6144 样本延迟）或 **Lookahead**（1ms/3ms）下，`wet` 比 `dryRef` 晚几毫秒到上百毫秒，`globalMix != 100%` 会变成明显的梳状滤波（Comb Filtering）或延迟回声；且当 `globalMix = 0%` 或 `Monitor = Input` 时，实际输出延迟变为 0，但宿主仍按 Linear Phase + Lookahead 做 PDC 提前补偿，导致音轨整体抢拍。
+       - 在 **Natural / Minimal 24/48 dB/oct（LR4/LR8）** 下，`wet` 经过了各级 Linkwitz-Riley 全通相移，而 `dryRef` 是零相移，两者混合会在三个分频点附近产生深相位抵消凹坑（如果用 $\sum \text{bandStore\_}[b]$ 作为干声参考，则天然包含相同的分频相移与 Lookahead 延迟）。
+
+7. **`BandCompressor` 在向上压缩（`Range > 0`）或扩展（`Expand`）模式下 Attack 与 Release 时间常数反置，且非完全立体声链接时忽略右声道表头**
+   - **位置**：`src/dsp/BandCompressor.cpp:181, 189`、`src/dsp/BandCompressor.h:43-45`
+   - **问题**：
+     - 平滑系数选择写成 `(targetL < smoothedGainDb_) ? attackCoeff_ : releaseCoeff_`。当增益为正值（`Range > 0` 向上压缩抬升，或 `Range < 0` + `Expand` 阈值以上抬升，`targetL > 0`）时，触发增益抬升的方向是 `targetL > smoothedGainDb_`，此时误用了 `releaseCoeff_`，而恢复到 0 dB 时反而用了 `attackCoeff_`（Attack / Release 完全颠倒）。
+     - 当 `StereoLink < 100%` 时，`getSmoothedGainDb()` 和 `getLastDetectorDb()` 只返回左声道（`smoothedGainDb_` / `lastDetectorDb_`），纯右声道信号在 UI 动态曲线、频段圆环电平表及 API `getBandGainReduction()` 中完全无反应。
+
+8. **`LoudnessMeter`（Auto-Gain）双声道共用同一套单通道 IIR 状态 + `windowSec_` 死代码 + 关闭瞬间增益跳变**
+   - **位置**：`src/dsp/LoudnessMeter.h:68-70`、`src/dsp/LoudnessMeter.cpp:79-115`、`src/dsp/MultibandDSP.cpp:54-55, 224-229, 344-352, 539-555`
+   - **问题**：
+     - `LoudnessMeter` 只有一份单声道 `shelf_` 和 `hpf_` 状态，但 `MultibandDSP` 在立体声下先循环跑完左声道 `n` 个样本，再把右声道 `n` 个样本喂进同一个滤波器状态，每个块边界切换声道都会产生滤波器阶跃瞬态。
+     - `setWindowSec(0.400)` 设置的 `windowSec_` 在 `LoudnessMeter.cpp` 中**从未被使用**，实际窗口固定为 `kWindowBlocks = 64` 个块（随宿主缓冲区大小在几十毫秒到数秒之间漂移）。
+     - `MultibandDSP::updateScalars` 中关闭 Auto-Gain 时注释写“把补偿量平滑归零”，但代码直接 `autoGainEnabled_ = false; autoGainDb_ = 0.0f;`，在补偿量较大时会产生块边界电平跳变（click）。
+
+9. **单声道主总线 + 立体声侧链（或 `mainIn` 禁用）时的通道数计算错误**
+   - **位置**：`src/PluginProcessor.cpp:95, 336-401`
+   - **问题**：
+     - `safeCh = juce::jmin (2, buffer.getNumChannels())` 使用了包含侧链在内的总通道数，而非主总线通道数。当主输入/主输出为 Mono（1 通道）且侧链为 Stereo（2 通道）时（`isBusesLayoutSupported` 允许该布局），`buffer.getNumChannels() == 3` → `safeCh == 2`，导致 `processBlock` 把 `buffer` 的第 1 通道（即**侧链左声道**）当成主输出右声道处理并混入频谱抽头。
+     - 当 `mainIn.isDisabled()` 且 `mainOut` 为 Stereo 时（FL Studio 未接线槽位），`processBlock` 未清零输出缓冲就直接返回或把输出缓冲中的残留数据当输入处理。
+     - 另外 `prepareToPlay()`（第 63-64 行与第 82-83 行）重复调用了两次 `applyStructure(); updateLatency();`。
+
+10. **电平历史环形计数器 `historyCounter_` 每 4096 块回绕归 1，导致历史数据每 ~5 秒被清空一次**
+    - **位置**：`src/PluginProcessor.cpp:173-213`
+    - **问题**：
+      - `pushHistoryPoint()` 中 `idx = historyCounter_.load() % 4096`，然后执行了 `historyCounter_.store(idx + 1 > 4096 ? ... : idx + 1)`。
+      - 当 `historyCounter_` 到达 `4096` 时，`idx = 4096 % 4096 = 0`，随后存入 `historyCounter_` 的值是 `idx + 1 = 1`（而不是单调递增的 `cnt + 1 = 4097`）。
+      - 结果 `readHistoryPoints()` 中的 `avail = jmin(4096u, cnt)` 在第 4097 块瞬间从 `4096` 跌回 `1`，整条历史缓冲每 4096 块就丢失全部历史。
+
+---
+
+### 三、 P2 级：UI 交互、宿主自动化、API Facade 与构建问题
+
+11. **绝大多数旋钮、滑杆与画布拖拽缺失 `beginChangeGesture()` / `endChangeGesture()`（影响宿主 Touch/Latch 自动化录制与撤销）**
+    - **位置**：`src/ui/BandPopover.cpp:290-316, 367-388`、`src/ui/LinkedDrawer.cpp:158-180`、`src/ui/DisplayView.cpp:2930-3250`
+    - **问题**：目前全项目只有 `OutputPanel` 的 3 个旋钮和 `BandPopover` 的 `scLow_`/`scHigh_` 接了 `beginChangeGesture/endChangeGesture`。`BandPopover` 的 6 个主旋钮、Ratio/Knee 滑杆、`LinkedDrawer` 的 6 个联动旋钮，以及 `DisplayView` 画布上的分频线拖动、频点拖动、曲线 Makeup 拖动、Range 边沿拖动、Alt+OUT 拖动均未发送手势起止通知，在宿主 Touch / Latch 自动化模式下会出现无法写入或松手前被宿主旧自动化曲线抢回的问题。
+
+12. **`DisplayView::syncUiFromParams()` 中的 `break` 导致同一帧内多参数变更时 Popover 漏同步**
+    - **位置**：`src/ui/DisplayView.cpp:401-404`
+    - **问题**：
+      ```cpp
+      for (const auto& id : pendingParamIds_)
+          if (bandPopover_->syncParam (id))
+              break;
+      ```
+      `BandPopover::syncParam(id)` 只刷新 `id` 对应的**单个**控件就返回 `true`，但外层循环一看到 `true` 就直接 `break` 并清空 `pendingParamIds_`。当同一帧（16ms）内有多个参数同时变化（例如多车道自动化或联动控制）时，排在第一个之后的所有本段参数都不会更新到 `BandPopover` 上。
+
+13. **`LinkedDrawer` 首次打开时的主题色漏同步与 MIX 旋钮提前返回问题**
+    - **位置**：`src/ui/LinkedDrawer.cpp:147-181, 198-204, 231-240`
+    - **问题**：
+      - `LinkedDrawer::ensureKnobs()` 在首次打开抽屉时懒创建 6 个 `Knob`，但没有调用 `kb->setPalette(pal_)`。若用户在首次打开 `LINKED CONTROL` 之前先切到了 `Cream` 或 `Red` 主题，点开抽屉时 6 个旋钮仍会以默认的深色 `Blue` 主题渲染。
+      - `LinkedDrawer::applyOffset()` 处理 `MIX`（`k == 4`）时只比较 `newValue` 与 `band0Mix`（`if (std::abs(newValue - old) < 1e-9) return;`）。若 `band0Mix` 已经是 `100%` 而 `band1..3Mix` 是 `50%`，把联动 MIX 设为 `100%` 会直接提前返回，无法把其余频段同步到 `100%`。
+
+14. **`ValueField`（Expert 侧链频率输入框）输入非法文本后失焦会卡死在编辑框状态**
+    - **位置**：`src/ui/ValueField.h:19, 86-91`
+    - **问题**：`editor_.onFocusLost` 调用 `finishEdit(true)`；当用户输入非法文本后点击别处失焦时，`applyText()` 返回 `false`，`finishEdit(true)` 将边框设为红色后直接 `return`，既未恢复原值隐藏 `editor_`，也未将 `editing_` 置回 `false`，导致失去焦点的 `TextEditor` 残留遮挡在数值框上。
+
+15. **设置菜单中的 `MIDI Learn` 覆盖层仍使用旧版（重绘前）硬编码坐标，且 ±30 dB 档位下网格线过密**
+    - **位置**：`src/ui/DisplayView.cpp:478-487, 2002-2111, 2445-2505`
+    - **问题**：
+      - 顶栏右上角主题菜单第 4 项 `MIDI Learn: Off/On` 打开后，`drawMidiLearnOverlay()` 和 `midiControlId()` 仍按旧版 920×620 布局绘制和命中（例如把 `LINKED CONTROL` 高亮框画在底栏中央梯形位置、把 S/M/B/Δ 画成竖排、分频手柄画在底部），与当前 `EditorLayout` 完全错位。
+      - `drawGrid()` 第 478 行注释写“步长同右轴刻度：±6→1dB、±12→2dB、±30→10dB”，但代码写死了 `steps = floor(curveRangeDisplay_ / 1.0f)`，在 `±30 dB` 量程下会画出 61 条间距仅几像素的横线。
+      - Auto 量程模式（`DisplayView.cpp:1245`）写成了 `target = jmax(curveRangeDb_, autoTarget)`（只升不降），一旦任何参数曾让曲线超过 12 dB，量程就会永久锁在 `±30 dB`，除非手动切档。
+
+16. **`MBBackend` 状态加载与版本/旁通接口细节不一致 + `CMakeLists.txt` 外部字体路径强依赖**
+    - **位置**：`src/api/MBBackend.cpp:13, 220-226, 283-291`、`CMakeLists.txt:13, 146`
+    - **问题**：
+      - `MBBackend::loadState()` 调用 `apvts.replaceState(state)` 后未调用 `applyStructure()`、`updateLatency()` 和置位 `uiWakeFlag_`（`PluginProcessor::setStateInformation` 已修此问题，但 `MBBackend::loadState` 漏修）。
+      - `MBBackend.cpp:13` 中 `kPluginVersion` 硬编码为 `"1.0.0"`，与工程版本 `"1.0.4"` 不一致。
+      - `CrunchMBAudioProcessor` 未重写 `getBypassParameter()`，宿主自带的 VST3 Bypass 按钮与插件顶栏 Power（`enabled`）按钮未双向绑定；同时 `_review/UI_CONTROLS_AND_FONT_AUDIT_2026-10-22.md` 中提到的 `Monitor = Gain Reduction` 直接将直流/控制包络 `clamp((1 - gAvg) * 0.1)` 当音频输出（会产生稳态 DC 偏置）也仍在代码中。
+      - `CMakeLists.txt:13` 的 `FONT_DIR` 未加 `if(NOT DEFINED FONT_DIR)` 守卫，强依赖工作区外存在同级目录 `../260916 Crunch Compressor/src/ui/Fonts`。
+
+---
+
+以上筛查均只读完成，未修改任何文件。你想先从哪一类问题开始处理（比如先修 **P0/P1 的 DSP 与过采样/线性相位/跨线程安全问题**，还是先修 **UI 与自动化细节**）？

@@ -177,17 +177,28 @@ void BandCompressor::processGain (float left, float right, float& gainL, float& 
     //       link 更低时保留原有独立行为（用户明确要左右分离）。
     const bool fullyLinked = stereoLink_ >= 0.999f;
 
+    // 修复 LOGIC-01：偏离 0 dB（无论向下衰减 target<0 还是向上抬升/扩展 target>0）
+    // 均使用 attackCoeff_；回归 0 dB 时使用 releaseCoeff_。
+    const auto pickCoeff = [this] (float targetDb, float curDb) noexcept -> float
+    {
+        if (targetDb < 0.0f)
+            return (targetDb < curDb) ? attackCoeff_ : releaseCoeff_;
+        if (targetDb > 0.0f)
+            return (targetDb > curDb) ? attackCoeff_ : releaseCoeff_;
+        return releaseCoeff_;
+    };
+
     if (fullyLinked)
     {
-        const float coeff = (targetL < smoothedGainDb_) ? attackCoeff_ : releaseCoeff_;
+        const float coeff = pickCoeff (targetL, smoothedGainDb_);
         smoothedGainDb_  += (targetL - smoothedGainDb_)  * (1.0f - coeff);
         smoothedGainDbR_  = smoothedGainDb_;      // 强制镜像一致
     }
     else
     {
-        // dB 域单极点平滑：目标更压缩时 attack，否则 release（63%@tau）
-        const float coeffL = (targetL < smoothedGainDb_)  ? attackCoeff_ : releaseCoeff_;
-        const float coeffR = (targetR < smoothedGainDbR_) ? attackCoeff_ : releaseCoeff_;
+        // dB 域单极点平滑：向目标动作方向偏移时 attack，向 0 dB 恢复时 release（63%@tau）
+        const float coeffL = pickCoeff (targetL, smoothedGainDb_);
+        const float coeffR = pickCoeff (targetR, smoothedGainDbR_);
         smoothedGainDb_  += (targetL - smoothedGainDb_)  * (1.0f - coeffL);
         smoothedGainDbR_ += (targetR - smoothedGainDbR_) * (1.0f - coeffR);
     }

@@ -56,15 +56,10 @@ CrunchMBAudioProcessor::~CrunchMBAudioProcessor()
 void CrunchMBAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     sampleRate_ = sampleRate > 8000.0 ? sampleRate : 48000.0;
-    dsp_.prepare (sampleRate_, samplesPerBlock, 2);
-
-    // R31 修复：宿主切工程采样率/缓冲区时只调 prepareToPlay，**不调**
-    // setStateInformation。此前结构与延迟只在 applyStructure() 里重应用，
-    // 于是切采样率后 dsp_ 的分频器/过采样器还按旧采样率跑、延迟上报
-    // 停留在旧值（实测切到 96k 后再切回，getLatencySamples() 返回 0）。
-    // 这里显式补一次：按当前参数重建结构并刷新延迟上报。
-    applyStructure();
-    updateLatency();
+    {
+        const juce::SpinLock::ScopedLockType sl (dspLock_);
+        dsp_.prepare (sampleRate_, samplesPerBlock, 2);
+    }
 
     // ---- Phase 4.1 频谱引擎 ----
     // ⚠️ 不要在这里 setUIActive(false)：宿主每次开始播放/切设备都会调 prepareToPlay，
@@ -72,23 +67,24 @@ void CrunchMBAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // 编辑器开关状态由 setEditorActive() 单独管理，prepareToPlay 不碰它。
     spectrumEngine_.setSampleRate (sampleRate_);
 
-    // pre 抽头延迟环：容量 = 最大分频延迟(6144) + 最大 lookahead(3ms @ 4× = 576)
-    //   + 过采样滤波器延迟余量(256) + 块余量。2026-10-14：块容量下限取 4096——
-    //   宿主偶发超大块（>prepare 时的 samplesPerBlock）时不会让频谱/电平表静默假死。
+    // pre 抽头延迟环：容量 = 最大分频延迟(6144) + 最大 lookahead(3ms @ 1x)
+    //   + 过采样滤波器延迟余量(256) + 块余量。
     const int laMax = (int) std::ceil (0.003 * sampleRate_ * 4.0);
     const int ringSize = 6144 + laMax + 256 + juce::jmax (samplesPerBlock, 4096);
     preTapRing_.assign ((size_t) ringSize, 0.0f);
     preTapPos_ = 0;
-    preTapLatency_ = 0;
+    preTapLatency_.store (0, std::memory_order_relaxed);
     monoPre_.assign ((size_t) juce::jmax (4096, samplesPerBlock), 0.0f);
     monoPost_.assign ((size_t) juce::jmax (4096, samplesPerBlock), 0.0f);
 
+    // R31 & MISC-03 修复：只在此处调用一次 applyStructure() + updateLatency()（消除原重复调用）
     applyStructure();
     updateLatency();
 }
 
 void CrunchMBAudioProcessor::releaseResources()
 {
+    const juce::SpinLock::ScopedLockType sl (dspLock_);
     dsp_.reset();
 }
 
@@ -130,27 +126,34 @@ void CrunchMBAudioProcessor::applyStructure()
     sp.quality = (Param::LinearQuality) choiceIndex (apvts.getRawParameterValue (Param::ID::linearQuality));
     sp.oversampling = Param::oversamplingIndexToFactor (
         choiceIndex (apvts.getRawParameterValue (Param::ID::oversampling)));   // 2026-10-14
+
+    const juce::SpinLock::ScopedLockType sl (dspLock_);
     dsp_.setStructure (sp);
 }
 
 void CrunchMBAudioProcessor::updateLatency() noexcept
 {
-    // 延迟 = 分频延迟 + lookahead + 过采样。lookahead 部分必须从参数直接算：
-    // dsp_ 的 laSamples_ 是音频线程状态（updateScalars 写入），切换瞬间
-    // 消息线程可能读到旧值——2026-09-23 用户实测"切 1ms/3ms 延迟不变"即此因。
-    // 2026-10-14：lookahead 与过采样延迟都按 procRate_ = sampleRate_ × factor 换算。
-    const int osFactor = dsp_.getOversamplingFactor();
-    const int laSamples = (int) std::lround (
+    // 修复 BUG-02：setLatencySamples() 与 preTapRing_ 均以 **1× 宿主采样率样本数** 为单位。
+    // dsp_.getCrossoverLatencySamples() 与 getOversamplingLatencySamples() 均已返回 1× 样本数，
+    // lookahead 同样按 1× sampleRate_ 计算（不可再乘 osFactor）。
+    const int laSamples1x = (int) std::lround (
         Param::lookaheadIndexToMs (choiceIndex (apvts.getRawParameterValue (Param::ID::lookahead)))
-        * 0.001 * sampleRate_ * (double) osFactor);
-    const int lat = dsp_.getCrossoverLatencySamples() + juce::jmax (0, laSamples)
+        * 0.001 * sampleRate_);
+    const int lat = dsp_.getCrossoverLatencySamples() + juce::jmax (0, laSamples1x)
                   + dsp_.getOversamplingLatencySamples();
+    preTapLatency_.store (lat, std::memory_order_release);
     if (lat != lastLatency_)
     {
         setLatencySamples (lat);
         lastLatency_ = lat;
-        preTapLatency_ = lat;      // 频谱 pre 抽头对齐用（音频线程读）
     }
+}
+
+void CrunchMBAudioProcessor::reapplyStructureAndLatency()
+{
+    applyStructure();
+    updateLatency();
+    uiWakeFlag_.store (true, std::memory_order_release);
 }
 
 MBBackend& CrunchMBAudioProcessor::getBackend()
@@ -182,15 +185,12 @@ void CrunchMBAudioProcessor::setParamPhysicalForTest (const juce::String& id, fl
 // ---------------- Phase：电平历史环形缓冲 ----------------
 void CrunchMBAudioProcessor::pushHistoryPoint (float inputDb, float outputDb) noexcept
 {
-    const unsigned idx = historyCounter_.load (std::memory_order_relaxed)
-                       % (unsigned) kHistoryCapacity;
+    const unsigned cnt = historyCounter_.load (std::memory_order_relaxed);
+    const unsigned idx = cnt % (unsigned) kHistoryCapacity;
     historyIn_[(size_t) idx].store (inputDb,  std::memory_order_relaxed);
     historyOut_[(size_t) idx].store (outputDb, std::memory_order_relaxed);
-    // release：保证上面的数据写入先于 counter 递增，对读侧可见
-    historyCounter_.store (idx + 1 > (unsigned) kHistoryCapacity
-                                   ? idx + 1 - (unsigned) kHistoryCapacity
-                                   : idx + 1,
-                           std::memory_order_release);
+    // 修复 P1-10：historyCounter_ 保持单调递增（仅写槽位时取模），避免每 4096 块回绕归 1 清空历史
+    historyCounter_.store (cnt + 1u, std::memory_order_release);
 }
 
 void CrunchMBAudioProcessor::readHistoryPoints (int points, std::vector<float>& inputDb,
@@ -321,10 +321,17 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const int mainInCh    = getMainBusNumInputChannels();
     const int mainOutCh   = getMainBusNumOutputChannels();
 
+    // FL Studio 等宿主在未接线槽位可能禁用 mainIn：此时直接清零输出缓冲返回
+    if (mainInCh <= 0 || buffer.getNumChannels() <= 0 || numSamples <= 0)
+    {
+        buffer.clear();
+        return;
+    }
+
     // ---- Enabled 旁通（TECH_SPEC §5.1）：关时直通主进→主出 ----
     if (! boolParam (apvts.getRawParameterValue (Param::ID::enabled)))
     {
-        if (mainInCh == 1 && mainOutCh == 2)                    // 单声道进 → 双通同源
+        if (mainInCh == 1 && mainOutCh == 2 && buffer.getNumChannels() >= 2)   // 单声道进 → 双通同源
             juce::FloatVectorOperations::copy (buffer.getWritePointer (1),
                                                buffer.getReadPointer (0), numSamples);
         for (int ch = juce::jmax (mainInCh, mainOutCh); ch < buffer.getNumChannels(); ++ch)
@@ -332,19 +339,17 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         return;
     }
 
-    // ---- Phase 4.1：采集 pre 抽头（单声道，经延迟环对齐 post） ----
-    // 2026-10-14：块大于抽头缓冲时按容量截断（而非整块跳过）——此前超大块会让
-    // 频谱与电平表静默冻结。截断只影响显示精度，不影响音频输出。
-    // R31 修复：宿主（或 setPlayConfigDetails）报告的 mainInCh 可能与 buffer
-    // 实际通道数不一致——实测 mono 场景 mainInCh=2 而 buffer 只有 1 通道，
-    // 于是下方 chans>1 分支调 buffer.getSample(1,i) 越界 → 0xC0000005。
-    // 这里以 **buffer 实际通道数**为准收敛 safeCh，两个抽头循环同理。
-    const int safeCh = juce::jmin (2, buffer.getNumChannels());
+    // 修复 P0-4：使用主总线通道数（而非包含侧链的 buffer.getNumChannels()）收敛 safeCh，
+    // 防止 Mono 主总线 + Stereo 侧链（总 3 通道）时把侧链左声道（ch 1）误当主输出右声道处理。
+    const int mainBusCh = juce::jmax (mainInCh, mainOutCh);
+    const int safeCh    = juce::jlimit (1, 2, juce::jmin (mainBusCh, buffer.getNumChannels()));
+    if (mainInCh == 1 && safeCh == 2)
+        juce::FloatVectorOperations::copy (buffer.getWritePointer (1),
+                                           buffer.getReadPointer (0), numSamples);
+
     const int tapN = juce::jmin (numSamples, (int) monoPre_.size());
 
     // ---- 侧链总线（输入 bus 1；禁用/无信号时 fallback INT） ----
-    // ⚠️ 2026-09-23 修复：此前误用 getBusCount(false)/getBus(false,1)（输出总线），
-    // 侧链输入永远取不到 → EXT 恒 fallback INT。
     const float* scPtr[2] = { nullptr, nullptr };
     int scCh = 0;
     if (getBusCount (true) > 1)
@@ -363,9 +368,12 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // ---- Phase 4.1：采集 pre 抽头（单声道，经延迟环对齐 post） ----
-    if (tapN > 0)
+    if (tapN > 0 && ! preTapRing_.empty())
     {
-        const int chans = safeCh;   // R31：以 buffer 实际通道数为准
+        const int chans = safeCh;
+        const int ringCap = (int) preTapRing_.size();
+        const int tapLat  = juce::jlimit (0, ringCap - 1,
+                                          preTapLatency_.load (std::memory_order_acquire));
         for (int i = 0; i < tapN; ++i)
         {
             const float m = chans > 1
@@ -373,36 +381,35 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
                 : buffer.getSample (0, i);
             // 写入延迟环，读出 L 样本前的值 → pre/post 两层时间对齐
             preTapRing_[(size_t) preTapPos_] = m;
-            int rp = preTapPos_ - preTapLatency_;
-            if (rp < 0) rp += (int) preTapRing_.size();
+            int rp = preTapPos_ - tapLat;
+            if (rp < 0) rp += ringCap;
             monoPre_[(size_t) i] = preTapRing_[(size_t) rp];
-            if (++preTapPos_ >= (int) preTapRing_.size()) preTapPos_ = 0;
+            if (++preTapPos_ >= ringCap) preTapPos_ = 0;
         }
     }
 
     // ---- 主通道（单声道输入 → 双通同源）----
-    // R31：以 buffer 实际通道数为准。宿主报的 mainInCh 可能与 buffer 不一致
-    //   （实测 mainInCh=2 而 buffer 只有 1 通道 → getWritePointer(1) 越界）。
     float* chPtr[2] = { nullptr, nullptr };
     chPtr[0] = buffer.getWritePointer (0);
     chPtr[1] = safeCh > 1 ? buffer.getWritePointer (1) : buffer.getWritePointer (0);
 
     // ---- 标量参数（APVTS 原子读，TECH_SPEC §4.2）→ DSP ----
-    // ⚠️ 2026-09-23 修复：此前只 readScalars 而未 updateScalars，导致全部
-    // 标量参数（阈值/比率/Mix/监听门/侧链 EXT/前瞻/输入输出增益）不生效。
     MultibandDSP::ScalarParams sp;
     readScalars (sp);
-    dsp_.updateScalars (sp);
-    dsp_.process (chPtr, numSamples, scCh > 0 ? scPtr : nullptr, scCh, safeCh);
+    {
+        const juce::SpinLock::ScopedLockType sl (dspLock_);
+        dsp_.updateScalars (sp);
+        dsp_.process (chPtr, numSamples, scCh > 0 ? scPtr : nullptr, scCh, safeCh);
+    }
 
     // ---- 清理非主通道残留（输入侧多余通道，防陈旧数据） ----
-    for (int ch = juce::jmax (mainInCh, mainOutCh); ch < buffer.getNumChannels(); ++ch)
+    for (int ch = safeCh; ch < buffer.getNumChannels(); ++ch)
         buffer.clear (ch, 0, numSamples);
 
     // ---- Phase 4.1：采集 post 抽头并推送频谱/电平 ----
     if (tapN > 0)
     {
-        const int chans = safeCh;   // R31：以 buffer 实际通道数为准
+        const int chans = safeCh;
         for (int i = 0; i < tapN; ++i)
             monoPost_[(size_t) i] = chans > 1
                 ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))
@@ -448,17 +455,7 @@ void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBy
 
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
 
-            // Phase（R14 修复）：replaceState 直接改 ValueTree，**不经过**
-            // setValueNotifyingHost → parameterChanged 监听器不触发。
-            // 若载入的会话改了 oversampling/lookahead/phaseMode 等结构参数，
-            // 分频器与延迟上报会停留在旧值——宿主按旧延迟补偿 → 输出时间错位。
-            // 这里显式补一次结构重应用与延迟更新（消息线程安全）。
-            applyStructure();
-            updateLatency();
-
-            // R35（N14）：载入后旧的 displayRangeMode_ 之类缓存也可能失效，
-            // 用一次全量 UI 唤醒让 DisplayView 去拉最新的设置。
-            uiWakeFlag_.store (true, std::memory_order_release);
+            reapplyStructureAndLatency();
         }
 }
 

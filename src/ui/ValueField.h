@@ -15,9 +15,9 @@ public:
         addChildComponent(editor_);
         editor_.setMultiLine(false);
         editor_.setJustification(juce::Justification::centred);
-        editor_.onReturnKey = [this] { finishEdit(true); };
-        editor_.onEscapeKey = [this] { finishEdit(false); };
-        editor_.onFocusLost = [this] { if(editing_) finishEdit(true); };
+        editor_.onReturnKey = [this] { finishEdit(true, false); };
+        editor_.onEscapeKey = [this] { finishEdit(false, true); };
+        editor_.onFocusLost = [this] { if(editing_) finishEdit(true, true); };
     }
     void configure(juce::String label, juce::String unit, double low, double high, int decimals, bool logarithmic=false)
     { label_=label; unit_=unit; low_=low; high_=high; decimals_=decimals; logarithmic_=logarithmic; }
@@ -84,10 +84,18 @@ private:
     juce::Rectangle<float> valueRect() const { auto r=getLocalBounds().toFloat();return r.withTrimmedLeft(r.getWidth()*.50f).reduced(0,2*scale_); }
     void commit(double value) { setValue(value);if(onValueChange)onValueChange(value_); }
     void endGesture(){if(gesture_&&onDragEnd)onDragEnd();gesture_=false;}
-    void finishEdit(bool apply)
+    void finishEdit(bool apply, bool closeOnInvalid = true)
     {
         if(!editing_)return;
-        if(apply&&!applyText(editor_.getText())){editor_.setColour(juce::TextEditor::outlineColourId,juce::Colours::red);return;}
+        if(apply&&!applyText(editor_.getText()))
+        {
+            if(!closeOnInvalid)
+            {
+                editor_.setColour(juce::TextEditor::outlineColourId,juce::Colours::red);
+                return;
+            }
+        }
+        editor_.setColour(juce::TextEditor::outlineColourId,juce::Colours::transparentBlack);
         editing_=false;editor_.setVisible(false);repaint();
     }
     MBTheme::Palette pal_=MBTheme::palette(MBTheme::Theme::Blue);

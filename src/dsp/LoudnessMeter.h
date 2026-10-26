@@ -26,10 +26,13 @@ public:
     void prepare (double sampleRate);
     void reset() noexcept;
 
-    /** 音频线程：就地 K 加权并累加均方（单通道）。 */
+    /** 音频线程：按独立通道状态做 K 加权并累加均方（避免 L/R 串用单声道滤波器状态）。 */
+    void processSample (int channel, float x) noexcept;
+
+    /** 兼容旧单通道签名（走通道 0）。 */
     void processSample (float& x) noexcept;
 
-    /** 一个块处理完后调用：把累积的均方推进滑动窗，返回本块均方。 */
+    /** 一个块处理完后调用：把累积的均方按 windowSec_ 时间窗推进滑动窗。 */
     void endBlock (int numSamples) noexcept;
 
     /** K 加权响度（dB LUFS 近似）。UI 线程可读。 */
@@ -66,14 +69,17 @@ private:
 
     double sampleRate_ = 48000.0;
     double windowSec_  = 0.400;
-    Biquad shelf_, hpf_;
+    int    numActiveCh_ = 1;
+    std::array<Biquad, 2> shelf_, hpf_;
 
-    // 块内累加（音频线程私有）
+    // 块内与 ~5ms 桶累加（音频线程私有）
     double sumSq_ = 0.0;
     int    count_ = 0;
+    double bucketSq_ = 0.0;
+    int    bucketSamples_ = 0;
 
-    // 滑动窗：固定容量环形（音频线程写，UI 线程只读聚合结果）
-    static constexpr int kWindowBlocks = 64;
+    // 滑动窗：固定容量环形（每桶至少 ~5ms，256 桶可覆盖 >1.2s 任意变长/1样本块）
+    static constexpr int kWindowBlocks = 256;
     std::array<double, kWindowBlocks> blockMs_ {};
     std::array<int,    kWindowBlocks> blockN_  {};
     int wPos_ = 0;

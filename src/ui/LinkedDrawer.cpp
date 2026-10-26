@@ -162,18 +162,30 @@ void LinkedDrawer::ensureKnobs()
         kb->setDecimals (cfgs[k].dec);
         kb->setKnobDiameter (52.0f);
         kb->setShowLabel (true);
+        kb->setPalette (pal_);                           // 修复 P2-13：首次创建即同步当前主题调色板
         kb->setLinkedMark (false);                       // §5.2：⊞ 联动标识
         if (k != kLinkedMixIndex)
         {
             kb->setValuePrefix (juce::String::fromUTF8 ("\xCE\x94 "));   // §5.2：偏移读数带 Δ
-            // R36（K6）：4 个偏移旋钮是**双极**量（0 = 不偏移），弧必须从 12 点钟
-            //   起画。此前 setBipolar 全仓库从未被调用，于是 Δ=0 也画成半圈——
-            //   看起来像"已经推了一半"，与"无偏移"的语义完全相反。
             kb->setBipolar (true);
             kb->setBipolarOrigin (0.0);
         }
         const int kk = k;
         kb->onValueChange = [this, kk] (double v) { applyOffset (kk, v); };
+        kb->onDragStart = [this, kk]
+        {
+            static const char* kSuffix[kLinkedKnobs] = { "Threshold", "Attack", "Release", "Makeup", "Mix", "Range" };
+            for (int b = 0; b < Param::kNumBands; ++b)
+                if (auto* p = proc_.apvts.getParameter ("band" + juce::String (b) + kSuffix[juce::jlimit (0, kLinkedKnobs - 1, kk)]))
+                    p->beginChangeGesture();
+        };
+        kb->onDragEnd = [this, kk]
+        {
+            static const char* kSuffix[kLinkedKnobs] = { "Threshold", "Attack", "Release", "Makeup", "Mix", "Range" };
+            for (int b = 0; b < Param::kNumBands; ++b)
+                if (auto* p = proc_.apvts.getParameter ("band" + juce::String (b) + kSuffix[juce::jlimit (0, kLinkedKnobs - 1, kk)]))
+                    p->endChangeGesture();
+        };
         addAndMakeVisible (kb);
         knobs_[(size_t) k].reset (kb);
     }
@@ -233,8 +245,11 @@ void LinkedDrawer::applyOffset (int k, double newValue)
     // ---- Mix（k=4）：**绝对值语义**（§5.2 v1.6 例外）——四段 Mix 同设为该值 ----
     if (k == kLinkedMixIndex)
     {
-        const double old = getParamPhysical ("band0Mix");
-        if (std::abs (newValue - old) < 1.0e-9)
+        bool anyDiff = false;
+        for (int b = 0; b < Param::kNumBands; ++b)
+            if (std::abs (newValue - (double) getParamPhysical ("band" + juce::String (b) + "Mix")) >= 1.0e-6)
+                anyDiff = true;
+        if (! anyDiff)
             return;
         for (int b = 0; b < Param::kNumBands; ++b)
             setParamPhysical ("band" + juce::String (b) + "Mix", (float) newValue);

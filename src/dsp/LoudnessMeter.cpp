@@ -16,10 +16,13 @@ void LoudnessMeter::prepare (double sampleRate)
 
 void LoudnessMeter::reset() noexcept
 {
-    shelf_.reset();
-    hpf_.reset();
+    for (auto& f : shelf_) f.reset();
+    for (auto& f : hpf_)   f.reset();
+    numActiveCh_ = 1;
     sumSq_ = 0.0;
     count_ = 0;
+    bucketSq_ = 0.0;
+    bucketSamples_ = 0;
     wPos_ = 0;
     wFill_ = 0;
     blockMs_.fill (0.0);
@@ -51,11 +54,14 @@ void LoudnessMeter::designFilters (double sampleRate) noexcept
         const double a2 =        (A + 1.0) - (A - 1.0) * cw - 2.0 * std::sqrt (A) * alpha;
 
         const double inv = 1.0 / a0;
-        shelf_.b0 = (float) (b0 * inv);
-        shelf_.b1 = (float) (b1 * inv);
-        shelf_.b2 = (float) (b2 * inv);
-        shelf_.a1 = (float) (a1 * inv);
-        shelf_.a2 = (float) (a2 * inv);
+        for (auto& s : shelf_)
+        {
+            s.b0 = (float) (b0 * inv);
+            s.b1 = (float) (b1 * inv);
+            s.b2 = (float) (b2 * inv);
+            s.a1 = (float) (a1 * inv);
+            s.a2 = (float) (a2 * inv);
+        }
     }
 
     // ---- 第二级：high-pass，RLB 权重（约 38 Hz @ 48k，Q = 0.5）----
@@ -74,18 +80,32 @@ void LoudnessMeter::designFilters (double sampleRate) noexcept
         const double a2 =   1.0 - alpha;
 
         const double inv = 1.0 / a0;
-        hpf_.b0 = (float) (b0 * inv);
-        hpf_.b1 = (float) (b1 * inv);
-        hpf_.b2 = (float) (b2 * inv);
-        hpf_.a1 = (float) (a1 * inv);
-        hpf_.a2 = (float) (a2 * inv);
+        for (auto& h : hpf_)
+        {
+            h.b0 = (float) (b0 * inv);
+            h.b1 = (float) (b1 * inv);
+            h.b2 = (float) (b2 * inv);
+            h.a1 = (float) (a1 * inv);
+            h.a2 = (float) (a2 * inv);
+        }
     }
+}
+
+void LoudnessMeter::processSample (int channel, float x) noexcept
+{
+    const size_t ch = (size_t) juce::jlimit (0, 1, channel);
+    if ((int) ch + 1 > numActiveCh_)
+        numActiveCh_ = (int) ch + 1;
+    float y = shelf_[ch].process (x);
+    y = hpf_[ch].process (y);
+    sumSq_ += (double) y * (double) y;
+    ++count_;
 }
 
 void LoudnessMeter::processSample (float& x) noexcept
 {
-    float y = shelf_.process (x);
-    y = hpf_.process (y);
+    float y = shelf_[0].process (x);
+    y = hpf_[0].process (y);
     x = y;
     sumSq_ += (double) y * (double) y;
     ++count_;
@@ -96,31 +116,47 @@ void LoudnessMeter::endBlock (int numSamples) noexcept
     if (numSamples <= 0)
         return;
 
-    // 本块均方（按本块样本数归一，与窗内其它块可比）
-    const double blockMs = (count_ > 0) ? (sumSq_ / (double) count_) : 0.0;
+    const int nSamples = (count_ > 0) ? count_ : numSamples;
+    bucketSq_      += sumSq_;
+    bucketSamples_ += nSamples;
+    sumSq_ = 0.0;
+    count_ = 0;
 
-    blockMs_[(size_t) wPos_] = blockMs;
-    blockN_[(size_t) wPos_]  = numSamples;
-    wPos_ = (wPos_ + 1) % kWindowBlocks;
-    if (wFill_ < kWindowBlocks) ++wFill_;
+    // 最小桶粒度约 5ms（乘活跃通道数），防止 FL Studio 极小块（如 1~16 样本）撑爆 256 桶环形窗
+    const int chScale = juce::jmax (1, numActiveCh_);
+    const int minBucket = juce::jmax (1, (int) std::lround (0.005 * sampleRate_)) * chScale;
+    const int targetSamples = juce::jmax (1, (int) std::lround (windowSec_ * sampleRate_)) * chScale;
 
-    // 窗内总均方 = Σ(块均方 × 块样本数) / Σ块样本数
-    double acc = 0.0;
-    int    nAcc = 0;
-    for (int i = 0; i < wFill_; ++i)
+    if (bucketSamples_ >= minBucket)
     {
-        acc  += blockMs_[(size_t) i] * (double) blockN_[(size_t) i];
-        nAcc += blockN_[(size_t) i];
+        blockMs_[(size_t) wPos_] = bucketSq_ / (double) bucketSamples_;
+        blockN_[(size_t) wPos_]  = bucketSamples_;
+        wPos_ = (wPos_ + 1) % kWindowBlocks;
+        if (wFill_ < kWindowBlocks) ++wFill_;
+        bucketSq_ = 0.0;
+        bucketSamples_ = 0;
+    }
+
+    // 从最新桶向前回溯累加，严格截取最近 windowSec_（默认 400ms）对应的样本数
+    double acc  = bucketSq_;
+    int    nAcc = bucketSamples_;
+    for (int step = 0; step < wFill_ && nAcc < targetSamples; ++step)
+    {
+        const int idx = (wPos_ - 1 - step + kWindowBlocks) % kWindowBlocks;
+        const int bn  = blockN_[(size_t) idx];
+        if (bn <= 0)
+            continue;
+        const int take = juce::jmin (bn, targetSamples - nAcc);
+        acc  += blockMs_[(size_t) idx] * (double) take;
+        nAcc += take;
     }
     const double meanSq = (nAcc > 0) ? (acc / (double) nAcc) : 0.0;
 
-    // BS.1770：L = -0.691 + 10·log10(meanSquare)（单声道近似）
+    // BS.1770：L = -0.691 + 10·log10(meanSquare)
     constexpr double kOffset = -0.691;
     const float db = (meanSq > 1.0e-20)
                    ? (float) (kOffset + 10.0 * std::log10 (meanSq))
                    : -100.0f;
     loudnessDb_.store (db, std::memory_order_relaxed);
-
-    sumSq_ = 0.0;
-    count_ = 0;
+    numActiveCh_ = 1;
 }

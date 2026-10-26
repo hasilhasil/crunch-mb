@@ -100,7 +100,8 @@ void SpectrumEngine::analyseTick()
         publishedSlot_.store (-1);      // 采样率变化后旧数据不得显示
         writeSlot_ = 0;
         uiSlot_    = -1;
-        freqs_.clear();
+        freqsValid_ = false;
+        decayResting_ = false;
         lastFrameMs_ = 0;
         return;
     }
@@ -121,7 +122,8 @@ void SpectrumEngine::analyseTick()
         publishedSlot_.store (-1);         // 旧分辨率数据不得显示
         writeSlot_ = 0;
         uiSlot_    = -1;
-        freqs_.clear();
+        freqsValid_ = false;
+        decayResting_ = false;
         lastFrameMs_ = 0;
         return;
     }
@@ -164,12 +166,15 @@ void SpectrumEngine::analyseTick()
     if (scratchPre_.size() != kDisplayPoints || scratchFreqs_.size() != kDisplayPoints)
         return;
 
-    if (freqs_.size() != (size_t) kDisplayPoints)
+    if (! freqsValid_)
     {
-        freqs_.clear();
-        freqs_.reserve ((size_t) kDisplayPoints);
-        for (int i = 0; i < kDisplayPoints; ++i)
-            freqs_.push_back (scratchFreqs_[(size_t) i]);
+        {
+            const juce::SpinLock::ScopedLockType sl (freqLock_);
+            for (int i = 0; i < kDisplayPoints; ++i)
+                freqs_[(size_t) i] = scratchFreqs_[(size_t) i];
+        }
+        freqsValid_ = true;
+        freqsVersion_.fetch_add (1, std::memory_order_release);
     }
 
     auto& slot = slots_[(size_t) writeSlot_];
@@ -179,6 +184,7 @@ void SpectrumEngine::analyseTick()
         slot.post[(size_t) i] = scratchPost_[(size_t) i];
     }
 
+    decayResting_ = false;
     publishedSlot_.store (writeSlot_, std::memory_order_release);
     publishVersion_.fetch_add (1, std::memory_order_release);
     advanceWriteSlot();
@@ -201,6 +207,9 @@ void SpectrumEngine::advanceWriteSlot() noexcept
 
 void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
 {
+    if (frozen_.load (std::memory_order_relaxed) || decayResting_)
+        return;
+
     // #8：把已发布的最后一帧按时间常数拉向 −100 dB（keep-hold 之后的下落）
     const int slot = publishedSlot_.load (std::memory_order_acquire);
     if (slot < 0)
@@ -208,13 +217,6 @@ void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
 
     const float k = (float) (1.0 - std::exp (-dtSec / juce::jmax (1.0e-4, tauSec)));
 
-    // Phase（线程竞争修复）：原来这里**原地修改 slots_[slot]**，而 UI 线程的
-    // getLatest() 正在读同一个 slot。三缓冲的前提是"只写未发布 slot"，
-    // 原地改已发布 slot 会：
-    //   ① 让 UI 读到撕裂帧（前半新、后半旧）
-    //   ② 版本号在写完后才递增，UI 可能在写中途读到旧版本号而判定"无更新"→丢帧
-    // 现改为 analyseTick 的同款模式：从已发布 slot 读旧值 → 写入 writeSlot_
-    // → 发布 → 轮转。写侧永不出现在 UI 正在读的 slot 里。
     const auto& src = slots_[(size_t) slot];
     auto& dst = slots_[(size_t) writeSlot_];
 
@@ -223,10 +225,17 @@ void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
     {
         const float np = src.pre[(size_t) i]  + (-100.0f - src.pre[(size_t) i])  * k;
         const float nq = src.post[(size_t) i] + (-100.0f - src.post[(size_t) i]) * k;
-        dst.pre[(size_t) i]  = np;
-        dst.post[(size_t) i] = nq;
         if (np > -99.5f || nq > -99.5f)
+        {
+            dst.pre[(size_t) i]  = np;
+            dst.post[(size_t) i] = nq;
             stillMoving = true;
+        }
+        else
+        {
+            dst.pre[(size_t) i]  = -100.0f;
+            dst.post[(size_t) i] = -100.0f;
+        }
     }
 
     publishedSlot_.store (writeSlot_, std::memory_order_release);
@@ -234,7 +243,12 @@ void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
     advanceWriteSlot();
 
     if (! stillMoving)
-        starvedSinceMs_ = 0;      // 已到底：恢复"保持"语义（等下一次音频再保持新帧）
+    {
+        // 已到底：进入休眠态，停止递增 publishVersion_，让 UI 空闲降频（60Hz → 4Hz）正常生效
+        decayResting_    = true;
+        starvedSinceMs_  = 0;
+        lastHeartbeatMs_ = 0;
+    }
 }
 
 void SpectrumEngine::run()
@@ -264,14 +278,16 @@ void SpectrumEngine::run()
 
         if (active && ! wasActive)
         {
-            // 编辑器刚打开。无人观看期间环形缓冲积了数秒前的音频，
-            // 喂给分析器会留下永久积压（产销平衡，再也排不空）。
-            // 从最新音频开始。
-            fifoPre_.reset();
-            fifoPost_.reset();
-            starvedSinceMs_ = 0;
-            lastDataMs_ = nowMs;
+            // 编辑器刚打开：消费侧线程安全排空环形缓冲（勿调 AbstractFifo::reset()，
+            // 因音频线程正在并发调用 pushSamples()）。
+            if (const int r = fifoPre_.getNumReady(); r > 0)
+                fifoPre_.finishedRead (r);
+            if (const int r = fifoPost_.getNumReady(); r > 0)
+                fifoPost_.finishedRead (r);
+            starvedSinceMs_  = 0;
+            lastDataMs_      = nowMs;
             lastHeartbeatMs_ = 0;
+            decayResting_    = false;
         }
 
         wasActive = active;
@@ -280,25 +296,32 @@ void SpectrumEngine::run()
             continue;   // 无编辑器：无需分析
 
         // #8：饥饿判定——ring 中的数据量在持续变化（音频线程在喂）
-        //     ⚠️ 不能用"fifo 短暂为空"判定：host 每个块之间 fifo 都会空一下，
-        //     那会误触发保持期 → 正常播放时频谱也停止刷新（2026-09-23 T18 回归）。
         const int ready = fifoPre_.getNumReady();
         if (ready != lastReadyCount_)
         {
             lastReadyCount_ = ready;
-            lastDataMs_ = nowMs;               // 数据在流动 → 重置计时
+            lastDataMs_     = nowMs;           // 数据在流动 → 重置计时
+            decayResting_   = false;
         }
         starvedSinceMs_ = (nowMs - lastDataMs_ >= (juce::uint32) kHoldMs)
                             ? lastDataMs_ + kHoldMs : 0;
         if (starvedSinceMs_ != 0 && publishedSlot_.load (std::memory_order_acquire) >= 0)
         {
-            // 已保持满 kHoldMs：按时间常数衰减最后一帧
+            // Freeze 开启或已衰减到底时不再发布衰减帧
+            if (frozen_.load (std::memory_order_relaxed) || decayResting_)
+            {
+                lastHeartbeatMs_ = 0;
+                continue;
+            }
+            if (lastHeartbeatMs_ != 0 && nowMs - lastHeartbeatMs_ < kFrameIntervalMs)
+                continue;
+
+            // 已保持满 kHoldMs：按真实帧间隔 dt 推进时间常数衰减，并每帧更新 lastHeartbeatMs_
             const double dt = (lastHeartbeatMs_ == 0)
                                 ? 1.0 / 60.0
                                 : juce::jlimit (0.001, 0.1,
                                                 (double) (nowMs - lastHeartbeatMs_) / 1000.0);
-            if (lastHeartbeatMs_ == 0)
-                lastHeartbeatMs_ = nowMs;
+            lastHeartbeatMs_ = nowMs;
             publishDecayFrame (dt, kSilenceTau);
             continue;
         }
@@ -330,9 +353,30 @@ bool SpectrumEngine::getLatest (std::array<float, kDisplayPoints>& pre,
 
 bool SpectrumEngine::getFrequencies (std::vector<float>& freqs)
 {
-    if (freqs_.empty() || freqs.size() == freqs_.size())
+    const auto ver = freqsVersion_.load (std::memory_order_acquire);
+    if (ver == 0)
         return false;
 
-    freqs = freqs_;
+    const juce::SpinLock::ScopedLockType sl (freqLock_);
+    if (freqs.size() == (size_t) kDisplayPoints
+        && freqs.front() == freqs_.front()
+        && freqs.back()  == freqs_.back())
+        return false;
+
+    freqs.assign (freqs_.begin(), freqs_.end());
+    return true;
+}
+
+bool SpectrumEngine::getFrequencies (std::vector<float>& freqs, juce::uint32& ioVersion)
+{
+    const auto ver = freqsVersion_.load (std::memory_order_acquire);
+    if (ver == 0 || (ver == ioVersion && freqs.size() == (size_t) kDisplayPoints))
+        return false;
+
+    {
+        const juce::SpinLock::ScopedLockType sl (freqLock_);
+        freqs.assign (freqs_.begin(), freqs_.end());
+    }
+    ioVersion = ver;
     return true;
 }

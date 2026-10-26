@@ -13,13 +13,11 @@
 CrunchMBAudioProcessorEditor::CrunchMBAudioProcessorEditor (CrunchMBAudioProcessor& p)
     : juce::AudioProcessorEditor (p), proc (p)
 {
-    // Poppins 作为默认无衬线（验证 FONT_DIR 引用 + BinaryData 链路）
+    // 修复 MISC-01：使用编辑器私有 LookAndFeel 实例设置默认字体，避免污染宿主同进程其它 JUCE 插件
     if (auto face = MBTheme::regular())
-        juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypeface (face);
+        editorLookAndFeel_.setDefaultSansSerifTypeface (face);
+    setLookAndFeel (&editorLookAndFeel_);
 
-    // R36（B4）：全局字号倍率。用户实测"整体按钮和 UI 都太小，不方便阅读"。
-    //   放在编辑器构造里而不是 DisplayView 里，是为了让离屏测试保持 1.0
-    //   ——否则 808+ 条像素/几何断言会跟着字号一起漂。
     MBTheme::setTextScale (MBTheme::kUiTextScale);
 
     display = std::make_unique<DisplayView> (proc);
@@ -29,17 +27,13 @@ CrunchMBAudioProcessorEditor::CrunchMBAudioProcessorEditor (CrunchMBAudioProcess
     setResizeLimits (EditorLayout::minWidth, EditorLayout::minHeight, 2080, 1560);
     setSize (EditorLayout::defaultWidth, EditorLayout::defaultHeight);
 
-    // ⚠️ setSize 之后立即给 display 真实 bounds：若只靠 resized() 回调，
-    // 宿主不及时调用时 display 的 size 为 0 → plotHeightPx() 退化 → 曲线比例错乱（#9）
     display->setBounds (getLocalBounds());
-
-    // ⚠️ 懒启动必须在这里激活：早期版本只在析构里 setEditorActive(false)，
-    // 导致分析线程从未启动 → 双层频谱完全不显示（2026-09-23 用户实测 B1）。
     display->setActive (true);
 }
 
 CrunchMBAudioProcessorEditor::~CrunchMBAudioProcessorEditor()
 {
+    setLookAndFeel (nullptr);
     proc.setEditorActive (false);     // 停频谱分析线程（懒启动配对）
 }
 

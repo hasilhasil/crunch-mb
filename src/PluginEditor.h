@@ -24,6 +24,7 @@ public:
 
 private:
     CrunchMBAudioProcessor& proc;
+    juce::LookAndFeel_V4 editorLookAndFeel_;
     std::unique_ptr<DisplayView> display;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CrunchMBAudioProcessorEditor)

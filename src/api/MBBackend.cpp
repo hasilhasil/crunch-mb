@@ -10,7 +10,7 @@
 
 namespace
 {
-    constexpr const char* kPluginVersion = "1.0.0";
+    constexpr const char* kPluginVersion = "1.0.4";
 
     /** 参数类别判定：band{i}... 前缀 → Band；其余 → Global。 */
     ParamInfo::Category categoryOf (const juce::String& id, int& bandIndexOut)
@@ -193,6 +193,11 @@ std::vector<ParamValue> MBBackend::getParams (const std::vector<juce::String>& i
 
 SetResult MBBackend::setParam (const juce::String& id, float value)
 {
+    // 修复 API-01：直接修改 xover1..3 时统一走 1 八度最小带宽钳制，保持 APVTS/UI 与底层 DSP 一致
+    if (id == Param::ID::xover1) return setCrossover (0, value);
+    if (id == Param::ID::xover2) return setCrossover (1, value);
+    if (id == Param::ID::xover3) return setCrossover (2, value);
+
     SetResult r;
     r.applied = false;
     r.actualValue = 0.0f;
@@ -239,6 +244,7 @@ bool MBBackend::loadState (const juce::ValueTree& state)
     if (! state.isValid())
         return false;
     proc_.apvts.replaceState (state);
+    proc_.reapplyStructureAndLatency();
     return true;
 }
 
@@ -326,11 +332,8 @@ void MBBackend::setBypass (bool bypassed)
 bool MBBackend::isBypassed()
 {
     for (int i = 0; i < Param::kNumBands; ++i)
-    {
-        if (auto* p = proc_.apvts.getParameter (Param::bandMix (i)))
-            if (p->getValue() > 0.001f)
-                return false;
-    }
+        if (getParamFast (Param::bandMix (i)) > 0.5f)
+            return false;
     return true;
 }
 
@@ -402,17 +405,25 @@ SetResult MBBackend::setCrossover (int crossoverIndex, float freqHz)
                 x[i] = rp->getNormalisableRange().convertFrom0to1 (p->getValue());
 
     x[crossoverIndex] = freqHz;
-    Param::clampCrossovers (x[0], x[1], x[2]);
-
-    // 回写全部三点（钳制可能连带约束邻居）
-    for (int i = 0; i < 3; ++i)
-        if (auto* p = proc_.apvts.getParameter (ids[i]))
-            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (x[i]));
+    setCrossovers (x[0], x[1], x[2]);
+    x[0] = getParamFast (Param::ID::xover1);
+    x[1] = getParamFast (Param::ID::xover2);
+    x[2] = getParamFast (Param::ID::xover3);
 
     r.applied = true;
     r.actualValue = x[crossoverIndex];
     return r;
+}
+
+void MBBackend::setCrossovers (float x1, float x2, float x3)
+{
+    Param::clampCrossovers (x1, x2, x3);
+    const float vals[3] = { x1, x2, x3 };
+    const char* ids[3]  = { Param::ID::xover1, Param::ID::xover2, Param::ID::xover3 };
+    for (int i = 0; i < 3; ++i)
+        if (auto* p = proc_.apvts.getParameter (ids[i]))
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (vals[i]));
 }
 
 std::array<float, 4> MBBackend::getBandGainReduction()

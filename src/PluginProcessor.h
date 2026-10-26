@@ -136,6 +136,9 @@ public:
                             std::vector<float>& outputDb,
                             unsigned& counter, int& pointsWritten) const;
 
+    /** 供 setStateInformation / MBBackend::loadState 在替换 ValueTree 后同步刷新 DSP 结构、延迟与 UI。 */
+    void reapplyStructureAndLatency();
+
 private:
     void applyStructure();                    // 消息线程：分频/FIR 设计
     void updateLatency() noexcept;            // 消息线程：setLatencySamples
@@ -144,6 +147,7 @@ private:
                           const float* monoPre, const float* monoPost,
                           int numSamples) noexcept;                  // 音频线程
 
+    juce::SpinLock dspLock_;                  // 保护结构切换/prepare 与 processBlock 的并发访问
     MultibandDSP dsp_;
     SpectrumEngine spectrumEngine_;           // 后台分析线程 + 无锁三缓冲
     std::unique_ptr<MBBackend> backend_;      // Phase：统一后端 facade（惰性创建）
@@ -167,7 +171,7 @@ private:
     // 频谱 pre 抽头延迟环（Linear 模式输出晚 L 样本 → pre 延迟 L 使两层对齐）
     std::vector<float> preTapRing_;
     int preTapPos_ = 0;
-    int preTapLatency_ = 0;
+    std::atomic<int> preTapLatency_ { 0 };
     std::vector<float> monoPre_, monoPost_;   // 预分配单声道抽头缓冲
 
     double sampleRate_ = 48000.0;             // prepareToPlay 缓存（勿依赖 getSampleRate：

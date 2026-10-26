@@ -28,8 +28,7 @@ bool SpectrumView::updateFromEngine()
     const bool changed = proc_.getSpectrumEngine().getLatest (pre_, post_);
     if (! changed)
         return false;
-    if (freqs_.size() != (size_t) kPoints)
-        proc_.getSpectrumEngine().getFrequencies (freqs_);
+    proc_.getSpectrumEngine().getFrequencies (freqs_, freqsVersion_);
     hasFrame_ = true;
     pathsValid_ = false;
     refreshPaths();

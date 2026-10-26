@@ -182,12 +182,19 @@ private:
     void processChain (float* const* channels, int numSamples,
                        const float* const* sidechain, int sidechainChannels,
                        int useChannels = 2) noexcept;
-    void rebuildOversampler (int factor) noexcept;
+    void configureForOversampling (int factor) noexcept;
+    juce::dsp::Oversampling<float>* activeOversampler() const noexcept
+    {
+        return (osFactor_ == 2) ? oversampler2x_.get()
+             : (osFactor_ == 4) ? oversampler4x_.get()
+                                : nullptr;
+    }
 
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler_;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x_;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x_;
     int    osFactor_  = 1;          // 1 / 2 / 4
     double procRate_  = 48000.0;    // 实际处理采样率（含过采样）
     int    procBlock_ = 512;        // 实际处理块长（= maxBlock_ × osFactor_）
     juce::AudioBuffer<float> osIn_;     // 2ch，maxBlock_ 大小（上采样输入 staging）
-    juce::AudioBuffer<float> scHold_;   // 2ch，procBlock_ 大小（侧链 ZOH 上采样，预分配）
+    juce::AudioBuffer<float> scHold_;   // 2ch，maxBlock_×4 大小（侧链 ZOH 上采样，预分配）
 };

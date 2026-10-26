@@ -12,7 +12,7 @@
 //   · Free 模式：HP(lowHz) + LP(highHz)，让该段触发于完全不同的频率范围
 //     （Pro-MB 官方："trigger on a completely different frequency range"）
 //
-// 阶数：HP/LP 各 2 阶（2 个 RBJ biquad 级联 = 12 dB/oct），与分频器 12 dB 档一致。
+// 阶数：HP/LP 各 4 阶 Linkwitz-Riley（2 节二阶 Butterworth 级联 = 24 dB/oct）。
 // 音频线程热路径零分配零锁（TECH_SPEC §4）。
 // ============================================================
 class SideChainFilter
@@ -21,8 +21,10 @@ public:
     void prepare (double sampleRate)
     {
         sampleRate_ = juce::jmax (1.0, sampleRate);
+        coeffsValid_ = false;
         reset();
-        applyCoefficients();
+        if (free_)
+            applyCoefficients();
     }
 
     void reset()
@@ -31,13 +33,21 @@ public:
         for (auto& f : lp_) f.reset();
     }
 
-    /** isFree=false 时直通（Band 模式）；系数变化不 reset（避免自动化爆音） */
+    /** isFree=false 时直通（Band 模式）；增加脏值缓存避免每块重复重算 16 次双二阶系数 */
     void setParameters (float lowHz, float highHz, bool isFree) noexcept
     {
+        const bool freqChanged = (lowHz != lowHz_) || (highHz != highHz_);
         lowHz_  = lowHz;
         highHz_ = highHz;
         free_   = isFree;
-        applyCoefficients();
+        if (! free_)
+        {
+            if (freqChanged)
+                coeffsValid_ = false;
+            return;
+        }
+        if (! coeffsValid_ || freqChanged)
+            applyCoefficients();
     }
 
     /** 就地滤波检测信号（free_ == false 时零开销直返） */
@@ -60,7 +70,7 @@ public:
     bool isFree() const noexcept { return free_; }
 
 private:
-    static constexpr int kSections = 2;   // 2 阶 = 12 dB/oct
+    static constexpr int kSections = 2;   // 2 节 2 阶 Butterworth 级联 = 4 阶 LR4（24 dB/oct）
 
     void applyCoefficients() noexcept
     {
@@ -87,9 +97,10 @@ private:
         const float q  = 0.70710678f;      // Butterworth
         for (int i = 0; i < kSections; ++i)
         {
-            hp_[(size_t) i].setCoefficients (BiquadFilter::designHighCut (lo, q, (float) sr));
-            lp_[(size_t) i].setCoefficients (BiquadFilter::designLowCut  (hi, q, (float) sr));
+            hp_[(size_t) i].setCoefficients (BiquadFilter::designHighPass (lo, q, (float) sr));
+            lp_[(size_t) i].setCoefficients (BiquadFilter::designLowPass  (hi, q, (float) sr));
         }
+        coeffsValid_ = true;
     }
 
     double sampleRate_ = 48000.0;
@@ -98,6 +109,7 @@ private:
     float  lowHz_  = 100.0f;
     float  highHz_ = 5000.0f;
     bool   free_   = false;
+    bool   coeffsValid_ = false;
 
     BiquadFilter hp_[kSections];
     BiquadFilter lp_[kSections];

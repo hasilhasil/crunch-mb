@@ -39,9 +39,13 @@ public:
     // 静态传输曲线（含 Range 钳制、不含平滑）——UI 传输曲线 inset 用（TECH_SPEC §6.2）
     float getStaticGainDb (float levelDb) const noexcept;
 
-    float getSmoothedGainDb()  const noexcept { return smoothedGainDb_; }
+    float getSmoothedGainDb() const noexcept
+    {
+        return (std::abs (smoothedGainDbR_) > std::abs (smoothedGainDb_))
+                   ? smoothedGainDbR_ : smoothedGainDb_;
+    }
     float getLastGainLinear()  const noexcept { return lastGain_; }
-    float getLastDetectorDb()  const noexcept { return lastDetectorDb_; }
+    float getLastDetectorDb()  const noexcept { return juce::jmax (lastDetectorDb_, lastDetectorDbR_); }
 
 private:
     float computeTargetGainDb (float levelDb) const noexcept;

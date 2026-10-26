@@ -49,8 +49,9 @@ public:
     bool getLatest (std::array<float, kDisplayPoints>& pre,
                     std::array<float, kDisplayPoints>& post);
 
-    // UI 线程：对数频率轴（只需取一次）
+    // UI 线程：对数频率轴（无锁/自旋锁保护，采样率切换后自动更新版本）
     bool getFrequencies (std::vector<float>& freqs);
+    bool getFrequencies (std::vector<float>& freqs, juce::uint32& ioVersion);
 
     /** 测试钩子：当前已发布的 slot 索引（验证衰减帧是否换了 slot 写）。 */
     int publishedSlotForTest() const noexcept
@@ -78,6 +79,7 @@ private:
     juce::uint32 starvedSinceMs_  = 0;         // #8：饥饿起始（保持期计时）
     juce::uint32 lastDataMs_      = 0;         // #8：最后一次收到音频数据的时刻
     int  lastReadyCount_ = -1;                 // #8：上次观察到的 ring 数据量
+    bool decayResting_   = false;              // 衰减到底（-100 dB）后进入休眠，停止 200Hz 无限发布风暴
 
     juce::AbstractFifo fifoPre_  { 1 << 16 };
     juce::AbstractFifo fifoPost_ { 1 << 16 };
@@ -107,7 +109,10 @@ private:
     std::atomic<int> uiSlot_ { -1 };
     std::atomic<juce::uint32> uiVersion_ { 0 };
 
-    std::vector<float> freqs_;
+    mutable juce::SpinLock freqLock_;
+    std::array<float, kDisplayPoints> freqs_ {};
+    bool freqsValid_ = false;
+    std::atomic<juce::uint32> freqsVersion_ { 0 };
     juce::Array<float> scratchFreqs_, scratchPre_, scratchPost_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumEngine)

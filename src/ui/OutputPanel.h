@@ -105,6 +105,7 @@ public:
     void clickRow (int row);
     juce::Rectangle<float> toggleRect(int index) const;
     Knob& numericControlForTest(int index) { return knobs_[(size_t)index]; }
+    void selectMonitorForTest(int idx) { monitorBox_.setSelectedId(juce::jlimit(0, 6, idx) + 1, juce::sendNotificationSync); }
 
 private:
     void syncControls();

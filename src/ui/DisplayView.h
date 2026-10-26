@@ -745,6 +745,10 @@ private:
     float dragStartOutputGainDb_ = 0.0f;   // Phase D-6：Alt+拖 OUT 起始增益
     float dragStartRange_ = 0.0f;
     bool mouseDownOnButton_ = false;
+    juce::StringArray activeGestureParams_;    // 当前画布拖拽已開啟 beginChangeGesture 的参数 ID 列表
+    void beginGestureForParam (const juce::String& id);
+    void beginCrossoverDragGestures();
+    void endActiveDragGestures();
 
     // ---- Phase D-3：显示背景拖拽多选（Pro-MB multi-select）----
     // Pro-MB 官方帮助原话："click and drag across the display background to

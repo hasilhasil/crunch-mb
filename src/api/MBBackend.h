@@ -56,6 +56,7 @@ public:
     MultibandHistoryData readMultibandHistory (int points) override;
     MBGroupSetResult setBandGroupDelta (const juce::String& paramName, float delta) override;
     SetResult setCrossover (int crossoverIndex, float freqHz) override;
+    void setCrossovers (float x1, float x2, float x3);
     std::array<float, 4> getBandGainReduction() override;
     bool getLatestSpectrum (std::array<float, 512>& pre,
                             std::array<float, 512>& post,

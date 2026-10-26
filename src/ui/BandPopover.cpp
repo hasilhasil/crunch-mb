@@ -312,6 +312,20 @@ void BandPopover::ensureKnobs()
         }
         const int kk = k;
         kb->onValueChange = [this, kk] (double v) { applyPopoverKnob (kk, v); };
+        kb->onDragStart = [this, kk]
+        {
+            static const char* kIds[kPopKnobs] = { "Threshold", "Range", "Attack", "Release", "Makeup", "Mix" };
+            const int b = (band_ >= 0) ? band_ : 0;
+            if (auto* p = proc_.apvts.getParameter ("band" + juce::String (b) + kIds[juce::jlimit (0, kPopKnobs - 1, kk)]))
+                p->beginChangeGesture();
+        };
+        kb->onDragEnd = [this, kk]
+        {
+            static const char* kIds[kPopKnobs] = { "Threshold", "Range", "Attack", "Release", "Makeup", "Mix" };
+            const int b = (band_ >= 0) ? band_ : 0;
+            if (auto* p = proc_.apvts.getParameter ("band" + juce::String (b) + kIds[juce::jlimit (0, kPopKnobs - 1, kk)]))
+                p->endChangeGesture();
+        };
         addAndMakeVisible (kb);
         kb->setVisible (false);
         knobs_[(size_t) k].reset (kb);
@@ -386,12 +400,21 @@ void BandPopover::applyPopoverKnob (int k, double v)
 // ---------------- 滑杆 ----------------
 void BandPopover::beginSliderDrag (int k, float mouseX)
 {
+    if (sliderDrag_ >= 0)
+        endSliderDrag();
     sliderDrag_ = k;
     sliderDragX0_ = mouseX;
     // Ratio is stored as a physical 1..20 value; the drag baseline must be 0..1.
     // Using the raw ratio here clamped every drag to 20:1, including left drags.
     const double value = sliders_[(size_t) juce::jlimit (0, 4, k)];
     sliderDragNorm0_ = k == 0 ? (value - 1.0) / 19.0 : value;
+    if (k == 0 || k == 1)
+    {
+        const int b = (band_ >= 0) ? band_ : 0;
+        const juce::String id = (k == 0) ? Param::bandRatio (b) : Param::bandKnee (b);
+        if (auto* p = proc_.apvts.getParameter (id))
+            p->beginChangeGesture();
+    }
 }
 
 void BandPopover::dragSlider (int k, float mouseX)
@@ -410,6 +433,13 @@ void BandPopover::dragSlider (int k, float mouseX)
 
 void BandPopover::endSliderDrag()
 {
+    if (sliderDrag_ == 0 || sliderDrag_ == 1)
+    {
+        const int b = (band_ >= 0) ? band_ : 0;
+        const juce::String id = (sliderDrag_ == 0) ? Param::bandRatio (b) : Param::bandKnee (b);
+        if (auto* p = proc_.apvts.getParameter (id))
+            p->endChangeGesture();
+    }
     sliderDrag_ = -1;
 }
 

@@ -10,8 +10,10 @@ if(NOT DEFINED JUCE_DIR)
     set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/JUCE-8.0.4")
 endif()
 
-# 字体共享自兄弟项目（含空格路径，已验证可用）
-set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/src/ui/Fonts")
+# 字体共享自兄弟项目（含空格路径，已验证可用；可 -DFONT_DIR= 覆盖）
+if(NOT DEFINED FONT_DIR)
+    set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/src/ui/Fonts")
+endif()
 
 add_subdirectory("${JUCE_DIR}" JUCE)
 

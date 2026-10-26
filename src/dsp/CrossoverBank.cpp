@@ -39,8 +39,8 @@ void CrossoverBank::Split::setCoefficients (float fc, int slopeDb, bool lrMode, 
             {
                 const float q = (float) butterworthQ (bwOrder, k);
                 const int   i = rep * secs + (k - 1);
-                lp_[i].setCoefficients (BiquadFilter::designLowCut  ((float) fc, q, (float) sampleRate));
-                hp_[i].setCoefficients (BiquadFilter::designHighCut ((float) fc, q, (float) sampleRate));
+                lp_[i].setCoefficients (BiquadFilter::designLowPass  ((float) fc, q, (float) sampleRate));
+                hp_[i].setCoefficients (BiquadFilter::designHighPass ((float) fc, q, (float) sampleRate));
             }
     }
     else
@@ -49,9 +49,9 @@ void CrossoverBank::Split::setCoefficients (float fc, int slopeDb, bool lrMode, 
         lpN_ = order / 2;
         hpN_ = 0;
         for (int k = 1; k <= lpN_; ++k)
-            lp_[k - 1].setCoefficients (BiquadFilter::designLowCut ((float) fc,
-                                                                   (float) butterworthQ (order, k),
-                                                                   (float) sampleRate));
+            lp_[k - 1].setCoefficients (BiquadFilter::designLowPass ((float) fc,
+                                                                     (float) butterworthQ (order, k),
+                                                                     (float) sampleRate));
     }
 }
 
