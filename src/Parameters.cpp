@@ -99,10 +99,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     //   Output  = 正常输出（**默认**，行为与不设此参数时逐样本一致）
     //   Input   = 干声（输入增益后、分频前）
     //   Band 1-4 = 该段自己的信号（分频后、求和前）
-    //   Gain Reduction = 增益衰减量本身作为可听信号
     addChoice (pid (ID::monitorMode), "Monitor",
-               { "Output", "Input", "Band 1", "Band 2", "Band 3", "Band 4",
-                 "Gain Reduction" },
+               { "Output", "Input", "Band 1", "Band 2", "Band 3", "Band 4" },
                (int) Monitor::Output);
 
     // ================= 每频段参数（13 × 4 = 52，TECH_SPEC §5.2） =================

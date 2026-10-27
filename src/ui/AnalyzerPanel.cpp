@@ -68,12 +68,15 @@ void AnalyzerPanel::clickOutside()
 
 bool AnalyzerPanel::advance (double nowMs)
 {
+    const float prevAnim = anim_;
     anim_ = tween_.value (nowMs);
     if (std::abs (anim_ - animTarget_) < Anim::kSnapEps)
     {
         anim_ = animTarget_;
         tween_.snapTo (animTarget_);
     }
+    if (std::abs (anim_ - prevAnim) > 1.0e-5f)
+        repaint();
     return ! tween_.done (nowMs);
 }
 
@@ -126,7 +129,7 @@ void AnalyzerPanel::clickRow (int row)
 // ---------------- 绘制 ----------------
 void AnalyzerPanel::paint(juce::Graphics& g)
 {
-    if(!open_||anim_<.004f)return;
+    if(!open_&&anim_<.004f)return;
     const auto r=panelRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale,a=anim_;
     if(themeTokens_.isNeumorphic)
     {

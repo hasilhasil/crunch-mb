@@ -71,7 +71,7 @@ private:
     std::atomic<float>  tilt_      { 0.0f };
     std::atomic<int>    wantFftSize_    { 2048 };   // Pro-MB Medium（默认）
     std::atomic<int>    currentFftSize_ { 2048 };
-    std::atomic<double> releaseMs_ { 20.0 };        // Pro-MB Speed=Medium
+    std::atomic<double> releaseMs_ { SpectrumAnalyzer::speedToReleaseMs (1) }; // Pro-MB Speed=Medium (S=1.5s => τ≈651.4ms)
     std::atomic<bool>   frozen_    { false };       // Pro-MB Freeze
     std::atomic<bool>   uiActive_  { false };
     std::atomic<bool>   running_   { true };   // false = 线程挂起（长睡眠，不耗调度）

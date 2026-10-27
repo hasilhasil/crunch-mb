@@ -21,7 +21,7 @@ namespace Param
     enum class Oversampling  { Off = 0, X2 = 1, X4 = 2 };          // 2026-10-14
     /** Monitor（Future MB 对标）：试听哪个内部信号。Output = 正常输出。 */
     enum class Monitor       { Output = 0, Input = 1, Band1 = 2, Band2 = 3,
-                               Band3 = 4, Band4 = 5, GainReduction = 6 };
+                               Band3 = 4, Band4 = 5 };
 
     inline int   slopeIndexToDb (int idx) { return 12 * (juce::jlimit (0, 3, idx) + 1); }
 

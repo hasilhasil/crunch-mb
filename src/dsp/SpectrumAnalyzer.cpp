@@ -17,12 +17,13 @@ void SpectrumAnalyzer::prepare (double sampleRate, int fftSize)
 
     binLevelsDb_.assign ((size_t) (fftSize_ / 2 + 1), -140.0f);
     prevLevelsDb_.assign ((size_t) (fftSize_ / 2 + 1), -140.0f);
+    hopPeakMag_.assign ((size_t) (fftSize_ / 2 + 1), 0.0f);
 
     hop_ = juce::jmax (1, (int) std::lround (sampleRate_ / 60.0));
     lutPoints_ = -1;
 
     // 环形 FIFO：容量 = 完整窗口 + hop + 单块余量（稳态零分配）
-    fifoCap_ = fftSize_ + hop_ + kFifoExtra;
+    fifoCap_ = fftSize_ + hop_ * 4 + kFifoExtra;
     fifo_.assign ((size_t) fifoCap_, 0.0f);
     fifoRead_ = fifoWrite_ = fifoAvail_ = 0;
 
@@ -34,8 +35,10 @@ void SpectrumAnalyzer::reset()
     fifoRead_ = fifoWrite_ = fifoAvail_ = 0;
     hasFrame_ = false;
     fadeIn_ = 0.0f;
+    lastTilt_ = tilt_;
     std::fill (binLevelsDb_.begin(), binLevelsDb_.end(), -140.0f);
     std::fill (prevLevelsDb_.begin(), prevLevelsDb_.end(), -140.0f);
+    std::fill (hopPeakMag_.begin(), hopPeakMag_.end(), 0.0f);
     frameCounter_ = 0;
     lastFrameDeltaDb_ = 0.0f;
 }
@@ -91,13 +94,22 @@ void SpectrumAnalyzer::processFrame (const float* data)
                         : juce::jlimit (0.001, 0.100, (double) (nowMs - lastFrameMs_) / 1000.0);
     lastFrameMs_ = nowMs;
 
-    const float kRelease = (float) (1.0 - std::exp (-dt / (releaseMs_.load() * 0.001)));
-    // B1：起始软启动——编辑器刚打开时从绘图区底部按同一时间常数升起，
-    // 避免频谱"突然跳满"。（release 曲线与 Crunch EQ 完全一致，均为 τ 计算）
+    // 单级一阶指数衰落（仅在此处执行一次，getLevels 不再重复时间滤波）：
+    //   · Attack ：瞬时捕获峰值（60fps 下无滞后跟手）
+    //   · Release：k_release = 1 - exp(-dt / tauReleaseSec)，三档 τ = 100 / 200 / 400 ms
+    const double tauReleaseSec = juce::jmax (1.0e-3, releaseMs_.load() * 0.001);
+    const float  kRelease      = (float) (1.0 - std::exp (-dt / tauReleaseSec));
+
+    // B1：起始软启动——编辑器刚打开时按 180ms 时间常数平滑升起；超过 0.60 后直接到位避免 Pre/Post 跨阈值分离
+    constexpr double kFadeTauSec = 0.180;
     if (! hasFrame_)
         fadeIn_ = 0.0f;
     else
-        fadeIn_ = juce::jmin (1.0f, fadeIn_ + (float) (1.0 - std::exp (-dt / (releaseMs_.load() * 0.001))));
+    {
+        fadeIn_ = juce::jmin (1.0f, fadeIn_ + (float) (1.0 - std::exp (-dt / kFadeTauSec)));
+        if (fadeIn_ > 0.60f)
+            fadeIn_ = 1.0f;
+    }
 
     const bool frozen = frozen_.load();
     float maxDelta = 0.0f;
@@ -115,11 +127,11 @@ void SpectrumAnalyzer::processFrame (const float* data)
         const float prev = hasFrame_ ? prevLevelsDb_[(size_t) k] : db;
 
         if (frozen)
-            current = juce::jmax (prev, db);          // Pro-MB Freeze：只升不降 = 历史最大包络
-        else if (db >= prev)
-            current = db;                             // attack = 瞬时（无独立参数，与 Pro-MB 同）
+            current = juce::jmax (prev, db);          // Freeze：只升不降 = 历史最大包络
+        else if (frameCounter_ <= 1 || db >= prev)
+            current = db;                             // 首帧跳过未发布的冷启动瞬态 + 瞬态即时捕获
         else
-            current = prev + (db - prev) * kRelease;   // release = 一阶指数（τ 可调）
+            current = prev + (db - prev) * kRelease;  // 单级一阶指数衰落（100 / 200 / 400 ms）
 
         prevLevelsDb_[(size_t) k] = current;
         maxDelta = juce::jmax (maxDelta, std::abs (current - prev));
@@ -197,6 +209,9 @@ void SpectrumAnalyzer::getLevels (juce::Array<float>& freqs, juce::Array<float>&
     freqs.ensureStorageAllocated (numPoints);
     levelsDb.ensureStorageAllocated (numPoints);
 
+    displayScratchDb_.resize ((size_t) numPoints);
+    const bool frozen = frozen_.load();
+
     for (int i = 0; i < numPoints; ++i)
     {
         const size_t si = (size_t) i;
@@ -223,11 +238,25 @@ void SpectrumAnalyzer::getLevels (juce::Array<float>& freqs, juce::Array<float>&
             db = a * (1.0f - lutFrac_[si]) + b * lutFrac_[si];
         }
 
+        displayScratchDb_[si] = db;
+    }
+
+    // 3 点空间核平滑（0.25 / 0.50 / 0.25），消除相邻对数频率采样点之间的细碎锯齿
+    const float kFade = juce::jlimit (0.0f, 1.0f, fadeIn_);
+    for (int i = 0; i < numPoints; ++i)
+    {
+        float db = displayScratchDb_[(size_t) i];
+        if (! frozen && i > 0 && i + 1 < numPoints)
+        {
+            db = 0.25f * displayScratchDb_[(size_t) (i - 1)]
+               + 0.50f * displayScratchDb_[(size_t) i]
+               + 0.25f * displayScratchDb_[(size_t) (i + 1)];
+        }
+
         // B1 起始软启动：fadeIn_ 从 0 → 1，显示值从底部（−100dB）按时间常数升起
-        const float kFade = juce::jlimit (0.0f, 1.0f, fadeIn_);
         db = -100.0f + (db + 100.0f) * kFade;
 
-        freqs.add (lutFreq_[si]);
+        freqs.add (lutFreq_[(size_t) i]);
         levelsDb.add (db);
     }
 }

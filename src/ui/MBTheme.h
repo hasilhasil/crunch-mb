@@ -29,69 +29,43 @@ namespace MBTheme
         return UiPack::buildPalettePack ((UiPack::PaletteId) t);
     }
 
-    // Poppins 字重（BinaryData）
+    // 全局统一字体：Google Sans Flex（Regular / Medium / SemiBold / Bold）
     inline juce::Typeface::Ptr regular()
     {
         static const juce::Typeface::Ptr face =
-            juce::Typeface::createSystemTypefaceFor (BinaryData::PoppinsRegular_ttf,
-                                                     BinaryData::PoppinsRegular_ttfSize);
+            juce::Typeface::createSystemTypefaceFor (BinaryData::GoogleSansFlexRegular_ttf,
+                                                     BinaryData::GoogleSansFlexRegular_ttfSize);
         return face;
     }
     inline juce::Typeface::Ptr medium()
     {
         static const juce::Typeface::Ptr face =
-            juce::Typeface::createSystemTypefaceFor (BinaryData::PoppinsMedium_ttf,
-                                                     BinaryData::PoppinsMedium_ttfSize);
+            juce::Typeface::createSystemTypefaceFor (BinaryData::GoogleSansFlexMedium_ttf,
+                                                     BinaryData::GoogleSansFlexMedium_ttfSize);
         return face;
     }
     inline juce::Typeface::Ptr semiBold()
     {
         static const juce::Typeface::Ptr face =
-            juce::Typeface::createSystemTypefaceFor (BinaryData::PoppinsSemiBold_ttf,
-                                                     BinaryData::PoppinsSemiBold_ttfSize);
+            juce::Typeface::createSystemTypefaceFor (BinaryData::GoogleSansFlexSemiBold_ttf,
+                                                     BinaryData::GoogleSansFlexSemiBold_ttfSize);
         return face;
     }
     inline juce::Typeface::Ptr bold()
     {
         static const juce::Typeface::Ptr face =
-            juce::Typeface::createSystemTypefaceFor (BinaryData::PoppinsBold_ttf,
-                                                     BinaryData::PoppinsBold_ttfSize);
+            juce::Typeface::createSystemTypefaceFor (BinaryData::GoogleSansFlexBold_ttf,
+                                                     BinaryData::GoogleSansFlexBold_ttfSize);
         return face;
     }
 
     inline juce::Typeface::Ptr uiRegular()
     {
-        static const auto face = juce::Typeface::createSystemTypefaceFor (
-            BinaryData::BarlowRegular_ttf, BinaryData::BarlowRegular_ttfSize);
-        return face;
+        return regular();
     }
     inline juce::Typeface::Ptr uiMedium()
     {
-        static const auto face = juce::Typeface::createSystemTypefaceFor (
-            BinaryData::BarlowMedium_ttf, BinaryData::BarlowMedium_ttfSize);
-        return face;
-    }
-
-    // ---- CJK 字体回退链（zh-CN 语言包激活时启用，防 Poppins/Barlow 缺中文字形）----
-    inline juce::Typeface::Ptr cjkTypeface (bool boldWeight)
-    {
-        static const juce::Typeface::Ptr cjkReg = [] () -> juce::Typeface::Ptr
-        {
-            const auto names = juce::Font::findAllTypefaceNames();
-            for (const char* cand : { "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "SimHei" })
-                if (names.contains (cand))
-                    return juce::Font (juce::FontOptions (cand, 14.0f, juce::Font::plain)).getTypefacePtr();
-            return nullptr;
-        }();
-        static const juce::Typeface::Ptr cjkBold = [] () -> juce::Typeface::Ptr
-        {
-            const auto names = juce::Font::findAllTypefaceNames();
-            for (const char* cand : { "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "SimHei" })
-                if (names.contains (cand))
-                    return juce::Font (juce::FontOptions (cand, 14.0f, juce::Font::bold)).getTypefacePtr();
-            return nullptr;
-        }();
-        return boldWeight ? (cjkBold != nullptr ? cjkBold : cjkReg) : cjkReg;
+        return medium();
     }
 
     inline bool& cjkModeRef() noexcept { static bool cjk = false; return cjk; }
@@ -105,17 +79,37 @@ namespace MBTheme
 
     inline juce::Font font (juce::Typeface::Ptr face, float height, int style = juce::Font::plain)
     {
-        const float h = juce::jmax (6.0f, height * textScaleRef());
+        float h = height * textScaleRef();
+        juce::Typeface::Ptr primary = (face != nullptr) ? face : regular();
+        int effectiveStyle = style;
+
         if (cjkModeRef())
         {
-            const bool wantBold = (style & juce::Font::bold) != 0
-                               || face == medium() || face == semiBold()
-                               || face == bold()   || face == uiMedium();
-            if (auto cjk = cjkTypeface (wantBold))
-                return juce::Font (juce::FontOptions (h, style).withTypeface (cjk));
+            // 中文模式（zh-CN）视觉字面与字重校准（保持 Google Sans Flex 主字体，不显式改用微软雅黑）：
+            //   1. 汉字方块字面（~90% em）比西文大写（~71% em）偏大，统一按 0.92x 收敛并设 11.2f 清晰度下限；
+            //   2. 收敛过度跳跃的粗体样式，使各面板标签与按钮的笔画胖瘦匀称统一。
+            h = juce::jmax (11.2f, h * 0.92f);
+            if (primary == bold() || primary == semiBold())
+                primary = medium();
+            effectiveStyle &= ~juce::Font::bold;
         }
-        if (face != nullptr)
-            return juce::Font (juce::FontOptions (h, style).withTypeface (face));
-        return juce::Font (juce::FontOptions (h, style));
+        else
+        {
+            h = juce::jmax (6.0f, h);
+        }
+
+        if (primary != nullptr)
+            return juce::Font (juce::FontOptions (h, effectiveStyle).withTypeface (primary).withFallbackEnabled (true));
+        return juce::Font (juce::FontOptions (h, effectiveStyle).withFallbackEnabled (true));
+    }
+
+    /** 左上角 CRUNCH MB 品牌标题专用字体：不受语言包缩放或字重校准影响，始终保持原样 */
+    inline juce::Font brandTitleFont (float height)
+    {
+        const float h = juce::jmax (6.0f, height * textScaleRef());
+        const auto primary = uiMedium();
+        if (primary != nullptr)
+            return juce::Font (juce::FontOptions (h, juce::Font::plain).withTypeface (primary).withFallbackEnabled (true));
+        return juce::Font (juce::FontOptions (h, juce::Font::plain));
     }
 } // namespace MBTheme

@@ -46,6 +46,8 @@ CrunchMBAudioProcessor::CrunchMBAudioProcessor()
     // 参数时画面不更新（用户实测"UI 卡住完全不刷新"）。
     for (const auto& id : Param::allIds())
         apvts.addParameterListener (id, this);
+
+    loadGlobalUiPrefs();
 }
 
 CrunchMBAudioProcessor::~CrunchMBAudioProcessor()
@@ -171,11 +173,71 @@ void CrunchMBAudioProcessor::reapplyStructureAndLatency()
 
 void CrunchMBAudioProcessor::pushAnalyzerSettingsToEngine() noexcept
 {
-    static const double kSpeedTauMs[3] = { 10.0, 20.0, 60.0 };
+
     spectrumEngine_.setResolution (analyzerSettings_.fftSize);
-    spectrumEngine_.setReleaseMs (kSpeedTauMs[juce::jlimit (0, 2, analyzerSettings_.speed)]);
+    spectrumEngine_.setReleaseMs (SpectrumAnalyzer::speedToReleaseMs (analyzerSettings_.speed));
     spectrumEngine_.setTilt (analyzerSettings_.tilt);
     spectrumEngine_.setFrozen (analyzerSettings_.frozen);
+}
+
+namespace
+{
+    bool gGlobalUiPrefsEnabled = true;
+}
+
+void CrunchMBAudioProcessor::setGlobalUiPrefsEnabledForTest (bool enabled) noexcept
+{
+    gGlobalUiPrefsEnabled = enabled;
+}
+
+juce::File CrunchMBAudioProcessor::globalUiPrefsFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("Kilo")
+        .getChildFile ("CrunchMB")
+        .getChildFile ("ui_preferences.xml");
+}
+
+void CrunchMBAudioProcessor::loadGlobalUiPrefs() noexcept
+{
+    if (! gGlobalUiPrefsEnabled)
+        return;
+    const auto file = globalUiPrefsFile();
+    if (! file.existsAsFile())
+        return;
+    if (auto xml = juce::XmlDocument::parse (file))
+    {
+        if (xml->hasTagName ("CrunchMBUiPrefs"))
+        {
+            UiPackSettings up;
+            up.themeId   = juce::jlimit (0, 1, xml->getIntAttribute ("uiThemePack",   0));
+            up.paletteId = juce::jlimit (0, 5, xml->getIntAttribute ("uiPalettePack", 0));
+            up.layoutId  = juce::jlimit (0, 1, xml->getIntAttribute ("uiLayoutPack",  0));
+            up.localeId  = juce::jlimit (0, 1, xml->getIntAttribute ("uiLocalePack",  0));
+            uiPackSettings_ = up;
+        }
+    }
+}
+
+void CrunchMBAudioProcessor::saveGlobalUiPrefs() const noexcept
+{
+    if (! gGlobalUiPrefsEnabled)
+        return;
+    const auto file = globalUiPrefsFile();
+    file.getParentDirectory().createDirectory();
+    juce::XmlElement xml ("CrunchMBUiPrefs");
+    xml.setAttribute ("uiThemePack",   uiPackSettings_.themeId);
+    xml.setAttribute ("uiPalettePack", uiPackSettings_.paletteId);
+    xml.setAttribute ("uiLayoutPack",  uiPackSettings_.layoutId);
+    xml.setAttribute ("uiLocalePack",  uiPackSettings_.localeId);
+    xml.writeTo (file);
+}
+
+void CrunchMBAudioProcessor::setUiPackSettings (const UiPackSettings& s, bool persistGlobal) noexcept
+{
+    uiPackSettings_ = s;
+    if (persistGlobal)
+        saveGlobalUiPrefs();
 }
 
 MBBackend& CrunchMBAudioProcessor::getBackend()
@@ -476,6 +538,8 @@ void CrunchMBAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         xml->setAttribute ("uiPalettePack",    uiPackSettings_.paletteId);
         xml->setAttribute ("uiLayoutPack",     uiPackSettings_.layoutId);
         xml->setAttribute ("uiLocalePack",     uiPackSettings_.localeId);
+        xml->setAttribute ("uiPresetIndex",    currentPresetIndex_);
+        xml->setAttribute ("uiAbSlot",         activeAbSlot_);
         copyXmlToBinary (*xml, destData);
     }
 }
@@ -506,11 +570,196 @@ void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBy
                 up.localeId  = juce::jlimit (0, 1, xml->getIntAttribute ("uiLocalePack", 0));
                 uiPackSettings_ = up;
             }
+            if (xml->hasAttribute ("uiPresetIndex"))
+                currentPresetIndex_ = juce::jlimit (0, kNumFactoryPresets - 1, xml->getIntAttribute ("uiPresetIndex", 0));
+            if (xml->hasAttribute ("uiAbSlot"))
+                activeAbSlot_ = juce::jlimit (0, 1, xml->getIntAttribute ("uiAbSlot", 0));
 
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
 
             reapplyStructureAndLatency();
         }
+}
+
+void CrunchMBAudioProcessor::setAbSlot (bool useSlotB)
+{
+    const int target = useSlotB ? 1 : 0;
+    if (target == activeAbSlot_)
+        return;
+
+    // 保存当前槽位的完整参数快照
+    abSlotState_[activeAbSlot_]       = apvts.copyState();
+    abSlotInitialized_[activeAbSlot_] = true;
+
+    // 若目标槽尚未初始化，先以当前状态初始化（便于直接在此基础上微调对比）
+    if (! abSlotInitialized_[target] || ! abSlotState_[target].isValid())
+    {
+        abSlotState_[target]       = abSlotState_[activeAbSlot_].createCopy();
+        abSlotInitialized_[target] = true;
+    }
+
+    activeAbSlot_ = target;
+    apvts.replaceState (abSlotState_[activeAbSlot_].createCopy());
+    reapplyStructureAndLatency();
+    if (uiWakeCallback_ != nullptr && juce::MessageManager::existsAndIsCurrentThread())
+        uiWakeCallback_ ({});
+}
+
+void CrunchMBAudioProcessor::toggleAbSlot()
+{
+    setAbSlot (activeAbSlot_ == 0);
+}
+
+void CrunchMBAudioProcessor::applyFactoryPreset (int index)
+{
+    const int idx = juce::jlimit (0, kNumFactoryPresets - 1, index);
+    currentPresetIndex_ = idx;
+
+    auto& api = getBackend();
+    auto setBand = [&] (int b, float th, float rng, float rat, float atk, float rel,
+                        float mk, float mix, float knee, int det = 0, int dyn = 0)
+    {
+        api.setParam (Param::bandThreshold (b), th);
+        api.setParam (Param::bandRange     (b), rng);
+        api.setParam (Param::bandRatio     (b), rat);
+        api.setParam (Param::bandAttack    (b), atk);
+        api.setParam (Param::bandRelease   (b), rel);
+        api.setParam (Param::bandMakeup    (b), mk);
+        api.setParam (Param::bandMix       (b), mix);
+        api.setParam (Param::bandKnee      (b), knee);
+        api.setParam (Param::bandDetector  (b), (float) det);
+        api.setParam (Param::bandDynamics  (b), (float) dyn);
+        api.setParam (Param::bandSCFilter  (b), 0.0f);
+        api.setParam (Param::bandSolo      (b), 0.0f);
+        api.setParam (Param::bandMute      (b), 0.0f);
+        api.setParam (Param::bandDelta     (b), 0.0f);
+        api.setParam (Param::bandExt       (b), 0.0f);
+    };
+
+    // 先复位全局默认参数
+    api.setParam (Param::ID::enabled,       1.0f);
+    api.setParam (Param::ID::phaseMode,     0.0f); // Natural
+    api.setParam (Param::ID::linearQuality, 1.0f); // Medium
+    api.setParam (Param::ID::xoverSlope,    1.0f); // 24 dB/oct
+    api.setCrossovers (200.0f, 1000.0f, 6000.0f);
+    api.setParam (Param::ID::inputGain,     0.0f);
+    api.setParam (Param::ID::outputGain,    0.0f);
+    api.setParam (Param::ID::lookahead,     0.0f);
+    api.setParam (Param::ID::oversampling,  0.0f);
+    api.setParam (Param::ID::globalMix,     100.0f);
+    api.setParam (Param::ID::autoGain,      0.0f);
+    api.setParam (Param::ID::monitorMode,   0.0f);
+
+    switch (idx)
+    {
+        case 0: // Default
+            for (int b = 0; b < 4; ++b)
+                setBand (b, -20.0f, -6.0f, 4.0f, 10.0f, 100.0f, 0.0f, 100.0f, 6.0f, 0, 0);
+            break;
+
+        case 1: // Gentle Bus Glue
+            api.setParam (Param::ID::xoverSlope, 0.0f); // 12 dB/oct
+            api.setCrossovers (160.0f, 900.0f, 5200.0f);
+            setBand (0, -18.0f, -4.0f, 2.0f, 25.0f, 180.0f, 1.0f, 100.0f, 12.0f, 1, 0);
+            setBand (1, -20.0f, -3.5f, 2.0f, 18.0f, 140.0f, 0.8f, 100.0f, 12.0f, 1, 0);
+            setBand (2, -21.0f, -3.5f, 2.2f, 14.0f, 120.0f, 0.8f, 100.0f, 12.0f, 1, 0);
+            setBand (3, -22.0f, -3.0f, 2.0f, 10.0f, 100.0f, 1.2f, 100.0f, 12.0f, 1, 0);
+            break;
+
+        case 2: // Transparent Leveler
+            api.setParam (Param::ID::phaseMode, 2.0f); // Linear Phase
+            api.setCrossovers (180.0f, 1100.0f, 6500.0f);
+            for (int b = 0; b < 4; ++b)
+                setBand (b, -24.0f, -5.0f, 2.5f, 15.0f, 160.0f, 1.5f, 100.0f, 18.0f, 1, 0);
+            break;
+
+        case 3: // Mastering Warmth & Air
+            api.setParam (Param::ID::phaseMode, 2.0f); // Linear Phase
+            api.setCrossovers (120.0f, 850.0f, 7500.0f);
+            setBand (0, -16.0f, -4.5f, 3.0f, 30.0f, 220.0f, 1.5f, 100.0f, 10.0f, 1, 0);
+            setBand (1, -20.0f, -3.0f, 2.0f, 20.0f, 150.0f, 0.8f, 100.0f, 12.0f, 1, 0);
+            setBand (2, -22.0f, -3.5f, 2.2f, 12.0f, 120.0f, 0.5f, 100.0f, 12.0f, 1, 0);
+            setBand (3, -24.0f, -3.0f, 2.0f,  8.0f,  90.0f, 2.2f, 100.0f, 15.0f, 1, 0);
+            break;
+
+        case 4: // Linear Phase Master
+            api.setParam (Param::ID::phaseMode,     2.0f);
+            api.setParam (Param::ID::linearQuality, 2.0f); // High
+            api.setCrossovers (140.0f, 1000.0f, 6000.0f);
+            setBand (0, -18.0f, -5.0f, 3.2f, 22.0f, 180.0f, 1.2f, 100.0f,  9.0f, 1, 0);
+            setBand (1, -20.0f, -4.0f, 2.5f, 16.0f, 140.0f, 1.0f, 100.0f, 10.0f, 1, 0);
+            setBand (2, -21.0f, -4.0f, 2.5f, 12.0f, 110.0f, 1.0f, 100.0f, 10.0f, 1, 0);
+            setBand (3, -22.0f, -4.5f, 2.8f,  6.0f,  85.0f, 1.5f, 100.0f, 10.0f, 0, 0);
+            break;
+
+        case 5: // Punchy Loudness
+            api.setParam (Param::ID::lookahead,  1.0f); // 1 ms
+            api.setParam (Param::ID::globalMix,  85.0f);
+            api.setCrossovers (150.0f, 950.0f, 5500.0f);
+            setBand (0, -16.0f, -8.0f, 4.5f, 35.0f, 120.0f, 2.5f, 100.0f, 6.0f, 0, 0);
+            setBand (1, -18.0f, -6.0f, 3.5f, 20.0f, 100.0f, 1.8f, 100.0f, 6.0f, 0, 0);
+            setBand (2, -19.0f, -6.0f, 3.5f, 12.0f,  90.0f, 2.0f, 100.0f, 6.0f, 0, 0);
+            setBand (3, -20.0f, -6.5f, 4.0f,  5.0f,  75.0f, 2.4f, 100.0f, 6.0f, 0, 0);
+            break;
+
+        case 6: // Drum Bus Smash
+            api.setParam (Param::ID::xoverSlope, 2.0f); // 36 dB/oct
+            api.setParam (Param::ID::globalMix,  75.0f);
+            api.setCrossovers (130.0f, 800.0f, 4800.0f);
+            setBand (0, -15.0f, -10.0f, 6.0f, 28.0f,  95.0f, 3.2f, 100.0f, 4.0f, 0, 0);
+            setBand (1, -18.0f,  -8.0f, 4.5f, 15.0f,  85.0f, 1.5f, 100.0f, 6.0f, 0, 0);
+            setBand (2, -18.0f,  -7.0f, 4.0f,  8.0f,  70.0f, 2.0f, 100.0f, 6.0f, 0, 0);
+            setBand (3, -20.0f,  -6.0f, 3.5f,  3.0f,  60.0f, 2.5f, 100.0f, 6.0f, 0, 0);
+            break;
+
+        case 7: // Tight Sub & Kick
+            api.setParam (Param::ID::xoverSlope, 3.0f); // 48 dB/oct
+            api.setCrossovers (95.0f, 450.0f, 3800.0f);
+            setBand (0, -14.0f, -12.0f, 8.0f, 12.0f,  80.0f, 2.8f, 100.0f, 3.0f, 0, 0);
+            setBand (1, -18.0f,  -6.0f, 3.5f, 18.0f, 110.0f, 0.5f, 100.0f, 6.0f, 0, 0);
+            setBand (2, -22.0f,  -3.0f, 2.0f, 12.0f, 100.0f, 0.0f,  80.0f, 8.0f, 0, 0);
+            setBand (3, -24.0f,  -2.0f, 1.8f,  8.0f,  90.0f, 0.5f,  80.0f, 8.0f, 0, 0);
+            break;
+
+        case 8: // Crisp Transient Snap (Expand)
+            api.setCrossovers (160.0f, 900.0f, 4500.0f);
+            setBand (0, -18.0f, +4.0f, 2.5f,  2.0f,  90.0f, 0.5f, 100.0f, 6.0f, 0, 1);
+            setBand (1, -20.0f, -3.0f, 2.2f, 15.0f, 110.0f, 0.0f, 100.0f, 8.0f, 0, 0);
+            setBand (2, -20.0f, +4.5f, 2.8f,  1.5f,  75.0f, 1.0f, 100.0f, 6.0f, 0, 1);
+            setBand (3, -22.0f, +6.0f, 3.2f,  0.8f,  60.0f, 1.8f, 100.0f, 6.0f, 0, 1);
+            break;
+
+        case 9: // Vocal Presence & De-Ess
+            api.setCrossovers (180.0f, 1200.0f, 5800.0f);
+            setBand (0, -22.0f,  -6.0f, 3.0f, 18.0f, 130.0f, -1.0f, 100.0f,  8.0f, 1, 0);
+            setBand (1, -20.0f,  -4.5f, 2.8f, 12.0f, 110.0f,  1.2f, 100.0f, 10.0f, 1, 0);
+            setBand (2, -18.0f,  -5.0f, 3.2f,  6.0f,  85.0f,  2.2f, 100.0f,  8.0f, 0, 0);
+            setBand (3, -26.0f, -10.0f, 6.5f,  0.5f,  45.0f, -0.5f, 100.0f,  4.0f, 0, 0);
+            break;
+
+        case 10: // Acoustic Guitar Polish
+            api.setCrossovers (170.0f, 750.0f, 5000.0f);
+            setBand (0, -19.0f, -7.5f, 4.0f, 10.0f, 110.0f, -0.8f, 100.0f,  6.0f, 1, 0);
+            setBand (1, -21.0f, -5.0f, 3.0f, 14.0f, 120.0f,  0.4f, 100.0f,  9.0f, 1, 0);
+            setBand (2, -22.0f, -3.5f, 2.2f, 10.0f,  95.0f,  1.0f, 100.0f, 10.0f, 1, 0);
+            setBand (3, -24.0f, -4.0f, 2.5f,  4.0f,  75.0f,  2.0f, 100.0f, 10.0f, 0, 0);
+            break;
+
+        case 11: // Upward Detail Lift
+        default:
+            api.setCrossovers (200.0f, 1000.0f, 6000.0f);
+            setBand (0, -28.0f, +4.5f, 2.5f, 12.0f, 150.0f, 0.5f, 100.0f, 12.0f, 1, 0);
+            setBand (1, -30.0f, +5.5f, 2.8f, 10.0f, 130.0f, 0.8f, 100.0f, 12.0f, 1, 0);
+            setBand (2, -30.0f, +6.0f, 3.0f,  8.0f, 110.0f, 1.2f, 100.0f, 12.0f, 1, 0);
+            setBand (3, -32.0f, +6.5f, 3.0f,  5.0f,  95.0f, 1.5f, 100.0f, 12.0f, 1, 0);
+            break;
+    }
+
+    abSlotState_[activeAbSlot_]       = apvts.copyState();
+    abSlotInitialized_[activeAbSlot_] = true;
+    reapplyStructureAndLatency();
+    if (uiWakeCallback_ != nullptr && juce::MessageManager::existsAndIsCurrentThread())
+        uiWakeCallback_ ({});
 }
 
 juce::AudioProcessorEditor* CrunchMBAudioProcessor::createEditor()

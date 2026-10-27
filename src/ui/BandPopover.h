@@ -116,6 +116,14 @@ public:
     void beginSliderDrag (int k, float mouseX);
     void dragSlider (int k, float mouseX);
     void endSliderDrag();
+
+    // ---- Ratio(k=0) / Knee(k=1) 双击数值输入（与 Knob 双击输入体验一致）----
+    bool openSliderEdit (int k);
+    void closeSliderEdit (bool commit);
+    bool isEditingSlider() const noexcept { return editingSlider_ >= 0; }
+    int  editingSliderForTest() const noexcept { return editingSlider_; }
+    bool handleSliderEditKey (const juce::KeyPress& key);
+    bool keyPressed (const juce::KeyPress& key) override { return handleSliderEditKey (key); }
     /**
      * Phase（R19）：滑块键盘/滚轮步进。
      *   k = 0 Ratio(1..20) / 1 Knee(0..48dB) / 2 Ext / 3 Detector / 4 Lookahead(三档)
@@ -276,6 +284,10 @@ private:
 
     bool  expertOpen_ = false;
     int   sliderDrag_ = -1;
+    int   editingSlider_ = -1;       // -1 = 未编辑；0 = Ratio；1 = Knee
+    juce::String sliderEditText_;
+    bool  sliderEditCursorOn_ = true;
+    juce::uint32 sliderLastBlinkMs_ = 0;
     float sliderDragX0_ = 0.0f;
     double sliderDragNorm0_ = 0.0;
 

@@ -197,10 +197,19 @@ void DisplayView::openPopoverForBand (int band)
     //      双击改分频时的输入框反而会被遮住。
     if (analyzerPanel_ != nullptr) analyzerPanel_->clickOutside();
     if (outputPanel_ != nullptr)   outputPanel_->clickOutside();
+    closePresetMenu();
+    closeDropDown();
+
+    const int b = juce::jlimit (0, Param::kNumBands - 1, band);
+    if (selectedBand_ != b)
+    {
+        selectedBand_ = b;
+        onSelectedBandChanged (b);
+    }
 
     float lx = 0.0f, rx = 0.0f;
-    bandEdgesPx (band, lx, rx);
-    bandPopover_->setBand (band);
+    bandEdgesPx (b, lx, rx);
+    bandPopover_->setBand (b);
     bandPopover_->setBandEdges (lx, rx);
     // R36（B6）：频率文本用真实 Hz、并且之后每次分频点变化都会重推（见 timerCallback）
     pushPopoverBandRange (true);
@@ -460,7 +469,7 @@ void DisplayView::setActive (bool active) noexcept
 //   · 刷新动作仍在消息线程、且不在回调栈里（避免回调中改组件状态）。
 void DisplayView::uiWakeFromParam (const juce::String& id)
 {
-    if (isTimerRunning())
+    if (isTimerRunning() && getTimerInterval() > 20)
         startTimerHz (60);
     idleFrames_ = 0;
     uiStatePending_ = true;
@@ -832,14 +841,21 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
     for(int b=0;b<4;++b){
         g.setFont(MBTheme::font(MBTheme::regular(),13*scale));g.setColour(b==selectedBand_?pal_.accent:pal_.dim);
         g.drawText(names[b],juce::Rectangle<float>{freqToX(bandCenterFreq(b))-70*scale,plotTopPx()+12*scale,140*scale,18*scale},juce::Justification::centred);
-        if(b==selectedBand_){const juce::String labels[]={"S","M","B",juce::String::fromUTF8("Δ")};
+        if(b==selectedBand_){
+            // UI #2 方案 A：一体化内凹胶囊底座槽 + 内部独立微凸按键，消除相邻按钮外阴影粘连
+            const auto tray = bandButtonTrayRect (b);
+            if (snap.isNeumorphic())
+                UiPack::NeuPainter::drawInsetRect (g, tray, snap.theme.radiusMd * scale, pal_, snap.theme.insetButton, scale, 1.0f, true);
+            else {
+                g.setColour (pal_.panel.withMultipliedAlpha (0.82f));
+                g.fillRoundedRectangle (tray, 7.0f * scale);
+                g.setColour (pal_.gridZ.withMultipliedAlpha (0.75f));
+                g.drawRoundedRectangle (tray, 7.0f * scale, 1.0f * scale);
+            }
+            const juce::String labels[]={"S","M","B",juce::String::fromUTF8("Δ")};
             for(int j=0;j<4;++j){bool on=j==0?getParamBool("band"+juce::String(b)+"Solo"):j==1?getParamBool("band"+juce::String(b)+"Mute"):j==2?isBandBypassed(b):getParamBool("band"+juce::String(b)+"Delta");
                 auto r=bandButtonRect(b,j);
-                if(snap.isNeumorphic())
-                    UiPack::NeuPainter::drawButton(g,r,pal_,snap.theme,on,r.contains(lastMousePos_),scale,1.0f,5*scale);
-                else {
-                    g.setColour(on?pal_.accent.withAlpha(.3f):pal_.surfaceA);g.fillRoundedRectangle(r,5*scale);
-                }
+                UiPack::NeuPainter::drawCompactCap(g,r,pal_,snap.theme,on,r.contains(lastMousePos_),scale,1.0f,5*scale,false);
                 g.setColour(on?pal_.accent:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),13*scale));g.drawText(labels[j],r,juce::Justification::centred);}}
         if(linkedFeedbackIndex_>=0 && animNowMs()<linkedFeedbackUntilMs_){
             const float edges[]={0,freqToX(cachedX1_),freqToX(cachedX2_),freqToX(cachedX3_),plotRightPx()};
@@ -936,33 +952,43 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
                 g.fillEllipse (px - rad, py - rad, rad * 2.0f, rad * 2.0f);
             }
 
-            // C4：hover 频点浮出小窗（段名 / Makeup / 中心 Hz）——更小更精致
-            if (hov)
+            // UI #4（C4）：hover 或拖拽频点浮出信息窗（放大尺寸与字号，对齐当前激活主题风格包与语言包）
+            const bool showTip = hov || ((drag_ == DragMode::Makeup || drag_ == DragMode::DotFreq) && dragBand_ == b);
+            if (showTip)
             {
                 const float mk = proc_.getBackend().getParamFast (Param::bandMakeup (b));
-                const juce::String l1 = names[b];
-                const juce::String l2 = "MAKEUP " + juce::String (mk, 1) + " dB";
-                const juce::String l3 = juce::String ((int) fcen) + " Hz";
-                const float bw = sx (104.0f), bh = sy (38.0f);
-                float tx = px - bw * 0.5f, ty = py - bh - sy (12.0f);
-                tx = juce::jlimit (2.0f, W - bw - 2.0f, tx);
-                if (ty < sy (32.0f)) ty = py + sy (12.0f);
-                auto box = juce::Rectangle<float> (tx, ty, bw, bh);
-                g.setColour (pal_.surface.withAlpha (0.96f));
-                g.fillRoundedRectangle (box, sx (5.0f));
-                g.setColour (pal_.accent);
-                g.drawRoundedRectangle (box, sx (5.0f), 1.0f);
+                const juce::String sign = (mk >= 0.0f) ? "+" : "";
+                const juce::String l1 = names[b] + "  " + fmtHzShort (fcen) + " Hz";
+                const juce::String l2 = snap.t ("knob.makeup") + ": " + sign + juce::String (mk, 1) + " dB";
+                const float bw = 156.0f * scale, bh = 58.0f * scale;
+                float tx = px - bw * 0.5f, ty = py - bh - 14.0f * scale;
+                tx = juce::jlimit (6.0f * scale, juce::jmax (6.0f * scale, plotRightPx() - bw - 6.0f * scale), tx);
+                if (ty < plotTopPx() + 6.0f * scale) ty = py + 16.0f * scale;
+                const auto box = juce::Rectangle<float> (tx, ty, bw, bh);
+                const float corner = (snap.isNeumorphic() ? snap.theme.radiusMd : 8.0f) * scale;
+                if (snap.isNeumorphic())
+                {
+                    UiPack::NeuPainter::drawRaisedRect (g, box, corner, pal_, snap.theme.shadowCard, scale, 0.98f, false);
+                    g.setColour (pal_.accent.withMultipliedAlpha (0.45f));
+                    g.drawRoundedRectangle (box.reduced (0.5f * scale), corner, 1.0f * scale);
+                }
+                else
+                {
+                    g.setColour (pal_.halo.withMultipliedAlpha (0.40f));
+                    g.fillRoundedRectangle (box.translated (0.0f, 3.0f * scale).expanded (2.0f * scale), corner + 2.0f * scale);
+                    g.setColour (pal_.popA);
+                    g.fillRoundedRectangle (box, corner);
+                    g.setColour (pal_.accent.withMultipliedAlpha (0.80f));
+                    g.drawRoundedRectangle (box, corner, 1.2f * scale);
+                }
                 g.setColour (pal_.text);
-                g.setFont (MBTheme::font (MBTheme::semiBold(), 9.5f));
-                g.drawText (l1, box.withTrimmedTop (sy (3.0f)).withHeight (sy (11.0f)),
-                            juce::Justification::centredTop);
+                g.setFont (MBTheme::font (MBTheme::semiBold(), 13.0f * scale));
+                g.drawText (l1, box.withTrimmedTop (5.0f * scale).withHeight (24.0f * scale).reduced (8.0f * scale, 0.0f),
+                            juce::Justification::centred, false);
                 g.setColour (pal_.accent);
-                g.setFont (MBTheme::font (MBTheme::regular(), 9.0f));
-                g.drawText (l2, box.withTrimmedTop (sy (14.0f)).withHeight (sy (11.0f)),
-                            juce::Justification::centredTop);
-                g.setColour (pal_.dim);
-                g.drawText (l3, box.withTrimmedTop (sy (25.0f)).withHeight (sy (10.0f)),
-                            juce::Justification::centredTop);
+                g.setFont (MBTheme::font (MBTheme::medium(), 12.5f * scale));
+                g.drawText (l2, box.withTrimmedTop (29.0f * scale).withHeight (23.0f * scale).reduced (8.0f * scale, 0.0f),
+                            juce::Justification::centred, false);
             }
         }
     }
@@ -1018,10 +1044,11 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
 
     g.setColour (pal_.accent);
     g.fillEllipse (17 * s, 20 * s, 6 * s, 6 * s);
-    g.setFont (MBTheme::font (MBTheme::uiMedium(), 18 * s));
+    const auto brandFont = MBTheme::brandTitleFont (18.0f * s);
+    g.setFont (brandFont);
     g.setColour (pal_.text);
     g.drawText ("CRUNCH", juce::Rectangle<float> { 30 * s, 0, 75 * s, l.topHeight() }, juce::Justification::centredLeft);
-    const float mbX = 30 * s + juce::GlyphArrangement::getStringWidth (MBTheme::font (MBTheme::uiMedium(), 18 * s), "CRUNCH") + 6 * s;
+    const float mbX = 30 * s + juce::GlyphArrangement::getStringWidth (brandFont, "CRUNCH") + 6 * s;
     g.setColour (pal_.accent);
     g.drawText ("MB", juce::Rectangle<float> { mbX, 0, 30 * s, l.topHeight() }, juce::Justification::centredLeft);
 
@@ -1036,29 +1063,80 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     g.strokePath (power, juce::PathStrokeType (1.6f * s));
     g.drawLine (c.x, c.y - 9 * s, c.x, c.y - 1 * s, 1.6f * s);
 
-    const juce::String names[4] = {
-        snap.t ("band.low"), snap.t ("band.lowMid"),
-        snap.t ("band.highMid"), snap.t ("band.high")
-    };
-    g.setFont (MBTheme::font (MBTheme::uiMedium(), 13 * s));
-    for (int b = 0; b < 4; ++b)
+    // ---- UI #6：① 顶栏预设选择窗口（替代原四个频段按钮） ----
     {
-        const auto r = l.bandTab (b);
-        const bool selected = (b == selectedBand_);
+        const auto presRect = l.presetSelector();
+        const bool presHov  = presRect.contains (lastMousePos_);
+        UiPack::NeuPainter::drawButton (g, presRect, pal_, snap.theme, presetMenuOpen_,
+                                        presHov, s, 1.0f, 6.0f * s);
+
+        const int curIdx = juce::jlimit (0, CrunchMBAudioProcessor::kNumFactoryPresets - 1,
+                                         proc_.getCurrentPresetIndex());
+        const int catIdx = curIdx / CrunchMBAudioProcessor::kPresetsPerCategory;
+        const juce::String catName  = snap.t ("preset.cat."  + juce::String (catIdx));
+        const juce::String itemName = snap.t ("preset.item." + juce::String (curIdx));
+        const juce::String display  = catName + " / " + itemName;
+
+        g.setColour (presetMenuOpen_ ? pal_.accent : pal_.text);
+        g.setFont (MBTheme::font (MBTheme::uiMedium(), 12.5f * s));
+        g.drawText (display,
+                    presRect.withTrimmedLeft (12.0f * s).withTrimmedRight (24.0f * s),
+                    juce::Justification::centredLeft, true);
+
+        const float pax = presRect.getRight() - 12.0f * s;
+        const float pay = presRect.getCentreY();
+        juce::Path chev;
+        if (presetMenuOpen_)
+        {
+            chev.startNewSubPath (pax - 4.0f * s, pay + 2.0f * s);
+            chev.lineTo          (pax,            pay - 2.5f * s);
+            chev.lineTo          (pax + 4.0f * s, pay + 2.0f * s);
+        }
+        else
+        {
+            chev.startNewSubPath (pax - 4.0f * s, pay - 2.0f * s);
+            chev.lineTo          (pax,            pay + 2.5f * s);
+            chev.lineTo          (pax + 4.0f * s, pay - 2.0f * s);
+        }
+        g.setColour (presetMenuOpen_ ? pal_.accent : pal_.dim);
+        g.strokePath (chev, juce::PathStrokeType (1.5f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    // ---- UI #6：② 顶栏 A/B 对比按钮（仅显示 A / B 双字母图标，默认 A 高亮，点击切 B 高亮） ----
+    {
+        const auto abRect = l.abCompareButton();
+        const bool isB    = proc_.isAbSlotB();
+        const float halfW = abRect.getWidth() * 0.5f;
+        const juce::Rectangle<float> cellA (abRect.getX(),         abRect.getY(), halfW, abRect.getHeight());
+        const juce::Rectangle<float> cellB (abRect.getX() + halfW, abRect.getY(), halfW, abRect.getHeight());
+
         if (snap.isNeumorphic())
         {
-            UiPack::NeuPainter::drawButton (g, r, pal_, snap.theme, selected,
-                                            r.contains (lastMousePos_), s, 1.0f, 6 * s);
+            UiPack::NeuPainter::drawInsetRect (g, abRect, 6.0f * s, pal_, snap.theme.insetButton, s, 1.0f, true);
+            const auto activeCell = (isB ? cellB : cellA).reduced (2.2f * s);
+            UiPack::NeuPainter::drawCompactCap (g, activeCell, pal_, snap.theme, true, false, s, 1.0f, 4.5f * s, true);
         }
-        else if (selected)
+        else
         {
-            g.setColour (pal_.accent.withAlpha (.13f));
-            g.fillRoundedRectangle (r, 5 * s);
+            g.setColour (pal_.track);
+            g.fillRoundedRectangle (abRect, 6.0f * s);
+            g.setColour (pal_.gridZ);
+            g.drawRoundedRectangle (abRect, 6.0f * s, 1.0f * s);
+
+            const auto activeCell = (isB ? cellB : cellA).reduced (2.0f * s);
+            g.setColour (pal_.accent.withMultipliedAlpha (0.26f));
+            g.fillRoundedRectangle (activeCell, 4.5f * s);
             g.setColour (pal_.accent);
-            g.fillRect (r.withTop (r.getBottom() - 2 * s));
+            g.drawRoundedRectangle (activeCell, 4.5f * s, 1.2f * s);
         }
-        g.setColour (selected ? pal_.accent : pal_.dim);
-        g.drawText (names[b], r, juce::Justification::centred);
+
+        g.setFont (MBTheme::font (! isB ? MBTheme::bold() : MBTheme::medium(), 13.0f * s));
+        g.setColour (! isB ? (snap.isNeumorphic() ? pal_.onAccent : pal_.accent) : pal_.dim);
+        g.drawText ("A", cellA, juce::Justification::centred, false);
+
+        g.setFont (MBTheme::font (isB ? MBTheme::bold() : MBTheme::medium(), 13.0f * s));
+        g.setColour (isB ? (snap.isNeumorphic() ? pal_.onAccent : pal_.accent) : pal_.dim);
+        g.drawText ("B", cellB, juce::Justification::centred, false);
     }
 
     displayRangeBtn_ = l.range();
@@ -1080,18 +1158,25 @@ void DisplayView::drawTopStrip (juce::Graphics& g)
     g.drawLine (ax - 3 * s, ay - 2 * s, ax, ay + 1 * s, s);
     g.drawLine (ax, ay + 1 * s, ax + 3 * s, ay - 2 * s, s);
 
+    // ---- 操作 #4：重绘右上角按钮图标（精致三道错落调节滑杆图标） ----
     const auto t = l.theme();
+    const bool tOpen = dropDownOpen_ && dropDownThemeMode_;
     UiPack::NeuPainter::drawButton (g, t, pal_, snap.theme,
-                                    dropDownOpen_ && dropDownThemeMode_,
+                                    tOpen,
                                     t.contains (lastMousePos_), s, 1.0f, 6 * s);
-    const auto centre = t.getCentre();
-    g.setColour (pal_.text);
-    g.drawEllipse (juce::Rectangle<float> (16 * s, 16 * s).withCentre (centre), 1.3f * s);
-    for (int i = 0; i < 3; ++i)
     {
-        const float a = -juce::MathConstants<float>::halfPi + i * juce::MathConstants<float>::twoPi / 3;
-        const auto dot = centre + juce::Point<float> (std::cos (a), std::sin (a)) * (4.2f * s);
-        g.fillEllipse (juce::Rectangle<float> (2.4f * s, 2.4f * s).withCentre (dot));
+        const auto centre    = t.getCentre();
+        const float halfSpan = 6.8f * s;
+        const float rowY[3]  = { centre.y - 5.0f * s, centre.y, centre.y + 5.0f * s };
+        const float knobX[3] = { centre.x - 2.6f * s, centre.x + 3.0f * s, centre.x - 1.2f * s };
+        const float rKnob    = 1.9f * s;
+        for (int i = 0; i < 3; ++i)
+        {
+            g.setColour (tOpen ? pal_.accent.withMultipliedAlpha (0.85f) : pal_.dim);
+            g.drawLine (centre.x - halfSpan, rowY[i], centre.x + halfSpan, rowY[i], 1.4f * s);
+            g.setColour (pal_.accent);
+            g.fillEllipse (knobX[i] - rKnob, rowY[i] - rKnob, rKnob * 2.0f, rKnob * 2.0f);
+        }
     }
 }
 
@@ -1327,14 +1412,23 @@ void DisplayView::timerCallback()
                      : juce::jlimit (0.001, 0.1, (double) (nowMs - lastMeterMs_) / 1000.0);
     lastMeterMs_ = nowMs;
 
-    // ---- 电平表弹道 ----
+    // ---- 右侧 IN/OUT 电平表弹道（起音 35ms 微平滑 + 释放 220ms 指数衰落，消除块间高频抖动） ----
     const float inLin  = proc_.getInputPeak();
     const float outLin = proc_.getOutputPeak();
-    const float inDb   = juce::Decibels::gainToDecibels (inLin,  -120.0f);
-    const float outDb  = juce::Decibels::gainToDecibels (outLin, -120.0f);
+    const float inDb   = juce::jlimit (-60.0f, 6.0f, juce::Decibels::gainToDecibels (inLin,  -120.0f));
+    const float outDb  = juce::jlimit (-60.0f, 6.0f, juce::Decibels::gainToDecibels (outLin, -120.0f));
 
-    meterInDb_  = (inDb  > meterInDb_)  ? inDb  : juce::jmax (meterInDb_  - 60.0f * (float) dt, -60.0f);
-    meterOutDb_ = (outDb > meterOutDb_) ? outDb : juce::jmax (meterOutDb_ - 60.0f * (float) dt, -60.0f);
+    const float kMeterAtk = (float) (1.0 - std::exp (-dt / 0.035));   // τ_attack  = 35 ms
+    const float kMeterRel = (float) (1.0 - std::exp (-dt / 0.220));   // τ_release = 220 ms
+    auto smoothMeter = [&] (float& cur, float target)
+    {
+        const float k = (target > cur) ? kMeterAtk : kMeterRel;
+        cur += (target - cur) * k;
+        if (cur < -59.9f && target <= -59.9f)
+            cur = -60.0f;
+    };
+    smoothMeter (meterInDb_,  inDb);
+    smoothMeter (meterOutDb_, outDb);
 
     updatePeakHold (peakInDb_,  peakInHoldUntilMs_,  inDb,  nowMs, dt);
     updatePeakHold (peakOutDb_, peakOutHoldUntilMs_, outDb, nowMs, dt);
@@ -1374,7 +1468,7 @@ void DisplayView::timerCallback()
         {
             idleFrames_     = 0;
             uiStatePending_ = true;
-            if (! useTestClock_ && isTimerRunning())
+            if (! useTestClock_ && isTimerRunning() && getTimerInterval() > 20)
                 startTimerHz (60);
         }
         if (fullSync || ! pendingParamIds_.isEmpty())
@@ -1666,20 +1760,28 @@ void DisplayView::updateCurve (double dtSeconds)
         const float rawTarget  = mk;
         const float liveTarget = mk + proc_.getBandGainDb (b);
 
-        bandRawDb_[(size_t) b]  = smoothTowards (bandRawDb_[(size_t) b],  rawTarget,  dtSeconds, 0.060f);
-        bandLiveDb_[(size_t) b] = smoothTowards (bandLiveDb_[(size_t) b], liveTarget, dtSeconds, 0.060f);
+        // 操作 #2 & #3：
+        //   · 拖拽当前段 Makeup 或分频点时直接零滞后跟手（消除 120ms 双重滤波拖拽黏滞）；
+        //   · 非拖拽时使用统一单阶平滑（τ=45ms），彻底消除原 bandRawDb_（单阶）与
+        //     bandDisplayDb_（二阶串联）动画公式不一致导致的曲线与 Range 上边界分离。
+        const bool directDrag = (drag_ == DragMode::Makeup && dragBand_ == b)
+                             || (drag_ == DragMode::Divider)
+                             || (drag_ == DragMode::DotFreq);
+        if (directDrag)
+        {
+            bandRawDb_[(size_t) b]     = rawTarget;
+            bandLiveDb_[(size_t) b]    = liveTarget;
+            bandDisplayDb_[(size_t) b] = bypassed ? rawTarget : liveTarget;
+        }
+        else
+        {
+            bandRawDb_[(size_t) b]  = smoothTowards (bandRawDb_[(size_t) b],  rawTarget,  dtSeconds, 0.045f);
+            bandLiveDb_[(size_t) b] = smoothTowards (bandLiveDb_[(size_t) b], liveTarget, dtSeconds, 0.045f);
 
-        // P0：一条实时粗线 = 实际响应（**不做 range 截断**，Pro-MB 语义：
-        // 黄线允许压过 range 深度；range 只决定"潜在范围"钟型区的底板）
-        //
-        // ⚠️ BYP 切换这一路也必须平滑：原来这里在 raw 和 live 之间**瞬时切换**，
-        //    若该段正被大幅压缩（live = −20 dB、raw = 0 dB），曲线会瞬间跳 20 dB
-        //    —— 正是 SPI 要消除的现象，却从 BYP 这条路漏了过去。
-        //    displayTarget 平滑后再赋给 bandDisplayDb_。
-        const float displayTarget = bypassed ? bandRawDb_[(size_t) b]
-                                             : bandLiveDb_[(size_t) b];
-        bandDisplayDb_[(size_t) b] = smoothTowards (bandDisplayDb_[(size_t) b],
-                                                    displayTarget, dtSeconds, 0.060f);
+            const float displayTarget = bypassed ? rawTarget : liveTarget;
+            bandDisplayDb_[(size_t) b] = smoothTowards (bandDisplayDb_[(size_t) b],
+                                                        displayTarget, dtSeconds, 0.045f);
+        }
     }
 
     for (int i = 0; i < kCurvePoints; ++i)
@@ -1692,7 +1794,7 @@ void DisplayView::updateCurve (double dtSeconds)
             base += w * bandRawDb_[(size_t) b];
         }
         curveDb_[(size_t) i]  = d;           // EQ 粗线（实时总响应）
-        baseDb_[(size_t) i]   = base;        // Range 层顶边基准（静态）
+        baseDb_[(size_t) i]   = base;        // 频点与静态地板基准
     }
 
     // P1：Display Range 目标量程（平滑动画在 timerCallback 里做，那里有 dt）
@@ -1793,7 +1895,8 @@ void DisplayView::refreshCurvePaths()
                 const float f = curveFreqs_[(size_t) i];
                 const float w = bellWeight (b, f);
                 const float x = freqToX (f);
-                const float yTop = gainToY (baseDb_[(size_t) i]);
+                // 操作 #2：Range 填充区的上边界严格跟随当前 EQ 曲线（curveDb_），底边保持静态 Range 边界
+                const float yTop = gainToY (curveDb_[(size_t) i]);
                 const float yBot = gainToY (baseDb_[(size_t) i] + w * rangeDb);
                 if (i == 0) { fill.startNewSubPath (x, yTop); edge.startNewSubPath (x, yBot); }
                 else        { fill.lineTo (x, yTop);          edge.lineTo (x, yBot); }
@@ -1812,6 +1915,20 @@ void DisplayView::refreshCurvePaths()
         rangeBypassed_ = isBandBypassed (selectedBand_);
     }
     curvePathsValid_ = true;
+}
+
+void DisplayView::syncCurveImmediate()
+{
+    pollStructureParams();
+    for (int b = 0; b < Param::kNumBands; ++b)
+    {
+        bandRangeDb_[(size_t) b] = proc_.getBackend().getParamFast (Param::bandRange (b));
+        if (drag_ == DragMode::Range && dragBand_ == b)
+            rangeDisplay_[(size_t) b] = bandRangeDb_[(size_t) b];
+    }
+    updateCurve (0.0);
+    refreshCurvePaths();
+    pushPopoverBandRange (false);
 }
 
 // Phase A：refreshSpectrumPaths() / drawSpectrum() 已整体拆到 SpectrumView 组件。
@@ -2085,16 +2202,28 @@ int DisplayView::hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut)
     return 0;
 }
 
-// R36（B4）：段内 S/M/B/Δ 按钮列。用户实测"按钮太小"：
-//   24×24 / 间距 30 → 28×28 / 间距 34；列右缘仍是"距分界线 16"，
-//   所以只向左变宽，不会压到 IN/OUT 电平表（在 kMeterX−8 处收口）。
+// R36（B4）+ UI #2 方案 A：段内 S/M/B/Δ 按钮列与一体化内凹底座槽。
+//   按钮宽 26*s，步进 33*s（净间距 7*s，彻底消除新拟物阴影互相穿透粘连），
+//   外围包覆 bandButtonTrayRect 内凹胶囊槽。
 juce::Rectangle<float> DisplayView::bandButtonRect (int band, int btn) const
 {
+    const float s = EditorLayout (getLocalBounds()).scale;
+    const float totalButtonsW = 3.0f * 33.0f * s + 26.0f * s; // 125 * s
+    const float start = juce::jlimit (12.0f * s,
+                                      juce::jmax (12.0f * s, plotRightPx() - totalButtonsW - 10.0f * s),
+                                      freqToX (bandCenterFreq (band)) - totalButtonsW * 0.5f);
+    return { start + 33.0f * s * (float) btn, plotTopPx() + 40.0f * s, 26.0f * s, 26.0f * s };
+}
 
-    const float s=EditorLayout(getLocalBounds()).scale;
-    const float start=juce::jlimit(10*s,juce::jmax(10*s,plotRightPx()-126*s),freqToX(bandCenterFreq(band))-60*s);
-    return {start+31*s*(float)btn,plotTopPx()+40*s,27*s,27*s};
-
+juce::Rectangle<float> DisplayView::bandButtonTrayRect (int band) const
+{
+    const float s = EditorLayout (getLocalBounds()).scale;
+    const auto first = bandButtonRect (band, 0);
+    const auto last  = bandButtonRect (band, 3);
+    return juce::Rectangle<float> (first.getX() - 4.0f * s,
+                                   first.getY() - 3.5f * s,
+                                   (last.getRight() - first.getX()) + 8.0f * s,
+                                   first.getHeight() + 7.0f * s);
 }
 
 int DisplayView::hitTestDivider (juce::Point<float> p) const
@@ -2139,7 +2268,13 @@ void DisplayView::applyDividerFreq (int index, float freq)
     if (index == 0) x1 = freq;
     if (index == 1) x2 = freq;
     if (index == 2) x3 = freq;
+    Param::clampCrossovers (x1, x2, x3);
     proc_.getBackend().setCrossovers (x1, x2, x3);   // ≥1 八度链统一钳制并回写
+    cachedX1_ = x1; cachedX2_ = x2; cachedX3_ = x3;
+    weightsDirty_ = true;
+    curvePathsValid_ = false;
+    syncCurveImmediate();
+    repaint();
 }
 
 void DisplayView::applyCenterFreq (int band, float freq)
@@ -2189,6 +2324,8 @@ void DisplayView::applyCenterFreq (int band, float freq)
     cachedX1_ = x1; cachedX2_ = x2; cachedX3_ = x3;
     weightsDirty_ = true;
     curvePathsValid_ = false;
+    syncCurveImmediate();
+    repaint();
 }
 
 void DisplayView::toggleBypass (int band, bool forceBypass)
@@ -2517,6 +2654,10 @@ bool DisplayView::keyPressed (const juce::KeyPress& key)
             return true;
         }
     }
+    // 优先转发给 BandPopover 的 Ratio / Knee 双击数值输入框
+    if (bandPopover_ != nullptr && bandPopover_->isEditingSlider())
+        return bandPopover_->handleSliderEditKey (key);
+
     // Phase（R19）：popover 内自绘滑轨的键盘步进（↑/↓/←/→，Shift = 细调）。
     // 此前这些滑块只有鼠标拖动，键盘完全无效——R17/R18 清点漏掉的第三例。
     if (bandPopover_ != nullptr && bandPopover_->isOpen())
@@ -2549,15 +2690,43 @@ void DisplayView::mouseMove (const juce::MouseEvent& e)
     ensureTimerRunning();      // Phase E-2：悬停可能触发面板开合动画
     const auto p = e.position;
 
-    // Phase：自绘下拉的 hover 高亮
+    // Phase：自绘下拉与二级预设菜单的 hover 高亮
+    if (presetMenuOpen_)
+    {
+        int  newCat    = presetHoverCategory_;
+        int  newItem   = -1;
+        bool newSaveAs = presetSaveAsRect().contains (p);
+        for (int c = 0; c < CrunchMBAudioProcessor::kNumPresetCategories; ++c)
+            if (presetCategoryRowRect (c).contains (p))
+                newCat = c;
+        for (int i = 0; i < CrunchMBAudioProcessor::kPresetsPerCategory; ++i)
+            if (presetItemRowRect (i).contains (p))
+                newItem = i;
+        if (newCat != presetHoverCategory_ || newItem != presetHoverItem_ || newSaveAs != presetHoverSaveAs_)
+        {
+            presetHoverCategory_ = newCat;
+            presetHoverItem_     = newItem;
+            presetHoverSaveAs_   = newSaveAs;
+            repaint();
+        }
+    }
     if (dropDownOpen_)
     {
-        int item = -1;
-        const bool hit = hitTestDropDownItem (p, item);
-        if (hit != (dropDownHover_ == item) || (hit && item != dropDownHover_))
+        if (dropDownThemeMode_)
         {
-            dropDownHover_ = hit ? item : -1;
-            repaint();
+            if (EditorLayout (getLocalBounds(), composition_.snapshot().layout).packSwitcherCard().contains (p)
+                || EditorLayout (getLocalBounds(), composition_.snapshot().layout).packSwitcherCard().contains (lastMousePos_))
+                repaint();
+        }
+        else
+        {
+            int item = -1;
+            const bool hit = hitTestDropDownItem (p, item);
+            if (hit != (dropDownHover_ == item) || (hit && item != dropDownHover_))
+            {
+                dropDownHover_ = hit ? item : -1;
+                repaint();
+            }
         }
     }
     lastMousePos_ = p;
@@ -2672,10 +2841,14 @@ juce::Rectangle<float> DisplayView::dropDownRect() const
 
 bool DisplayView::hitTestDropDownItem (juce::Point<float> p, int& itemOut) const
 {
-
-    if(!dropDownOpen_)return false;const auto r=dropDownRect();if(!r.contains(p))return false;
-    itemOut=juce::jlimit(0,dropDownCount_-1,(int)((p.y-r.getY())/(r.getHeight()/dropDownCount_)));return true;
-
+    if (! dropDownOpen_ || dropDownThemeMode_ || dropDownCount_ <= 0)
+        return false;
+    const auto r = dropDownRect();
+    if (! r.contains (p))
+        return false;
+    itemOut = juce::jlimit (0, dropDownCount_ - 1,
+                            (int) ((p.y - r.getY()) / (r.getHeight() / (float) dropDownCount_)));
+    return true;
 }
 
 void DisplayView::openDropDown (int count)
@@ -2734,6 +2907,7 @@ bool DisplayView::hitTestGearButton (juce::Point<float> p) const
 // 三个调色板等于白写。
 void DisplayView::openThemeMenu()
 {
+    closePresetMenu();
     togglePopover(false);
     if(linkedDrawer_) linkedDrawer_->setOpen(false);
     if(analyzerPanel_) analyzerPanel_->clickOutside();
@@ -2746,7 +2920,7 @@ void DisplayView::openThemeMenu()
     dropDownParamId_.clear();
     dropDownChoices_.clear();
     dropDownThemeMode_ = true;
-    dropDownCount_     = 4;          // Blue / Red / Cream
+    dropDownCount_     = 0;          // 旧 4 行主题菜单已移除，仅保留新版四包主题卡片（含 MIDI Learn）
     dropDownHover_     = -1;
     dropDownOpen_      = true;
     setWantsKeyboardFocus (true);
@@ -2845,91 +3019,87 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     const auto& snap = composition_.snapshot();
     const EditorLayout l (getLocalBounds(), snap.layout);
     const float s = l.scale;
-    const auto r = dropDownRect();
-    const bool themeMode  = dropDownThemeMode_;                    // R34（N6）
+    const bool themeMode  = dropDownThemeMode_;
     const bool globalMode = (! themeMode) && dropDownParamId_.isNotEmpty();
-    const float rowH = r.getHeight() / (float)juce::jmax(1,dropDownCount_);
 
-    const int curIdx = dropDownCurrentIndex();
-    juce::StringArray labels;
-    if (themeMode)
+    if (! themeMode && dropDownCount_ > 0)
     {
-        labels.add ("Blue");
-        labels.add ("Red");
-        labels.add ("Cream");
-        labels.add (midiLearnActive_ ? snap.t ("pack.midiLearnOn") : snap.t ("pack.midiLearnOff"));
-    }
-    else if (globalMode)
-    {
-        labels = dropDownChoices_;
-    }
-    else
-    {
-        const juce::String dr[5] = { snap.t ("top.autoRange"), "+/- 3 dB", "+/- 6 dB",
-                                     "+/- 12 dB", "+/- 30 dB" };
-        for (int i = 0; i < dropDownCount_; ++i) labels.add (dr[i]);
-    }
-
-    if (snap.isNeumorphic())
-    {
-        UiPack::NeuPainter::drawRaisedRect (g, r, snap.theme.radiusLg * s, pal_, snap.theme.shadowCard, s, 1.0f, false);
-    }
-    else
-    {
-        const float k = juce::jmax (0.6f, r.getHeight() / (22.0f * 5.0f));
-        struct Layer { float dy; float alpha; float expand; };
-        const Layer layers[3] = {
-            { 2.0f, 0.30f, 0.0f },
-            { 6.0f, 0.20f, 3.0f },
-            { 14.0f, 0.14f, 7.0f },
-        };
-        for (const auto& L : layers)
+        const auto r = dropDownRect();
+        const float rowH = r.getHeight() / (float) juce::jmax (1, dropDownCount_);
+        const int curIdx = dropDownCurrentIndex();
+        juce::StringArray labels;
+        if (globalMode)
         {
-            auto shadow = r.translated (0.0f, L.dy * k).expanded (L.expand * k);
-            g.setColour (pal_.halo.withMultipliedAlpha (L.alpha * 1.4f));
-            g.fillRoundedRectangle (shadow, r.getWidth() * 0.08f + L.expand * k);
-        }
-
-        g.setColour (pal_.popA);
-        g.fillRoundedRectangle (r, r.getWidth() * 0.08f);
-        g.setColour (pal_.accent.withAlpha (0.55f));
-        g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
-    }
-
-    g.setFont (MBTheme::font (MBTheme::uiRegular(), 13.0f * s));
-    for (int i = 0; i < dropDownCount_; ++i)
-    {
-        const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
-                                                 r.getWidth(), rowH);
-        const bool cur = (i == curIdx);
-        const bool hot = (i == dropDownHover_);
-        if (snap.isNeumorphic())
-        {
-            if (cur || hot)
-                UiPack::NeuPainter::drawButton (g, row.reduced (4.0f * s, 2.0f * s),
-                                                pal_, snap.theme, cur, hot, s, 1.0f, 5.0f * s);
+            labels = dropDownChoices_;
         }
         else
         {
-            if (hot && ! cur)
-            {
-                g.setColour (pal_.track.withAlpha (0.7f));
-                g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
-            }
-            if (cur)
-            {
-                g.setColour (pal_.accent.withAlpha (0.85f));
-                g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
-            }
+            const juce::String dr[5] = { snap.t ("top.autoRange"), "+/- 3 dB", "+/- 6 dB",
+                                         "+/- 12 dB", "+/- 30 dB" };
+            for (int i = 0; i < dropDownCount_; ++i) labels.add (dr[i]);
         }
-        g.setColour (cur ? (snap.isNeumorphic() ? pal_.accent : pal_.onAccent)
-                         : (hot ? pal_.text : pal_.dim));
-        g.drawText (cur ? juce::String::fromUTF8 ("\xE2\x9C\x93  ") + labels[i] : labels[i],
-                    row.withTrimmedLeft (r.getWidth() * 0.08f),
-                    juce::Justification::centredLeft);
+
+        if (snap.isNeumorphic())
+        {
+            UiPack::NeuPainter::drawRaisedRect (g, r, snap.theme.radiusLg * s, pal_, snap.theme.shadowCard, s, 1.0f, false);
+        }
+        else
+        {
+            const float k = juce::jmax (0.6f, r.getHeight() / (22.0f * 5.0f));
+            struct Layer { float dy; float alpha; float expand; };
+            const Layer layers[3] = {
+                { 2.0f, 0.30f, 0.0f },
+                { 6.0f, 0.20f, 3.0f },
+                { 14.0f, 0.14f, 7.0f },
+            };
+            for (const auto& L : layers)
+            {
+                auto shadow = r.translated (0.0f, L.dy * k).expanded (L.expand * k);
+                g.setColour (pal_.halo.withMultipliedAlpha (L.alpha * 1.4f));
+                g.fillRoundedRectangle (shadow, r.getWidth() * 0.08f + L.expand * k);
+            }
+
+            g.setColour (pal_.popA);
+            g.fillRoundedRectangle (r, r.getWidth() * 0.08f);
+            g.setColour (pal_.accent.withAlpha (0.55f));
+            g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
+        }
+
+        g.setFont (MBTheme::font (MBTheme::uiRegular(), 13.0f * s));
+        for (int i = 0; i < dropDownCount_; ++i)
+        {
+            const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
+                                                     r.getWidth(), rowH);
+            const bool cur = (i == curIdx);
+            const bool hot = (i == dropDownHover_);
+            if (snap.isNeumorphic())
+            {
+                if (cur || hot)
+                    UiPack::NeuPainter::drawButton (g, row.reduced (4.0f * s, 2.0f * s),
+                                                    pal_, snap.theme, cur, hot, s, 1.0f, 5.0f * s);
+            }
+            else
+            {
+                if (hot && ! cur)
+                {
+                    g.setColour (pal_.track.withAlpha (0.7f));
+                    g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+                }
+                if (cur)
+                {
+                    g.setColour (pal_.accent.withAlpha (0.85f));
+                    g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+                }
+            }
+            g.setColour (cur ? (snap.isNeumorphic() ? pal_.accent : pal_.onAccent)
+                             : (hot ? pal_.text : pal_.dim));
+            g.drawText (cur ? juce::String::fromUTF8 ("\xE2\x9C\x93  ") + labels[i] : labels[i],
+                        row.withTrimmedLeft (r.getWidth() * 0.08f),
+                        juce::Justification::centredLeft);
+        }
     }
 
-    // ---- 齿轮菜单打开时，伴随绘制「四包正交组合切换卡片」（Theme / Palette / Layout / Locale / Rollback）----
+    // ---- 操作 #4：唯一新版「四包正交组合 + MIDI Learn」主题设置菜单卡片 ----
     if (themeMode)
     {
         const auto card = l.packSwitcherCard();
@@ -3006,6 +3176,10 @@ void DisplayView::drawDropDown (juce::Graphics& g)
 
         // Section 5: Rollback
         drawPackBtn (5, 0, snap.t ("pack.rollback"), false);
+
+        // Section 6: MIDI Learn（从旧主题下拉移入新版主题卡片）
+        drawPackBtn (6, 0, midiLearnActive_ ? snap.t ("pack.midiLearnOn") : snap.t ("pack.midiLearnOff"),
+                     midiLearnActive_);
     }
 }
 
@@ -3053,11 +3227,249 @@ bool DisplayView::handlePackSwitcherClick (juce::Point<float> p)
         rollbackUiPacks();
         return true;
     }
+    if (l.packOptionRect (6, 0).contains (p))
+    {
+        closeDropDown();
+        toggleMidiLearn();
+        return true;
+    }
     return true; // 点击落在卡片空白区域：消费点击且不误触底层频谱
+}
+
+juce::Rectangle<float> DisplayView::presetPrimaryRect() const
+{
+    const EditorLayout l (getLocalBounds(), composition_.snapshot().layout);
+    const float s   = l.scale;
+    const auto trig = l.presetSelector();
+    const float w   = 176.0f * s;
+    const float h   = (float) CrunchMBAudioProcessor::kNumPresetCategories * 32.0f * s + 12.0f * s;
+    return { trig.getX(), l.topHeight() + 4.0f * s, w, h };
+}
+
+juce::Rectangle<float> DisplayView::presetSecondaryRect() const
+{
+    const EditorLayout l (getLocalBounds(), composition_.snapshot().layout);
+    const float s   = l.scale;
+    const auto pri  = presetPrimaryRect();
+    const float w   = 212.0f * s;
+    const float h   = (float) CrunchMBAudioProcessor::kPresetsPerCategory * 32.0f * s + 52.0f * s;
+    const int cat   = juce::jlimit (0, CrunchMBAudioProcessor::kNumPresetCategories - 1, presetHoverCategory_);
+    const float y   = juce::jlimit (pri.getY(),
+                                    juce::jmax (pri.getY(), (float) getHeight() - h - 8.0f * s),
+                                    pri.getY() + (float) cat * 24.0f * s);
+    return { pri.getRight() + 6.0f * s, y, w, h };
+}
+
+juce::Rectangle<float> DisplayView::presetCategoryRowRect (int cat) const
+{
+    const EditorLayout l (getLocalBounds(), composition_.snapshot().layout);
+    const float s  = l.scale;
+    const auto pri = presetPrimaryRect();
+    const int c    = juce::jlimit (0, CrunchMBAudioProcessor::kNumPresetCategories - 1, cat);
+    return { pri.getX() + 6.0f * s,
+             pri.getY() + 6.0f * s + (float) c * 32.0f * s,
+             pri.getWidth() - 12.0f * s,
+             28.0f * s };
+}
+
+juce::Rectangle<float> DisplayView::presetItemRowRect (int itemInCat) const
+{
+    const EditorLayout l (getLocalBounds(), composition_.snapshot().layout);
+    const float s  = l.scale;
+    const auto sec = presetSecondaryRect();
+    const int idx  = juce::jlimit (0, CrunchMBAudioProcessor::kPresetsPerCategory - 1, itemInCat);
+    return { sec.getX() + 6.0f * s,
+             sec.getY() + 6.0f * s + (float) idx * 32.0f * s,
+             sec.getWidth() - 12.0f * s,
+             28.0f * s };
+}
+
+juce::Rectangle<float> DisplayView::presetSaveAsRect() const
+{
+    const EditorLayout l (getLocalBounds(), composition_.snapshot().layout);
+    const float s   = l.scale;
+    const auto sec  = presetSecondaryRect();
+    const float top = sec.getY() + 6.0f * s + (float) CrunchMBAudioProcessor::kPresetsPerCategory * 32.0f * s + 10.0f * s;
+    return { sec.getX() + 6.0f * s, top, sec.getWidth() - 12.0f * s, 28.0f * s };
+}
+
+void DisplayView::openPresetMenu()
+{
+    if (presetMenuOpen_)
+    {
+        closePresetMenu();
+        return;
+    }
+    closeDropDown();
+    togglePopover (false);
+    if (linkedDrawer_  != nullptr) linkedDrawer_->setOpen (false);
+    if (analyzerPanel_ != nullptr) analyzerPanel_->clickOutside();
+    if (outputPanel_   != nullptr) outputPanel_->clickOutside();
+
+    presetMenuOpen_      = true;
+    presetHoverCategory_ = juce::jlimit (0, CrunchMBAudioProcessor::kNumPresetCategories - 1,
+                                         proc_.getCurrentPresetIndex() / CrunchMBAudioProcessor::kPresetsPerCategory);
+    presetHoverItem_     = -1;
+    presetHoverSaveAs_   = false;
+    repaint();
+}
+
+void DisplayView::closePresetMenu()
+{
+    if (! presetMenuOpen_)
+        return;
+    presetMenuOpen_    = false;
+    presetHoverItem_   = -1;
+    presetHoverSaveAs_ = false;
+    repaint();
+}
+
+bool DisplayView::handlePresetMenuClick (juce::Point<float> p)
+{
+    if (! presetMenuOpen_)
+        return false;
+
+    for (int c = 0; c < CrunchMBAudioProcessor::kNumPresetCategories; ++c)
+    {
+        if (presetCategoryRowRect (c).contains (p))
+        {
+            presetHoverCategory_ = c;
+            presetHoverItem_     = -1;
+            presetHoverSaveAs_   = false;
+            repaint();
+            return true;
+        }
+    }
+
+    for (int i = 0; i < CrunchMBAudioProcessor::kPresetsPerCategory; ++i)
+    {
+        if (presetItemRowRect (i).contains (p))
+        {
+            const int presetIdx = presetHoverCategory_ * CrunchMBAudioProcessor::kPresetsPerCategory + i;
+            proc_.applyFactoryPreset (presetIdx);
+            closePresetMenu();
+            syncCurveImmediate();
+            repaint();
+            return true;
+        }
+    }
+
+    // Save As... 按钮：仅做 UI 绘制与悬停反馈，点击不指向任何逻辑（保持菜单开启且不误触底层画布）
+    if (presetSaveAsRect().contains (p))
+        return true;
+
+    if (presetPrimaryRect().contains (p) || presetSecondaryRect().contains (p))
+        return true;
+
+    return false;
+}
+
+void DisplayView::drawPresetMenu (juce::Graphics& g)
+{
+    if (! presetMenuOpen_)
+        return;
+
+    const auto& snap = composition_.snapshot();
+    const EditorLayout l (getLocalBounds(), snap.layout);
+    const float s = l.scale;
+    const auto pri = presetPrimaryRect();
+    const auto sec = presetSecondaryRect();
+    const float corner = (snap.isNeumorphic() ? snap.theme.radiusLg : 8.0f) * s;
+
+    auto drawMenuCard = [&] (juce::Rectangle<float> box)
+    {
+        if (snap.isNeumorphic())
+        {
+            UiPack::NeuPainter::drawRaisedRect (g, box, corner, pal_, snap.theme.shadowCard, s, 0.98f, false);
+        }
+        else
+        {
+            g.setColour (pal_.halo.withMultipliedAlpha (0.45f));
+            g.fillRoundedRectangle (box.translated (0.0f, 3.5f * s).expanded (2.0f * s), corner + 2.0f * s);
+            g.setColour (pal_.popA);
+            g.fillRoundedRectangle (box, corner);
+            g.setColour (pal_.accent.withMultipliedAlpha (0.65f));
+            g.drawRoundedRectangle (box, corner, 1.0f * s);
+        }
+    };
+
+    drawMenuCard (pri);
+    drawMenuCard (sec);
+
+    const int curPreset = proc_.getCurrentPresetIndex();
+    const int curCat    = curPreset / CrunchMBAudioProcessor::kPresetsPerCategory;
+
+    for (int c = 0; c < CrunchMBAudioProcessor::kNumPresetCategories; ++c)
+    {
+        const auto row    = presetCategoryRowRect (c);
+        const bool isOpen = (c == presetHoverCategory_);
+        const bool hasCur = (c == curCat);
+        if (snap.isNeumorphic())
+        {
+            if (isOpen || hasCur)
+                UiPack::NeuPainter::drawCompactCap (g, row, pal_, snap.theme, isOpen, hasCur && ! isOpen, s, 1.0f, 5.0f * s, false);
+        }
+        else if (isOpen || hasCur)
+        {
+            g.setColour (pal_.accent.withMultipliedAlpha (isOpen ? 0.26f : 0.14f));
+            g.fillRoundedRectangle (row, 5.0f * s);
+        }
+
+        g.setColour (isOpen ? pal_.accent : (hasCur ? pal_.text : pal_.dim));
+        g.setFont (MBTheme::font (isOpen || hasCur ? MBTheme::uiMedium() : MBTheme::uiRegular(), 12.5f * s));
+        g.drawText (snap.t ("preset.cat." + juce::String (c)),
+                    row.withTrimmedLeft (10.0f * s).withTrimmedRight (20.0f * s),
+                    juce::Justification::centredLeft, false);
+
+        const float ax = row.getRight() - 10.0f * s;
+        const float ay = row.getCentreY();
+        juce::Path arrow;
+        arrow.startNewSubPath (ax - 2.0f * s, ay - 3.5f * s);
+        arrow.lineTo          (ax + 2.0f * s, ay);
+        arrow.lineTo          (ax - 2.0f * s, ay + 3.5f * s);
+        g.strokePath (arrow, juce::PathStrokeType (1.4f * s, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    for (int i = 0; i < CrunchMBAudioProcessor::kPresetsPerCategory; ++i)
+    {
+        const auto row      = presetItemRowRect (i);
+        const int presetIdx = presetHoverCategory_ * CrunchMBAudioProcessor::kPresetsPerCategory + i;
+        const bool isCur    = (presetIdx == curPreset);
+        const bool isHov    = (i == presetHoverItem_);
+
+        if (snap.isNeumorphic())
+        {
+            if (isCur || isHov)
+                UiPack::NeuPainter::drawCompactCap (g, row, pal_, snap.theme, isCur, isHov, s, 1.0f, 5.0f * s, false);
+        }
+        else if (isCur || isHov)
+        {
+            g.setColour (pal_.accent.withMultipliedAlpha (isCur ? 0.28f : 0.16f));
+            g.fillRoundedRectangle (row, 5.0f * s);
+        }
+
+        g.setColour (isCur ? pal_.accent : pal_.text);
+        g.setFont (MBTheme::font (isCur ? MBTheme::semiBold() : MBTheme::regular(), 12.5f * s));
+        g.drawText (snap.t ("preset.item." + juce::String (presetIdx)),
+                    row.withTrimmedLeft (12.0f * s),
+                    juce::Justification::centredLeft, false);
+    }
+
+    // 二级菜单底部细分隔线 + Save As... 按钮（纯 UI 绘制与悬停态）
+    const auto saveBtn = presetSaveAsRect();
+    const float sepY   = saveBtn.getY() - 5.0f * s;
+    g.setColour (pal_.gridZ.withMultipliedAlpha (snap.isNeumorphic() ? 0.45f : 0.85f));
+    g.drawLine (sec.getX() + 10.0f * s, sepY, sec.getRight() - 10.0f * s, sepY, 1.0f * s);
+
+    UiPack::NeuPainter::drawButton (g, saveBtn, pal_, snap.theme, false, presetHoverSaveAs_, s, 1.0f, 5.0f * s);
+    g.setColour (presetHoverSaveAs_ ? pal_.accent : pal_.text);
+    g.setFont (MBTheme::font (MBTheme::uiMedium(), 12.0f * s));
+    g.drawText (snap.t ("preset.saveAs"), saveBtn, juce::Justification::centred, false);
 }
 
 void DisplayView::openDisplayRangeMenu()
 {
+    closePresetMenu();
     togglePopover(false);
     if(linkedDrawer_) linkedDrawer_->setOpen(false);
     if(analyzerPanel_) analyzerPanel_->clickOutside();
@@ -3145,16 +3557,25 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     curvePending_ = false;
     rangePending_ = false;
 
-    // #7：输入框激活时，先点别处 = 取消
+    // #7：输入框激活时，先点别处 = 取消/提交
     if (freqInput_ != nullptr && freqInput_->isActive())
     {
         freqInput_->close (false);
         return;
     }
+    if (bandPopover_ != nullptr && bandPopover_->isEditingSlider())
+    {
+        const int ek = bandPopover_->editingSliderForTest();
+        if (! bandPopover_->popSliderRect (ek).contains (e.position))
+        {
+            bandPopover_->closeSliderEdit (true);
+            repaint();
+            return;
+        }
+    }
 
     const auto p = e.position;
-    const EditorLayout layout(getLocalBounds());
-    for(int b=0;b<4;++b)if(layout.bandTab(b).contains(p)){selectedBand_=b;onSelectedBandChanged(b);openPopoverForBand(b);repaint();return;}
+    const EditorLayout layout (getLocalBounds(), composition_.snapshot().layout);
     if(linkedDrawer_!=nullptr&&linkedDrawer_->hitTestClose(p)){linkedDrawer_->setOpen(false);repaint();return;}
 
     // -1) Phase（R25）：顶栏 POWER 胶囊（插件总开关 enabled）。
@@ -3178,6 +3599,30 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     if (hitTestGearButton (p))
     {
         openThemeMenu();
+        return;
+    }
+
+    // -1.8) UI #6：顶栏预设选择器与二级预设菜单、A/B 对比按钮
+    if (presetMenuOpen_)
+    {
+        if (handlePresetMenuClick (p))
+            return;
+        if (! layout.presetSelector().contains (p))
+            closePresetMenu();
+    }
+    if (layout.presetSelector().contains (p))
+    {
+        openPresetMenu();
+        return;
+    }
+    if (layout.abCompareButton().contains (p))
+    {
+        closePresetMenu();
+        closeDropDown();
+        proc_.toggleAbSlot();
+        syncUiFromParams (true);
+        syncCurveImmediate();
+        repaint();
         return;
     }
 
@@ -3676,6 +4121,10 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
                                              dragStartRange_ + (dragStartY_ - p.y) * dbPerPx);
         setParamNorm ("band" + juce::String (dragBand_) + "Range",
                       (newRange + 30.0f) / 60.0f);      // R36（K9）：全量程 60 dB
+        bandRangeDb_[(size_t) dragBand_]  = newRange;
+        rangeDisplay_[(size_t) dragBand_] = newRange;
+        syncCurveImmediate();
+        repaint();
         return;
     }
 
@@ -3710,6 +4159,8 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
         const float newMakeup = juce::jlimit (-36.0f, 36.0f, dragStartMakeup_ + dy * dbPerPx);
         setParamNorm ("band" + juce::String (dragBand_) + "Makeup",
                       (newMakeup + 36.0f) / 72.0f);
+        syncCurveImmediate();
+        repaint();
         return;
     }
 }
@@ -3760,6 +4211,22 @@ void DisplayView::mouseUp (const juce::MouseEvent& e)
 }
 void DisplayView::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    // #4：Band 二级菜单打开时，双击 Ratio(k=0) 或 Knee(k=1) 行 → 进入精确数值输入（与双击旋钮一致）
+    if (bandPopover_ != nullptr && bandPopover_->isOpen())
+    {
+        int sk = -1;
+        if (bandPopover_->hitTestSlider (e.position, sk) && (sk == 0 || sk == 1))
+        {
+            bandPopover_->openSliderEdit (sk);
+            setWantsKeyboardFocus (true);
+            grabKeyboardFocus();
+            repaint();
+            return;
+        }
+        if (bandPopover_->popoverRectForTest().contains (e.position))
+            return;
+    }
+
     // P2：双击频点 → 编辑该段中心频率（Pro-MB：双击 peak dot 后 Tab 切频率）
     int dotBand = -1;
     if (hitTestFreqDot (e.position, dotBand) != 0)
@@ -3877,8 +4344,7 @@ void DisplayView::applyAnalyzerSettings()
     }
 
     eng.setResolution (analyzerFftSize_);
-    static const double kSpeedTauMs[3] = { 10.0, 20.0, 60.0 };   // fast / medium / slow
-    eng.setReleaseMs (kSpeedTauMs[juce::jlimit (0, 2, analyzerSpeed_)]);
+    eng.setReleaseMs (SpectrumAnalyzer::speedToReleaseMs (analyzerSpeed_));
     eng.setTilt (analyzerTilt_);
     eng.setFrozen (analyzerFreeze_);
     syncSpectrumLayers();
@@ -3898,7 +4364,12 @@ void DisplayView::applyAnalyzerSettings()
 // ---------------- 入口 ----------------
 void DisplayView::paint (juce::Graphics& g)
 {
-    pollStructureParams();      // 分割线/分区/段名跟随参数（C2）；首帧 cachedX 兜底
+    pollStructureParams();
+    if (weightsDirty_ || ! curvePathsValid_ || ! haveDrawnGain_)
+    {
+        updateCurve (0.0);
+        refreshCurvePaths();
+    }      // 分割线/分区/段名跟随参数（C2）；首帧 cachedX 兜底
 
     // R32/R35：参数变化的处理统一挪到 timerCallback 的 syncUiFromParams()。
     // R35（N9）：这里原来是「paint() 里 consumeUiWakeFlag() + startTimerHz(60)

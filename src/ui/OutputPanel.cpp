@@ -16,7 +16,7 @@ OutputPanel::OutputPanel()
         knob.onDragEnd=[this,i]{if(onGesture)onGesture(i,false);};
         addChildComponent(knob);
     }
-    monitorBox_.addItemList({"Output","Input","Band 1","Band 2","Band 3","Band 4","Gain Reduction"},1);
+    monitorBox_.addItemList({"Output","Input","Band 1","Band 2","Band 3","Band 4"},1);
     monitorBox_.setLookAndFeel(&menuLookAndFeel_);monitorBox_.setSelectedId(1,juce::dontSendNotification);
     monitorBox_.onChange=[this]{monitorIdx_=monitorBox_.getSelectedId()-1;if(onSettingsChanged)onSettingsChanged();};
     addChildComponent(monitorBox_);setTheme(MBTheme::Theme::Blue);
@@ -69,10 +69,12 @@ void OutputPanel::applyUiSnapshot(const UiPack::UiSnapshot& snap)
 void OutputPanel::layoutControls()
 {
     const auto r=panelRect();const float s=EditorLayout(hostBounds_).scale,cell=(r.getWidth()-32*s)/3;
+    const float a=juce::jlimit(0.0f,1.0f,anim_);
+    const bool vis=open_||a>=0.004f;
     for(int i=0;i<3;++i){auto& knob=knobs_[(size_t)i];knob.setKnobDiameter(76*s);
-        knob.setUiTextSizes(14*s,16*s);knob.setBounds(juce::Rectangle<float>(r.getX()+16*s+i*cell,r.getY()+49*s,cell,150*s).toNearestInt());knob.setVisible(open_);knob.setAlpha(anim_);}
+        knob.setUiTextSizes(14*s,16*s);knob.setBounds(juce::Rectangle<float>(r.getX()+16*s+i*cell,r.getY()+49*s,cell,150*s).toNearestInt());knob.setVisible(vis);knob.setAlpha(a);}
     menuLookAndFeel_.scale=s;monitorBox_.setBounds(juce::Rectangle<float>(r.getX()+132*s,r.getY()+254*s,r.getWidth()-148*s,36*s).toNearestInt());
-    monitorBox_.setVisible(open_);monitorBox_.setAlpha(anim_);
+    monitorBox_.setVisible(vis);monitorBox_.setAlpha(a);
 }
 void OutputPanel::syncControls()
 {
@@ -82,19 +84,23 @@ void OutputPanel::syncControls()
 bool OutputPanel::clickButton()
 {
     open_=sticky_=!open_;syncControls();layoutControls();
-    tween_.start(juce::Time::getMillisecondCounter(),open_?1.0f:0.0f,Anim::kFadeMs,anim_);animTarget_=open_?1:0;return true;
+    tween_.start(juce::Time::getMillisecondCounter(),open_?1.0f:0.0f,Anim::kFadeMs,anim_);animTarget_=open_?1:0;repaint();return true;
 }
 void OutputPanel::clickOutside()
 {
     if(!open_)return;open_=sticky_=false;layoutControls();
-    tween_.start(juce::Time::getMillisecondCounter(),0,Anim::kFadeMs,anim_);animTarget_=0;
+    tween_.start(juce::Time::getMillisecondCounter(),0,Anim::kFadeMs,anim_);animTarget_=0;repaint();
 }
 bool OutputPanel::advance(double now)
 {
+    const float prevAnim=anim_;
     anim_=tween_.value(now);if(std::abs(anim_-animTarget_)<Anim::kSnapEps){anim_=animTarget_;tween_.snapTo(animTarget_);}
     bool busy=!tween_.done(now);
-    for(auto& knob:knobs_){knob.setAlpha(anim_);knob.advanceStates(now);knob.setEditCursorBlink((juce::uint32)now);busy|=knob.isAnimating();}
-    monitorBox_.setAlpha(anim_);
+    const float a=juce::jlimit(0.0f,1.0f,anim_);
+    const bool vis=open_||a>=0.004f;
+    for(auto& knob:knobs_){knob.setAlpha(a);knob.setVisible(vis);knob.advanceStates(now);knob.setEditCursorBlink((juce::uint32)now);busy|=knob.isAnimating();}
+    monitorBox_.setAlpha(a);monitorBox_.setVisible(vis);
+    if(std::abs(anim_-prevAnim)>1.0e-5f)repaint();
     return busy;
 }
 bool OutputPanel::hitTestRow(juce::Point<float> p,int& row) const
@@ -108,7 +114,7 @@ void OutputPanel::clickRow(int row)
 }
 void OutputPanel::paint(juce::Graphics& g)
 {
-    if(!open_||anim_<.004f)return;const auto r=panelRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale,a=anim_;
+    if(!open_&&anim_<.004f)return;const auto r=panelRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale,a=anim_;
     if(themeTokens_.isNeumorphic)
     {
         UiPack::NeuPainter::drawRaisedRect(g,r,themeTokens_.radiusLg*s,pal_,themeTokens_.shadowCard,s,a,false);

@@ -101,8 +101,8 @@ namespace UiPack
                 p.bgLight     = hex (0xfff0f0f3);
                 p.panel       = hex (0xffd1d9e6);
                 p.surface     = hex (0xffe0e5ec);
-                p.surfaceA    = rgba (224, 229, 236, 0.92);
-                p.popA        = rgba (224, 229, 236, 0.96);
+                p.surfaceA    = rgba (224, 229, 236, 0.86);
+                p.popA        = rgba (224, 229, 236, 0.68);
                 p.track       = hex (0xffd1d9e6);
                 p.knob        = hex (0xffe0e5ec);
                 p.text        = hex (0xff333333);
@@ -133,8 +133,8 @@ namespace UiPack
                 p.bgLight     = hex (0xfff0f0f3);
                 p.panel       = hex (0xffd1d9e6);
                 p.surface     = hex (0xffe0e5ec);
-                p.surfaceA    = rgba (224, 229, 236, 0.92);
-                p.popA        = rgba (224, 229, 236, 0.96);
+                p.surfaceA    = rgba (224, 229, 236, 0.86);
+                p.popA        = rgba (224, 229, 236, 0.68);
                 p.track       = hex (0xffd1d9e6);
                 p.knob        = hex (0xffe0e5ec);
                 p.text        = hex (0xff2b3440);
@@ -165,8 +165,8 @@ namespace UiPack
                 p.bgLight     = hex (0xff262b34);
                 p.panel       = hex (0xff181b21);
                 p.surface     = hex (0xff1e2229);
-                p.surfaceA    = rgba (30, 34, 41, 0.92);
-                p.popA        = rgba (30, 34, 41, 0.96);
+                p.surfaceA    = rgba (30, 34, 41, 0.84);
+                p.popA        = rgba (30, 34, 41, 0.62);
                 p.track       = hex (0xff171a20);
                 p.knob        = hex (0xff222730);
                 p.text        = hex (0xffe2e8f0);
@@ -183,9 +183,9 @@ namespace UiPack
                 p.onAccent    = hex (0xffffffff);
                 p.halo        = rgba (0, 0, 0, 0.65);
                 p.shadowDark  = hex (0xff111418);
-                p.shadowLight = hex (0xff2c323d);
+                p.shadowLight = hex (0xff262c36);
                 p.insetDark   = hex (0xff101317);
-                p.insetLight  = hex (0xff2b313c);
+                p.insetLight  = hex (0xff252b35);
                 p.light       = false;
                 break;
 

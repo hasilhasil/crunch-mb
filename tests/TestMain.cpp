@@ -5029,12 +5029,14 @@ static void testMidiLearn()
     dv.setSize (920, 620);
     for (int t = 0; t < 30; ++t) dv.tickForTest();
 
-    // MIDI 按钮位置（与 drawTopStrip 一致）
+    // MIDI 按钮位置（已移入右上角唯一新版主题菜单卡片 Section 6）
     auto toggleMidi = [&] {
-        const auto theme=EditorLayout(dv.getLocalBounds()).theme();
-        dv.mouseDownForTest(theme.getCentreX(),theme.getCentreY());
-        const auto menu=dv.dropDownRectForTest();const float y=menu.getY()+menu.getHeight()*.875f;
-        dv.mouseDownForTest(menu.getCentreX(),y);dv.mouseUpForTest(menu.getCentreX(),y);
+        const auto theme = EditorLayout (dv.getLocalBounds()).theme();
+        dv.mouseDownForTest (theme.getCentreX(), theme.getCentreY());
+        dv.mouseUpForTest   (theme.getCentreX(), theme.getCentreY());
+        const auto midiBtn = dv.packOptionRectForTest (6, 0);
+        dv.mouseDownForTest (midiBtn.getCentreX(), midiBtn.getCentreY());
+        dv.mouseUpForTest   (midiBtn.getCentreX(), midiBtn.getCentreY());
     };
     const float midiY = 3.0f + 12.0f;
 
@@ -8237,7 +8239,7 @@ static void testBandToggleThreeStates()
     // 找到 band0 的 Solo 按钮（btn=0）屏幕坐标——用与 T21 相同的几何：
     //   按钮列中心 = freqToX(xover1) − 28，Solo 在 y = 118..142
     const float x1f = freqToXforTest (mb->apvts.getRawParameterValue (Param::ID::xover1)->load());
-    dv.mouseDownForTest(EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreX(),EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreY());dv.closePopoverForTest();
+    dv.mouseDownForTest (x1f * 0.5f, 300.0f); dv.mouseUpForTest (x1f * 0.5f, 300.0f); dv.closePopoverForTest();
     const float sx0 = dv.bandButtonRectForTest(0,0).getCentreX();
     const float sy0 = dv.bandButtonRectForTest(0,0).getCentreY();
     int fb = -1, fj = -1;
@@ -8712,11 +8714,9 @@ static void testMonitorModes()
     const float rmsInput  = measureRms (1);      // Input
     const float rmsBand1  = measureRms (2);      // Band 1
     const float rmsBand4  = measureRms (5);      // Band 4
-    const float rmsGr     = measureRms (6);      // Gain Reduction
 
     std::cout << "  RMS: Output=" << rmsOutput << " Input=" << rmsInput
-              << " Band1=" << rmsBand1 << " Band4=" << rmsBand4
-              << " GR=" << rmsGr << std::endl;
+              << " Band1=" << rmsBand1 << " Band4=" << rmsBand4 << std::endl;
 
     // ② Input 档应接近干声 RMS（无压缩）
     //    宽带噪声 0.4 幅 → RMS ≈ 0.4/sqrt(3) ≈ 0.231
@@ -8739,10 +8739,11 @@ static void testMonitorModes()
            juce::String (rmsBand1) + "/" + juce::String (rmsBand4)
            + " < " + juce::String (rmsInput));
 
-    // ⑥ GR 档应是一个小幅正信号（有压缩但不过响）
-    check (rmsGr > 0.0f && rmsGr < 0.1f,
-           "T82.6 Monitor=GainReduction 输出为小幅信号（可听不过响）",
-           juce::String (rmsGr));
+    // ⑥ 确认 monitorMode 仅保留 6 档（已按要求移除 Gain Reduction）
+    if (auto* monParam = dynamic_cast<juce::AudioParameterChoice*> (mb->apvts.getParameter (Param::ID::monitorMode)))
+        check (monParam->choices.size() == 6,
+               "T82.6 Monitor 仅保留 6 档（Output/Input/Band 1-4，已移除 Gain Reduction）",
+               juce::String (monParam->choices.size()));
 
     // ⑦ 切回 Output 后应与首次测量一致（档位切换无残留）
     const float rmsOutputAgain = measureRms (0);
@@ -8752,7 +8753,7 @@ static void testMonitorModes()
 
     // ⑧ 所有档位输出必须有限
     check (std::isfinite (rmsOutput) && std::isfinite (rmsInput)
-        && std::isfinite (rmsBand1) && std::isfinite (rmsBand4) && std::isfinite (rmsGr),
+        && std::isfinite (rmsBand1) && std::isfinite (rmsBand4),
            "T82.8 所有 Monitor 档位输出有限", "");
 
     // ---- UI：Output 面板 Monitor 行 ----
@@ -8868,7 +8869,7 @@ static void testMonitorWithAllFeatures()
 
     // ② 切到各档再切回 Output，输出应与基准逐样本一致
     //    （证明非 Output 档不影响 Output 档，无状态残留）
-    for (int mode = 1; mode <= 6; ++mode)
+    for (int mode = 1; mode <= 5; ++mode)
     {
         mb->setParamPhysicalForTest ("monitorMode", (float) mode);
         for (int t = 0; t < 20; ++t)
@@ -8923,9 +8924,8 @@ static void testMonitorWithAllFeatures()
                juce::String (peakBack));
     }
 
-    // ④ Monitor 与 Auto-Gain 同开：关掉 Monitor 只影响选路，不应破坏补偿
-    //    （开 Auto-Gain 的输出峰值应低于关掉时的）
-    mb->setParamPhysicalForTest ("monitorMode", 6.0f);        // GR 档
+    // ④ Monitor 与 Auto-Gain 同开：切到单段监听（Band 1）输出与全频 Output 明显不同
+    mb->setParamPhysicalForTest ("monitorMode", 2.0f);        // Band 1 档
     float peakGr = 0.0f;
     for (int t = 0; t < 40; ++t)
     {
@@ -9377,7 +9377,7 @@ static void testChildrenDoNotSwallowMouse()
     const float thrBefore = mb->apvts.getRawParameterValue (Param::bandThreshold (0))->load();
     // 找到 band0 的 Solo 按钮并点击（沿用 T21/T79 的几何）
     const float x1f = freqToXforTest (mb->apvts.getRawParameterValue (Param::ID::xover1)->load());
-    dv.mouseDownForTest(EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreX(),EditorLayout(dv.getLocalBounds()).bandTab(0).getCentreY());dv.closePopoverForTest();
+    dv.mouseDownForTest (x1f * 0.5f, 300.0f); dv.mouseUpForTest (x1f * 0.5f, 300.0f); dv.closePopoverForTest();
     const auto button = dv.bandButtonRectForTest(0,0);
     const float bx = button.getCentreX();
     dv.mouseDownForTest (bx, button.getCentreY());      // Solo（y=118..142）
@@ -9506,26 +9506,27 @@ static void testUiBatch1Fixes()
         dv.tickForTest();
     }
 
-    // ---- N6：齿轮 → 主题切换；CURVE 已移除 ----
+    // ---- N6：右上角设置按钮 → 新版主题切换卡片；CURVE 已移除 ----
     {
         const auto gear = dv.gearButtonRectForTest();
         check (dv.hitTestGearButtonForTest (gear.getCentreX(), gear.getCentreY()),
                "T87.12 齿轮按钮可命中", "");
         dv.mouseDownForTest (gear.getCentreX(), gear.getCentreY());
         dv.mouseUpForTest (gear.getCentreX(), gear.getCentreY());
-        check (dv.isThemeMenuOpenForTest(), "T87.13 齿轮打开主题菜单", "");
-        check (dv.dropDownCountForTest() == 4, "T87.14 设置菜单 4 项（Blue/Red/Cream/MIDI Learn）",
+        check (dv.isThemeMenuOpenForTest(), "T87.13 齿轮打开新版主题菜单", "");
+        check (dv.dropDownCountForTest() == 0, "T87.14 旧 4 行下拉已移除，仅保留新版四包主题卡片",
                juce::String (dv.dropDownCountForTest()));
-        // 选 Red（第 2 项）
-        const auto dr = dv.dropDownRectForTest();
-        const float rowH = dr.getHeight() / 4.0f;
-        const float iy = dr.getY() + rowH * 1.5f;
-        dv.mouseDownForTest (dr.getCentreX(), iy);
-        dv.mouseUpForTest (dr.getCentreX(), iy);
+        // 在新版卡片内点选 Red（Section 2, Index 1）
+        const auto redBtn = dv.packOptionRectForTest (2, 1);
+        dv.mouseDownForTest (redBtn.getCentreX(), redBtn.getCentreY());
+        dv.mouseUpForTest   (redBtn.getCentreX(), redBtn.getCentreY());
         std::cout << "  选 Red 后 theme = " << (int) dv.getTheme() << std::endl;
         check (dv.getTheme() == MBTheme::Theme::Red,
                "T87.15 选 Red 后主题已切换", juce::String ((int) dv.getTheme()));
-        check (! dv.isThemeMenuOpenForTest(), "T87.16 选择后菜单收起", "");
+        // 再次点击右上角设置按钮收起卡片
+        dv.mouseDownForTest (gear.getCentreX(), gear.getCentreY());
+        dv.mouseUpForTest   (gear.getCentreX(), gear.getCentreY());
+        check (! dv.isThemeMenuOpenForTest(), "T87.16 再点按钮后菜单收起", "");
         dv.setTheme (MBTheme::Theme::Blue);
 
         // CURVE 区域不再可点：点它不应打开任何下拉、也不改参数
@@ -9587,14 +9588,14 @@ static void testUiBatch2Fixes()
 
         // 外部（模拟宿主自动化 / MIDI）改成开 → 面板必须跟着变
         mb->setParamPhysicalForTest (Param::ID::autoGain, 1.0f);
-        mb->setParamPhysicalForTest (Param::ID::monitorMode, 6.0f);   // Gain Reduction
+        mb->setParamPhysicalForTest (Param::ID::monitorMode, 5.0f);   // Band 4
         for (int t = 0; t < 5; ++t) dv.tickForTest();
         std::cout << "  外部改参后：面板 autoGain=" << (int) dv.outputPanelAutoGainForTest()
                   << "  monitor=" << dv.outputPanelMonitorForTest() << std::endl;
         check (dv.outputPanelAutoGainForTest(),
                "T88.3 外部打开 Auto-Gain → 面板副本跟着变成 ON（N4 核心）", "");
-        check (dv.outputPanelMonitorForTest() == 6,
-               "T88.4 外部切 Monitor=GainReduction → 面板副本同步",
+        check (dv.outputPanelMonitorForTest() == 5,
+               "T88.4 外部切 Monitor=Band 4 → 面板副本同步",
                juce::String (dv.outputPanelMonitorForTest()));
 
         // 再关回去
@@ -10011,7 +10012,7 @@ static void testApprovedUiRedraw()
             auto last=menu.withTop(menu.getBottom()-menu.getHeight()/choice->choices.size());click(last);
             check(choice->getIndex()==choice->choices.size()-1,"T90 Global choice writes real parameter",tag+" "+labels[i]);
         }
-        click(l.bandTab(1));dv.snapPanelsForTest();
+        dv.openPopoverForBandForTest(1);dv.snapPanelsForTest();
         check(dv.getSelectedBandForTest()==1&&dv.isPopoverOpenForTest(),"T90 band tab opens correct band",tag);
         check(dv.getLocalBounds().toFloat().contains(dv.popoverRectForTest()),"T90 band panel fits",tag);
         click(l.linkedButton());dv.snapPanelsForTest();
@@ -10020,8 +10021,9 @@ static void testApprovedUiRedraw()
         for(int k=0;k<5;++k)check(dv.linkedPanelRectForTest().contains(dv.linkedKnobBoundsForTest(k).toFloat()),"T90 Linked knobs stay inside panel",tag);
         click(dv.linkedCloseRectForTest());check(!dv.isLinkedOpenForTest(),"T90 Linked close works",tag);
         click(l.theme());check(dv.isThemeMenuOpenForTest(),"T90 top-right theme opens",tag);
-        auto menu=dv.dropDownRectForTest();click(menu.withHeight(menu.getHeight()/4).translated(0,menu.getHeight()/2));
-        check(dv.getTheme()==MBTheme::Theme::Cream,"T90 theme changes palette",tag);dv.setTheme(MBTheme::Theme::Blue);
+        click(dv.packOptionRectForTest(2,2));
+        check(dv.getTheme()==MBTheme::Theme::Cream,"T90 theme changes palette",tag);
+        click(l.theme());dv.setTheme(MBTheme::Theme::Blue);
         const bool enabled=dv.isPluginEnabledForTest();click(l.power());check(dv.isPluginEnabledForTest()!=enabled,"T90 real power toggle",tag);click(l.power());
     }
 }
@@ -11003,6 +11005,231 @@ static void testFourPackUiAndNeumorphism()
         dv2.setLocalePack (UiPack::LocaleId::EnUS);
         dv.applyClassicPreset (UiPack::PaletteId::Blue);
         dv.setLocalePack (UiPack::LocaleId::EnUS);
+
+        // ⑥ 本轮 11 项修复专项验证（T91.14 ~ T91.21）
+        // T91.14：单级频谱 Speed 时间常数验证（Fast=100ms, Medium=200ms, Slow=400ms）
+        check (std::abs (SpectrumAnalyzer::speedToReleaseMs (0) - 100.0) < 0.5
+            && std::abs (SpectrumAnalyzer::speedToReleaseMs (1) - 200.0) < 0.5
+            && std::abs (SpectrumAnalyzer::speedToReleaseMs (2) - 400.0) < 0.5,
+               "T91.14 单级频谱 Speed 时间常数匹配 Fast=100ms / Medium=200ms / Slow=400ms",
+               juce::String (SpectrumAnalyzer::speedToReleaseMs (1), 1));
+
+        // T91.15：Classic 主题下全部 6 套配色包的浮层背景 popA 均具备半透明度（alpha < 0.75）
+        {
+            bool allTranslucent = true;
+            for (auto pid : UiPack::shippedPaletteIds())
+            {
+                const auto pal = UiPack::buildPalettePack (pid);
+                if (pal.popA.getFloatAlpha() > 0.75f || pal.popA.getFloatAlpha() < 0.50f)
+                    allTranslucent = false;
+            }
+            check (allTranslucent,
+                   "T91.15 Classic 主题下全部 6 套配色包浮层背景 popA 均带半透明度", "");
+        }
+
+        // T91.16：新拟物主题左上白色高光收敛验证（shadowCard.lightAlpha <= 0.35，shadowButton.lightAlpha <= 0.55）
+        {
+            const auto neuTheme = UiPack::buildThemePack (UiPack::ThemeId::Neumorphism);
+            check (neuTheme.shadowCard.lightAlpha   <= 0.35f
+                && neuTheme.shadowButton.lightAlpha <= 0.55f
+                && neuTheme.shadowBadge.lightAlpha  <= 0.50f,
+                   "T91.16 新拟物主题按钮与浮动菜单左上白色高光权重已合理收敛",
+                   juce::String (neuTheme.shadowCard.lightAlpha, 2));
+        }
+
+        // T91.17：S/M/B/Δ 方案 A 一体化内凹底座槽包含全部 4 个按钮且相邻净间距 >= 6px
+        {
+            const auto tray = dv.bandButtonTrayRectForTest (0);
+            const auto b0   = dv.bandButtonRectForTest (0, 0);
+            const auto b1   = dv.bandButtonRectForTest (0, 1);
+            const auto b3   = dv.bandButtonRectForTest (0, 3);
+            const float gap = b1.getX() - b0.getRight();
+            check (tray.contains (b0) && tray.contains (b3) && gap >= 6.0f,
+                   "T91.17 S/M/B/Δ 一体化内凹底座包裹四键且相邻净间距 >= 6px",
+                   "gap=" + juce::String (gap, 1));
+        }
+
+        // T91.18：全局字体统一为 Google Sans Flex 验证
+        {
+            const auto fReg  = MBTheme::regular();
+            const auto fMed  = MBTheme::medium();
+            const auto fUiR  = MBTheme::uiRegular();
+            const auto fUiM  = MBTheme::uiMedium();
+            check (fReg != nullptr && fMed != nullptr && fUiR == fReg && fUiM == fMed
+                && fReg->getName().containsIgnoreCase ("Google Sans Flex"),
+                   "T91.18 全局字体统一为 Google Sans Flex（消除 Poppins/Barlow 混用）",
+                   fReg != nullptr ? fReg->getName() : "null");
+        }
+
+        // T91.19：右上角新版主题卡片整合 MIDI Learn 开关且旧 4 行下拉已移除
+        {
+            const EditorLayout layGear (dv.getLocalBounds(), dv.getUiSnapshot().layout);
+            const auto gearBtn = layGear.theme();
+            dv.mouseDownForTest (gearBtn.getCentreX(), gearBtn.getCentreY());
+            dv.mouseUpForTest   (gearBtn.getCentreX(), gearBtn.getCentreY());
+            check (dv.isThemeMenuOpenForTest(), "T91.19a 点击右上角设置图标打开新版主题菜单", "");
+            const auto midiBtn = dv.packOptionRectForTest (6, 0);
+            dv.mouseDownForTest (midiBtn.getCentreX(), midiBtn.getCentreY());
+            dv.mouseUpForTest   (midiBtn.getCentreX(), midiBtn.getCentreY());
+            // 再点一次关闭 MIDI Learn
+            dv.mouseDownForTest (gearBtn.getCentreX(), gearBtn.getCentreY());
+            dv.mouseUpForTest   (gearBtn.getCentreX(), gearBtn.getCentreY());
+            dv.mouseDownForTest (midiBtn.getCentreX(), midiBtn.getCentreY());
+            dv.mouseUpForTest   (midiBtn.getCentreX(), midiBtn.getCentreY());
+            check (! dv.isThemeMenuOpenForTest(), "T91.19b 新版主题菜单内置 MIDI Learn 开关可正常切换", "");
+        }
+
+        // T91.20：顶栏二级预设菜单展开、悬停分类切换与点击预设加载验证
+        {
+            const auto presBtn = dv.presetSelectorRectForTest();
+            dv.mouseDownForTest (presBtn.getCentreX(), presBtn.getCentreY());
+            dv.mouseUpForTest   (presBtn.getCentreX(), presBtn.getCentreY());
+            check (dv.isPresetMenuOpenForTest(), "T91.20a 点击顶栏预设选择窗口展开二级预设菜单", "");
+
+            // 悬停/点击第 2 个分类（Mastering，索引 1），再点击其第 2 个预设（Linear Phase Master，总索引 4）
+            const auto cat1 = dv.presetCategoryRowRectForTest (1);
+            dv.mouseMoveForTest (cat1.getCentreX(), cat1.getCentreY());
+            check (dv.presetHoverCategoryForTest() == 1, "T91.20b 一级分类悬停展开对应二级预设列表", "");
+
+            const auto item1 = dv.presetItemRowRectForTest (1);
+            dv.mouseDownForTest (item1.getCentreX(), item1.getCentreY());
+            dv.mouseUpForTest   (item1.getCentreX(), item1.getCentreY());
+            check (! dv.isPresetMenuOpenForTest() && dv.currentPresetIndexForTest() == 4
+                && std::abs (mb->getBackend().getParamFast (Param::ID::phaseMode) - 2.0f) < 0.01f,
+                   "T91.20c 点击二级预设项加载完整参数并自动收起预设菜单",
+                   "preset=" + juce::String (dv.currentPresetIndexForTest()));
+
+            // 恢复默认预设 0
+            mb->applyFactoryPreset (0);
+        }
+
+        // T91.21：顶栏 A/B 对比按钮默认 A 状态，点击切换 B 状态并独立保存/恢复 A 与 B 参数
+        {
+            check (! dv.isAbSlotBForTest(), "T91.21a A/B 对比按钮默认为 A 状态", "");
+            mb->setParamPhysicalForTest (Param::bandMakeup (0), 5.0f);
+            const auto abBtn = dv.abCompareButtonRectForTest();
+            dv.mouseDownForTest (abBtn.getCentreX(), abBtn.getCentreY());
+            dv.mouseUpForTest   (abBtn.getCentreX(), abBtn.getCentreY());
+            check (dv.isAbSlotBForTest(), "T91.21b 点击 A/B 按钮切换到 B 状态", "");
+
+            // 在 B 状态下把 band0 Makeup 改为 -7 dB
+            mb->setParamPhysicalForTest (Param::bandMakeup (0), -7.0f);
+            check (std::abs (mb->getBackend().getParamFast (Param::bandMakeup (0)) - (-7.0f)) < 0.1f,
+                   "T91.21c B 状态参数修改生效", "");
+
+            // 再点 A/B 切回 A 状态 → 自动恢复 +5 dB
+            dv.mouseDownForTest (abBtn.getCentreX(), abBtn.getCentreY());
+            dv.mouseUpForTest   (abBtn.getCentreX(), abBtn.getCentreY());
+            check (! dv.isAbSlotBForTest()
+                && std::abs (mb->getBackend().getParamFast (Param::bandMakeup (0)) - 5.0f) < 0.1f,
+                   "T91.21d 切回 A 状态完整恢复 A 槽参数 (+5 dB)",
+                   juce::String (mb->getBackend().getParamFast (Param::bandMakeup (0)), 2));
+
+            // 再切回 B 状态 → 自动恢复 -7 dB
+            dv.mouseDownForTest (abBtn.getCentreX(), abBtn.getCentreY());
+            dv.mouseUpForTest   (abBtn.getCentreX(), abBtn.getCentreY());
+            check (dv.isAbSlotBForTest()
+                && std::abs (mb->getBackend().getParamFast (Param::bandMakeup (0)) - (-7.0f)) < 0.1f,
+                   "T91.21e 再切到 B 状态完整恢复 B 槽参数 (-7 dB)",
+                   juce::String (mb->getBackend().getParamFast (Param::bandMakeup (0)), 2));
+        }
+
+        // T91.22：右上角菜单标题为 Theme / 主题，且手动修改 UI 后跨插件实例持久化保持
+        {
+            const auto& en = UiPack::buildLocalePack (UiPack::LocaleId::EnUS);
+            const auto& zh = UiPack::buildLocalePack (UiPack::LocaleId::ZhCN);
+            check (en.get ("pack.title") == "Theme"
+                && zh.get ("pack.title") == juce::String::fromUTF8 ("\xE4\xB8\xBB\xE9\xA2\x98"),
+                   "T91.22a 右上角主题菜单标题已改为 Theme / 主题",
+                   en.get ("pack.title") + " / " + zh.get ("pack.title"));
+
+            // 验证跨实例自动保存与恢复（先备份用户现有配置文件，测完无损还原）
+            const auto prefsFile = CrunchMBAudioProcessor::globalUiPrefsFile();
+            const bool hadPrefs  = prefsFile.existsAsFile();
+            const juce::String savedXml = hadPrefs ? prefsFile.loadFileAsString() : juce::String();
+
+            CrunchMBAudioProcessor::setGlobalUiPrefsEnabledForTest (true);
+            dv.setUiPacks (UiPack::ThemeId::Neumorphism,
+                           UiPack::PaletteId::NeuTeal,
+                           UiPack::LayoutId::Sculpted,
+                           UiPack::LocaleId::ZhCN);
+
+            // 新建独立插件处理器与编辑器实例（模拟下次在宿主中重新打开插件）
+            std::unique_ptr<juce::AudioProcessor> procNext (createPluginFilter());
+            auto* mbNext = dynamic_cast<CrunchMBAudioProcessor*> (procNext.get());
+            DisplayView dvNext (*mbNext);
+            dvNext.setSize (1200, 780);
+            check (dvNext.getUiSnapshot().themeId   == UiPack::ThemeId::Neumorphism
+                && dvNext.getUiSnapshot().paletteId == UiPack::PaletteId::NeuTeal
+                && dvNext.getUiSnapshot().layoutId  == UiPack::LayoutId::Sculpted
+                && dvNext.getUiSnapshot().localeId  == UiPack::LocaleId::ZhCN,
+                   "T91.22b 用户手动修改主题/配色/布局/语言后，下次新建插件实例自动保持上次选择", "");
+
+            // 恢复默认测试态与原配置文件
+            dv.applyClassicPreset (UiPack::PaletteId::Blue);
+            dv.setLocalePack (UiPack::LocaleId::EnUS);
+            CrunchMBAudioProcessor::setGlobalUiPrefsEnabledForTest (false);
+            if (hadPrefs)
+                prefsFile.replaceWithText (savedXml);
+            else
+                prefsFile.deleteFile();
+        }
+
+        // T91.23：顶栏预设二级菜单包含 Save As... 按钮，且点击不误关闭菜单或跳转
+        {
+            const auto presBtn = dv.presetSelectorRectForTest();
+            dv.mouseDownForTest (presBtn.getCentreX(), presBtn.getCentreY());
+            dv.mouseUpForTest   (presBtn.getCentreX(), presBtn.getCentreY());
+            const auto saveBtn = dv.presetSaveAsRectForTest();
+            const int presetBefore = dv.currentPresetIndexForTest();
+            dv.mouseMoveForTest (saveBtn.getCentreX(), saveBtn.getCentreY());
+            dv.mouseDownForTest (saveBtn.getCentreX(), saveBtn.getCentreY());
+            dv.mouseUpForTest   (saveBtn.getCentreX(), saveBtn.getCentreY());
+            check (! saveBtn.isEmpty() && dv.isPresetMenuOpenForTest()
+                && dv.currentPresetIndexForTest() == presetBefore,
+                   "T91.23 预设二级菜单绘制 Save As... 按钮且点击不指向外部逻辑", "");
+            dv.mouseDownForTest (presBtn.getCentreX(), presBtn.getCentreY());
+            dv.mouseUpForTest   (presBtn.getCentreX(), presBtn.getCentreY());
+        }
+
+        // T91.24：Band 二级菜单中双击 Ratio 与 Knee 可直接键入精确数字
+        {
+            dv.openPopoverForBandForTest (1);
+            dv.snapPanelsForTest();
+            const auto ratioRow = dv.popSliderRectForTest (0);
+            dv.mouseDoubleClickForTest (ratioRow.getCentreX(), ratioRow.getCentreY());
+            check (dv.isPopoverSliderEditingForTest(), "T91.24a 双击 Ratio 滑杆进入数值输入态", "");
+            dv.keyPressedForTest (juce::KeyPress ('7'));
+            dv.keyPressedForTest (juce::KeyPress ('.'));
+            dv.keyPressedForTest (juce::KeyPress ('5'));
+            dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey));
+            check (! dv.isPopoverSliderEditingForTest()
+                && std::abs (mb->getBackend().getParamFast (Param::bandRatio (1)) - 7.5f) < 0.1f,
+                   "T91.24b Ratio 双击输入 7.5 回车后参数精确更新为 7.5:1",
+                   juce::String (mb->getBackend().getParamFast (Param::bandRatio (1)), 2));
+
+            const auto kneeRow = dv.popSliderRectForTest (1);
+            dv.mouseDoubleClickForTest (kneeRow.getCentreX(), kneeRow.getCentreY());
+            check (dv.isPopoverSliderEditingForTest(), "T91.24c 双击 Knee 滑杆进入数值输入态", "");
+            dv.keyPressedForTest (juce::KeyPress ('1'));
+            dv.keyPressedForTest (juce::KeyPress ('8'));
+            dv.keyPressedForTest (juce::KeyPress (juce::KeyPress::returnKey));
+            check (! dv.isPopoverSliderEditingForTest()
+                && std::abs (mb->getBackend().getParamFast (Param::bandKnee (1)) - 18.0f) < 0.2f,
+                   "T91.24d Knee 双击输入 18 回车后参数精确更新为 18.0 dB",
+                   juce::String (mb->getBackend().getParamFast (Param::bandKnee (1)), 2));
+
+            // T91.25：BandPopover 关闭淡出期间背景与旋钮透明度严格同步（消除背景瞬消、旋钮悬空）
+            dv.closePopoverForTest();
+            dv.tickForTest (16.0);
+            const float popAnimMid  = dv.popoverAnimForTest();
+            const float knobAlphaMid = dv.popKnobAlphaForTest (0);
+            check (std::abs (popAnimMid - knobAlphaMid) <= 0.02f,
+                   "T91.25 Band 二级菜单关闭淡出期间背景动画值与旋钮 alpha 严格同步",
+                   juce::String (popAnimMid, 3) + " vs " + juce::String (knobAlphaMid, 3));
+            dv.snapPanelsForTest();
+        }
+
         mb->setEditorActive (false);
         mb2->setEditorActive (false);
     }
@@ -11011,6 +11238,7 @@ static void testFourPackUiAndNeumorphism()
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+    CrunchMBAudioProcessor::setGlobalUiPrefsEnabledForTest (false);
 
     if(argc>2 && juce::String(argv[1])=="--ratio-drag-check")return testRatioDragRevision(juce::String(argv[2]));
     if(argc>2 && juce::String(argv[1])=="--ui-controls-check")return testUiControlsRevision(juce::String(argv[2]));

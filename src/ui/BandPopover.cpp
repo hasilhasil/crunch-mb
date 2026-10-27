@@ -105,6 +105,8 @@ void BandPopover::setBand (int band)
 {
     if (band == band_)
         return;
+    if (editingSlider_ >= 0)
+        closeSliderEdit (false);
     band_ = juce::jlimit (0, 3, band);
     syncFromParams();
     layoutKnobs (true);
@@ -262,6 +264,8 @@ void BandPopover::setOpen (bool open)
 {
     if (open == open_)
         return;
+    if (! open && editingSlider_ >= 0)
+        closeSliderEdit (true);
     open_ = open;
     if (open)
     {
@@ -481,6 +485,89 @@ void BandPopover::endSliderDrag()
     sliderDrag_ = -1;
 }
 
+bool BandPopover::openSliderEdit (int k)
+{
+    if (! open_ || (k != 0 && k != 1))
+        return false;
+    endSliderDrag();
+    editingSlider_      = k;
+    sliderEditText_.clear();
+    sliderEditCursorOn_ = true;
+    sliderLastBlinkMs_  = juce::Time::getMillisecondCounter();
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
+    repaint();
+    return true;
+}
+
+void BandPopover::closeSliderEdit (bool commit)
+{
+    if (editingSlider_ < 0)
+        return;
+    const int k = editingSlider_;
+    if (commit)
+    {
+        juce::String t = sliderEditText_.trim().toLowerCase();
+        if (k == 0 && t.containsChar (':'))
+            t = t.upToFirstOccurrenceOf (":", false, false).trim();
+        if (t.endsWith ("db"))
+            t = t.dropLastCharacters (2).trim();
+
+        if (t.isNotEmpty())
+        {
+            const auto bytes = t.toStdString();
+            char* endPtr = nullptr;
+            const double parsed = std::strtod (bytes.c_str(), &endPtr);
+            if (endPtr == bytes.c_str() + bytes.size() && std::isfinite (parsed))
+            {
+                const int b = juce::jmax (0, band_);
+                if (k == 0)
+                {
+                    const float ratio = juce::jlimit (1.0f, 20.0f, (float) parsed);
+                    if (auto* p = proc_.apvts.getParameter (Param::bandRatio (b))) p->beginChangeGesture();
+                    applySlider (0, (double) ratio);
+                    if (auto* p = proc_.apvts.getParameter (Param::bandRatio (b))) p->endChangeGesture();
+                }
+                else if (k == 1)
+                {
+                    const float kneeDb = juce::jlimit (0.0f, 48.0f, (float) parsed);
+                    const juce::String kid = Param::bandKnee (b);
+                    if (auto* p = proc_.apvts.getParameter (kid)) p->beginChangeGesture();
+                    applySlider (1, (double) (kneeDb / 48.0f));
+                    if (auto* p = proc_.apvts.getParameter (kid)) p->endChangeGesture();
+                }
+            }
+        }
+    }
+    editingSlider_ = -1;
+    sliderEditText_.clear();
+    repaint();
+}
+
+bool BandPopover::handleSliderEditKey (const juce::KeyPress& key)
+{
+    if (editingSlider_ < 0)
+        return false;
+    if (key == juce::KeyPress::escapeKey) { closeSliderEdit (false); return true; }
+    if (key == juce::KeyPress::returnKey) { closeSliderEdit (true);  return true; }
+    if (key == juce::KeyPress::backspaceKey)
+    {
+        sliderEditText_ = sliderEditText_.substring (0, juce::jmax (0, sliderEditText_.length() - 1));
+        repaint();
+        return true;
+    }
+    const juce::juce_wchar ch = key.getTextCharacter();
+    const juce::juce_wchar c  = (ch != 0) ? ch : (juce::juce_wchar) key.getKeyCode();
+    if ((c >= '0' && c <= '9') || c == '.' || (editingSlider_ == 0 && c == ':'))
+    {
+        if (sliderEditText_.length() < 8)
+            sliderEditText_ += juce::String::charToString (c);
+        repaint();
+        return true;
+    }
+    return false;
+}
+
 bool BandPopover::stepSlider (int k, int notches, bool fine)
 {
     // Phase（R19 修复）：滑块此前只有鼠标拖动，键盘与滚轮完全无效——
@@ -643,6 +730,18 @@ void BandPopover::tickEditCursors (juce::uint32 nowMs)
     for (auto& kb : knobs_)
         if (kb != nullptr)
             kb->setEditCursorBlink (nowMs);
+
+    if (editingSlider_ >= 0)
+    {
+        if (sliderLastBlinkMs_ == 0)
+            sliderLastBlinkMs_ = nowMs;
+        if ((int) (nowMs - sliderLastBlinkMs_) >= (int) Anim::kBlinkMs)
+        {
+            sliderEditCursorOn_ = ! sliderEditCursorOn_;
+            sliderLastBlinkMs_  = nowMs;
+            repaint();
+        }
+    }
 }
 
 void BandPopover::advanceKnobStates (double nowMs)
@@ -684,7 +783,7 @@ bool BandPopover::hitTestSlider (juce::Point<float> p, int& kOut) const
 // ---------------- 绘制 ----------------
 void BandPopover::paint (juce::Graphics& g)
 {
-    if (! open_ || anim_ < 0.004f)
+    if (! open_ && anim_ < 0.004f)
         return;
     const float a = juce::jlimit (0.0f, 1.0f, anim_);
     const auto r = popoverRect();
@@ -846,8 +945,33 @@ void BandPopover::paint (juce::Graphics& g)
             g.fillEllipse(track.getX()+track.getWidth()*fraction-5*scale,row.getCentreY()-5*scale,10*scale,10*scale);
         }
         const auto value=k==0?juce::String(sliders_[0],1)+" : 1":juce::String(sliders_[1]*48,1)+" dB";
-        g.setFont(MBTheme::font(MBTheme::regular(),12*scale));g.setColour(pal_.text.withMultipliedAlpha(a));
-        g.drawText(value,row.withLeft(row.getRight()-64*scale),juce::Justification::centredRight);
+        const auto valBox = row.withLeft (row.getRight() - 68.0f * scale);
+        if (editingSlider_ == k)
+        {
+            const auto editBox = valBox.reduced (0.0f, 1.0f * scale);
+            if (themeTokens_.isNeumorphic)
+            {
+                UiPack::NeuPainter::drawInsetRect (g, editBox, 6.0f * scale, pal_, themeTokens_.insetFocus, scale, a, true);
+                g.setColour (pal_.accent.withMultipliedAlpha (0.5f * a));
+                g.drawRoundedRectangle (editBox, 6.0f * scale, 1.0f * scale);
+            }
+            else
+            {
+                g.setColour (pal_.surface.withAlpha (0.97f * a));
+                g.fillRoundedRectangle (editBox, 5.0f * scale);
+                g.setColour (pal_.accent.withMultipliedAlpha (a));
+                g.drawRoundedRectangle (editBox, 5.0f * scale, 1.2f * scale);
+            }
+            g.setColour (pal_.text.withMultipliedAlpha (a));
+            g.setFont (MBTheme::font (MBTheme::regular(), 12.0f * scale));
+            g.drawText (sliderEditText_ + (sliderEditCursorOn_ ? "|" : " "),
+                        editBox, juce::Justification::centred, false);
+        }
+        else
+        {
+            g.setFont(MBTheme::font(MBTheme::regular(),12*scale));g.setColour(pal_.text.withMultipliedAlpha(a));
+            g.drawText(value,row.withLeft(row.getRight()-64*scale),juce::Justification::centredRight);
+        }
     }
 
     // ---- EXPERT 右缘竖排标签（Phase C-5，Pro-MB 对标）----
@@ -877,7 +1001,7 @@ void BandPopover::paint (juce::Graphics& g)
 // R35（C-b）：EXPERT 展开层——由 ExpertLayer 子组件调用，合成在旋钮之上。
 void BandPopover::paintExpertLayer(juce::Graphics& g)
 {
-    if(!open_||!expertOpen_||anim_<.004f)return;
+    if((!open_&&anim_<.004f)||!expertOpen_||anim_<.004f)return;
     const auto box=expertContentRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale;
     if(themeTokens_.isNeumorphic)
     {

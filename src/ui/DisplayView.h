@@ -43,7 +43,7 @@ public:
     ~DisplayView() override;
 
     void paint (juce::Graphics&) override;
-    void paintOverChildren(juce::Graphics& g) override { drawMidiLearnOverlay(g); drawDropDown(g); }
+    void paintOverChildren(juce::Graphics& g) override { drawMidiLearnOverlay(g); drawDropDown(g); drawPresetMenu(g); }
     void resized() override;
     void timerCallback() override;
     bool keyPressed (const juce::KeyPress&) override;
@@ -82,6 +82,22 @@ public:
     {
         return EditorLayout (getLocalBounds(), composition_.snapshot().layout).packOptionRect (section, optionIndex);
     }
+    juce::Rectangle<float> presetSelectorRectForTest() const
+    {
+        return EditorLayout (getLocalBounds(), composition_.snapshot().layout).presetSelector();
+    }
+    juce::Rectangle<float> abCompareButtonRectForTest() const
+    {
+        return EditorLayout (getLocalBounds(), composition_.snapshot().layout).abCompareButton();
+    }
+    bool isPresetMenuOpenForTest() const noexcept { return presetMenuOpen_; }
+    int  presetHoverCategoryForTest() const noexcept { return presetHoverCategory_; }
+    juce::Rectangle<float> presetCategoryRowRectForTest (int cat) const { return presetCategoryRowRect (cat); }
+    juce::Rectangle<float> presetItemRowRectForTest (int itemInCat) const { return presetItemRowRect (itemInCat); }
+    juce::Rectangle<float> presetSaveAsRectForTest() const { return presetSaveAsRect(); }
+    int  currentPresetIndexForTest() const noexcept { return proc_.getCurrentPresetIndex(); }
+    bool isAbSlotBForTest() const noexcept { return proc_.isAbSlotB(); }
+    juce::Rectangle<float> bandButtonTrayRectForTest (int band) const { return bandButtonTrayRect (band); }
 
     // 编辑器开关（懒启动频谱分析）
     void setActive (bool active) noexcept;
@@ -174,6 +190,10 @@ public:
         return bandPopover_ != nullptr ? bandPopover_->popKnobBoundsForTest (k)
                                        : juce::Rectangle<int>();
     }
+    bool isPopoverSliderEditingForTest() const
+    {
+        return bandPopover_ != nullptr && bandPopover_->isEditingSlider();
+    }
     juce::Rectangle<float> popKnobSlotForTest (int k) const
     {
         return bandPopover_ != nullptr ? bandPopover_->popKnobSlotForTest (k)
@@ -234,8 +254,7 @@ public:
     }
     juce::Rectangle<float> gearButtonRectForTest() const
     {
-        const float W = (float) getWidth();
-        return juce::Rectangle<float> (W - sx (30.0f), sy (3.0f), sx (24.0f), sy (24.0f));
+        return EditorLayout (getLocalBounds(), composition_.snapshot().layout).theme();
     }
     /** N6：顶栏 CURVE 胶囊应已移除 —— 该区域不再有可点控件。 */
     juce::Rectangle<float> curveButtonRectForTest() const
@@ -795,6 +814,8 @@ private:
     int  hitTestButton (juce::Point<float> p, int& bandOut, int& btnOut) const;
     /** R36（B4）：段内 S/M/B/Δ 按钮列的**唯一**几何来源。 */
     juce::Rectangle<float> bandButtonRect (int band, int btn) const;
+    juce::Rectangle<float> bandButtonTrayRect (int band) const;
+    void syncCurveImmediate();
     int  hitTestDivider (juce::Point<float> p) const;
     bool hitTestCurve (juce::Point<float> p, int& bandOut) const;
     bool hitTestKnob (juce::Point<float> p, int& bandOut) const { return false; }
@@ -895,6 +916,21 @@ private:
     /** R34（N5）：当前下拉的"当前项"索引。
      *  绘制高亮与键盘回车共用同一个推导，避免两处各算一遍而不一致。 */
     int dropDownCurrentIndex() const;
+
+    // ---- 顶栏二级预设菜单与 A/B 对比按钮 ----
+    bool presetMenuOpen_      = false;
+    int  presetHoverCategory_ = 0;
+    int  presetHoverItem_     = -1;
+    bool presetHoverSaveAs_   = false;
+    juce::Rectangle<float> presetPrimaryRect() const;
+    juce::Rectangle<float> presetSecondaryRect() const;
+    juce::Rectangle<float> presetCategoryRowRect (int cat) const;
+    juce::Rectangle<float> presetItemRowRect (int itemInCat) const;
+    juce::Rectangle<float> presetSaveAsRect() const;
+    void openPresetMenu();
+    void closePresetMenu();
+    bool handlePresetMenuClick (juce::Point<float> p);
+    void drawPresetMenu (juce::Graphics& g);
 
     // ---- Phase E-1：backdrop blur（UI_SPEC §12.2 档 b）----
     // 玻璃条背后的内容做一次下采样 + 盒模糊，缓存成 Image，15Hz 更新。

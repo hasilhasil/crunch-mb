@@ -104,7 +104,24 @@ public:
         int localeId  = 0;   // 0=en-US, 1=zh-CN
     };
     const UiPackSettings& getUiPackSettings() const noexcept { return uiPackSettings_; }
-    void setUiPackSettings (const UiPackSettings& s) noexcept { uiPackSettings_ = s; }
+    void setUiPackSettings (const UiPackSettings& s, bool persistGlobal = true) noexcept;
+    static juce::File globalUiPrefsFile();
+    static void setGlobalUiPrefsEnabledForTest (bool enabled) noexcept;
+    void loadGlobalUiPrefs() noexcept;
+    void saveGlobalUiPrefs() const noexcept;
+
+    // ---------- 顶栏预设系统（4 分类 × 3 预设 = 12 项二级菜单预设）与 A/B 状态对比 ----------
+    static constexpr int kNumPresetCategories = 4;
+    static constexpr int kPresetsPerCategory  = 3;
+    static constexpr int kNumFactoryPresets   = kNumPresetCategories * kPresetsPerCategory;
+
+    int  getCurrentPresetIndex() const noexcept { return currentPresetIndex_; }
+    void applyFactoryPreset (int index);
+
+    /** A/B 对比状态：false = A 状态（默认），true = B 状态 */
+    bool isAbSlotB() const noexcept { return activeAbSlot_ == 1; }
+    void toggleAbSlot();
+    void setAbSlot (bool useSlotB);
 
     // ---------- 编辑器开关（懒启动频谱分析，Phase 4.1） ----------
     void setEditorActive (bool active) noexcept;
@@ -172,6 +189,10 @@ private:
     // R35（N4）：Analyzer 显示设置（随状态持久化，见 getStateInformation）
     AnalyzerSettings analyzerSettings_;
     UiPackSettings   uiPackSettings_;
+    int              currentPresetIndex_ = 0;
+    int              activeAbSlot_       = 0;        // 0 = A（默认），1 = B
+    juce::ValueTree  abSlotState_[2];
+    bool             abSlotInitialized_[2] = { false, false };
 
     // 电平表（音频线程写原子，UI 做弹道）
     std::atomic<float> inputPeak_  { 0.0f };

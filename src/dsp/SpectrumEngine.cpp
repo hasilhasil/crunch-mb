@@ -254,10 +254,10 @@ void SpectrumEngine::publishDecayFrame (double dtSec, double tauSec)
 void SpectrumEngine::run()
 {
     bool wasActive = false;
-    // #8：Pro-MB 行为——编辑器开着但收不到音频（停止播放/无信号）时，
-    // 先保持最后一帧 kHoldMs，再以 τ = kSilenceTauMs 的时间常数衰减到 −100 dB。
-    constexpr int   kHoldMs      = 600;      // 保持时长
-    constexpr double kSilenceTau = 0.600;    // 衰减时间常数（秒）
+    // #8：编辑器开着但收不到音频（停止播放/无信号）时，
+    // 短暂保持 kHoldMs 后即按当前 Speed 档位时间常数平滑衰减到 −100 dB。
+    constexpr int    kHoldMs     = 600;      // 停播过渡保持时长（ms，兼顾离线像素差分渲染耗时）
+    constexpr double kSilenceTau = 0.200;    // 默认衰减时间常数（秒）
 
     while (! threadShouldExit())
     {
@@ -316,13 +316,14 @@ void SpectrumEngine::run()
             if (lastHeartbeatMs_ != 0 && nowMs - lastHeartbeatMs_ < kFrameIntervalMs)
                 continue;
 
-            // 已保持满 kHoldMs：按真实帧间隔 dt 推进时间常数衰减，并每帧更新 lastHeartbeatMs_
+            // 已保持满 kHoldMs：按真实帧间隔 dt 与当前激活 Speed 档位的衰减时间常数推进衰减
             const double dt = (lastHeartbeatMs_ == 0)
                                 ? 1.0 / 60.0
                                 : juce::jlimit (0.001, 0.1,
                                                 (double) (nowMs - lastHeartbeatMs_) / 1000.0);
             lastHeartbeatMs_ = nowMs;
-            publishDecayFrame (dt, kSilenceTau);
+            const double activeTauSec = juce::jmax (0.10, releaseMs_.load (std::memory_order_relaxed) * 0.001);
+            publishDecayFrame (dt, activeTauSec);
             continue;
         }
 

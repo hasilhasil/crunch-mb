@@ -31,14 +31,12 @@ endif()
 
 add_subdirectory("${JUCE_DIR}" JUCE)
 
-# ---------- 字体二进制数据 ----------
+# ---------- 字体二进制数据（全局统一为 Google Sans Flex） ----------
 set(FONT_SOURCES
-    "${FONT_DIR}/Poppins-Regular.ttf"
-    "${FONT_DIR}/Poppins-Medium.ttf"
-    "${FONT_DIR}/Poppins-SemiBold.ttf"
-    "${FONT_DIR}/Poppins-Bold.ttf"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/Barlow-Regular.ttf"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/Barlow-Medium.ttf")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/GoogleSansFlex-Regular.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/GoogleSansFlex-Medium.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/GoogleSansFlex-SemiBold.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/GoogleSansFlex-Bold.ttf")
 juce_add_binary_data(CrunchMBData SOURCES ${FONT_SOURCES})
 
 # ---------- 插件目标 ----------

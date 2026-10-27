@@ -561,17 +561,28 @@ void Knob::paint (juce::Graphics& g)
 
     const float ang = av;
     // 指针：与弧同一角度约定 —— (cx + R·sin(ang), cy − R·cos(ang))
-    const float pR0 = capR * 0.22f;
-    const float pR1 = themeTokens_.isNeumorphic ? (capR * 0.86f) : arcR;
-    const float px1 = cx + std::sin (ang) * pR0;
-    const float py1 = cy - std::cos (ang) * pR0;
-    const float px2 = cx + std::sin (ang) * pR1;
-    const float py2 = cy - std::cos (ang) * pR1;
+    // 严格收在内部帽圆 capR 边界之内（绝不越界压到外环），且仅在靠圆形边界的外端添加平滑圆角
+    const float pw    = juce::jmax (1.8f, d * 0.07f);
+    const float halfW = pw * 0.5f;
+    const float pR0   = capR * 0.24f;
+    const float pR1   = themeTokens_.isNeumorphic
+                            ? (capR * 0.86f)
+                            : juce::jmin (capR * 0.86f, capR - juce::jmax (1.5f, d * 0.035f));
     if (themeTokens_.isNeumorphic)
         g.setColour (rotateK > 0.05f ? pal_.accent : pal_.text.withAlpha (0.85f));
     else
         g.setColour (pal_.knob.contrasting (1.0f).withAlpha (pal_.light ? 0.75f : 0.80f));
-    g.drawLine (px1, py1, px2, py2, juce::jmax (1.5f, d * 0.07f));
+
+    if (pR1 > pR0 + 0.5f)
+    {
+        juce::Path needle;
+        needle.addRoundedRectangle (-halfW, -pR1, pw, pR1 - pR0,
+                                    halfW, halfW,
+                                    true,  true,     // 靠内部圆外边界的一端：添加平滑圆角
+                                    false, false);   // 靠圆心内侧的一端：保持利落平直
+        needle.applyTransform (juce::AffineTransform::rotation (ang).translated (cx, cy));
+        g.fillPath (needle);
+    }
 
     // ---- 数值读数（旋钮下方）----§5.2：偏移旋钮带 "Δ " 前缀
     juce::String txt = valuePrefix_ + juce::String (value_, decimals_);

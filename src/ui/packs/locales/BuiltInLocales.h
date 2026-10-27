@@ -84,7 +84,7 @@ namespace UiPack
                 { "output.on",            "ON" },
                 { "output.off",           "OFF" },
                 { "freq.hint",            "Hz  (Enter confirm / Esc cancel)" },
-                { "pack.title",           "UI COMPOSITION PACKS" },
+                { "pack.title",           "Theme" },
                 { "pack.presetNeu",       "Preset: Neumorphism Studio" },
                 { "pack.presetClassic",   "Preset: Classic Pro Dark" },
                 { "pack.theme",           "THEME" },
@@ -97,7 +97,24 @@ namespace UiPack
                 { "pack.layout.standard", "Standard" },
                 { "pack.layout.sculpted", "Sculpted" },
                 { "pack.midiLearnOn",     "MIDI Learn: On" },
-                { "pack.midiLearnOff",    "MIDI Learn: Off" }
+                { "pack.midiLearnOff",    "MIDI Learn: Off" },
+                { "preset.cat.0",         "Basic & Utility" },
+                { "preset.cat.1",         "Mastering" },
+                { "preset.cat.2",         "Drums & Bass" },
+                { "preset.cat.3",         "Vocals & Mix" },
+                { "preset.item.0",        "Default" },
+                { "preset.item.1",        "Gentle Bus Glue" },
+                { "preset.item.2",        "Transparent Leveler" },
+                { "preset.item.3",        "Mastering Warmth & Air" },
+                { "preset.item.4",        "Linear Phase Master" },
+                { "preset.item.5",        "Punchy Loudness" },
+                { "preset.item.6",        "Drum Bus Smash" },
+                { "preset.item.7",        "Tight Sub & Kick" },
+                { "preset.item.8",        "Crisp Transient Snap" },
+                { "preset.item.9",        "Vocal Presence & De-Ess" },
+                { "preset.item.10",       "Acoustic Guitar Polish" },
+                { "preset.item.11",       "Upward Detail Lift" },
+                { "preset.saveAs",        "Save As..." }
             };
             return p;
         }();
@@ -177,7 +194,7 @@ namespace UiPack
                 { "output.on",            u8 ("开") },
                 { "output.off",           u8 ("关") },
                 { "freq.hint",            u8 ("Hz  (Enter 确认 / Esc 取消)") },
-                { "pack.title",           u8 ("四包正交 UI 组合中心") },
+                { "pack.title",           u8 ("主题") },
                 { "pack.presetNeu",       u8 ("一键新拟物：Neumorphism 浅色") },
                 { "pack.presetClassic",   u8 ("一键经典：Classic 深色") },
                 { "pack.theme",           u8 ("主题包") },
@@ -190,7 +207,24 @@ namespace UiPack
                 { "pack.layout.standard", u8 ("标准全出血") },
                 { "pack.layout.sculpted", u8 ("新拟物内凹槽") },
                 { "pack.midiLearnOn",     u8 ("MIDI 学习: 开") },
-                { "pack.midiLearnOff",    u8 ("MIDI 学习: 关") }
+                { "pack.midiLearnOff",    u8 ("MIDI 学习: 关") },
+                { "preset.cat.0",         u8 ("基础与通用") },
+                { "preset.cat.1",         u8 ("母带总线") },
+                { "preset.cat.2",         u8 ("鼓组与低频") },
+                { "preset.cat.3",         u8 ("人声与乐器") },
+                { "preset.item.0",        u8 ("默认初始化") },
+                { "preset.item.1",        u8 ("温和总线粘合") },
+                { "preset.item.2",        u8 ("透明均衡稳压") },
+                { "preset.item.3",        u8 ("母带暖感与空气") },
+                { "preset.item.4",        u8 ("线性相位母带") },
+                { "preset.item.5",        u8 ("冲击感响度控制") },
+                { "preset.item.6",        u8 ("鼓组总线塑形") },
+                { "preset.item.7",        u8 ("紧致超低与底鼓") },
+                { "preset.item.8",        u8 ("清脆瞬态扩展") },
+                { "preset.item.9",        u8 ("人声贴耳与去齿音") },
+                { "preset.item.10",       u8 ("原声吉他润色") },
+                { "preset.item.11",       u8 ("向上压缩细节抬升") },
+                { "preset.saveAs",        u8 ("另存为...") }
             };
             return p;
         }();

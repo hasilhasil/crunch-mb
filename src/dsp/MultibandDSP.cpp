@@ -229,7 +229,7 @@ void MultibandDSP::updateScalars (const ScalarParams& p) noexcept
     autoGainEnabled_ = p.autoGain;
 
     // ---- Monitor（Future MB 对标）----
-    monitorMode_ = juce::jlimit (0, 6, p.monitorMode);
+    monitorMode_ = juce::jlimit (0, 5, p.monitorMode);
 
     // lookahead 以**墙钟时间**为准：过采样下换算成 procRate_ 下的样本数
     laSamples_ = (int) std::lround (p.lookaheadMs * 0.001 * procRate_);
@@ -553,18 +553,6 @@ void MultibandDSP::processChain (float* const* channels, int numSamples,
                     const int b = m - 2;
                     juce::FloatVectorOperations::copy (out, bandStore_[(size_t) b][(size_t) ch].data(), n);
                     juce::FloatVectorOperations::multiply (out, outGain_, n);
-                }
-                else                              // 6 = Gain Reduction
-                {
-                    for (int i = 0; i < n; ++i)
-                    {
-                        float gSum = 0.0f;
-                        for (int b = 0; b < Param::kNumBands; ++b)
-                            gSum += gStore_[b][(size_t) ch][(size_t) i];
-                        const float gAvg = 0.25f * gSum;
-                        const float gr = 1.0f - gAvg;             // 0..1（正数=有衰减）
-                        out[i] = juce::jlimit (-1.0f, 1.0f, gr * 0.1f);
-                    }
                 }
             }
         }

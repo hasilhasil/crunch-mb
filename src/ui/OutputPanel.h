@@ -71,7 +71,7 @@ public:
     void  setGlobalMixForTest (float v)   { globalMixPct_ = v; }
     void  setGlobalBypassForTest (bool v) { globalBypass_ = v; }
     void  setAutoGainForTest (bool v)     { autoGain_ = v; }
-    void  setMonitorForTest (int idx)     { monitorIdx_ = juce::jlimit (0, 6, idx); }
+    void  setMonitorForTest (int idx)     { monitorIdx_ = juce::jlimit (0, 5, idx); }
 
     /** R35（N4）：把 6 行副本回读成真实参数值。
      *  以前只在"打开面板那一刻"同步一次，于是宿主自动化改 Auto-Gain / Monitor、
@@ -80,7 +80,7 @@ public:
     void syncFromBackend (float inputGainDb, float outputGainDb, float mixPct,
                           bool anyBypassed, bool autoGainOn, int monitorIdxIn)
     {
-        const int mon = juce::jlimit (0, 6, monitorIdxIn);
+        const int mon = juce::jlimit (0, 5, monitorIdxIn);
         const bool changed = (std::abs (inputGainDb_  - inputGainDb)  > 1.0e-4f)
                           || (std::abs (outputGainDb_ - outputGainDb) > 1.0e-4f)
                           || (std::abs (globalMixPct_ - mixPct)       > 1.0e-4f)
@@ -106,7 +106,7 @@ public:
     void clickRow (int row);
     juce::Rectangle<float> toggleRect(int index) const;
     Knob& numericControlForTest(int index) { return knobs_[(size_t)index]; }
-    void selectMonitorForTest(int idx) { monitorBox_.setSelectedId(juce::jlimit(0, 6, idx) + 1, juce::sendNotificationSync); }
+    void selectMonitorForTest(int idx) { monitorBox_.setSelectedId(juce::jlimit(0, 5, idx) + 1, juce::sendNotificationSync); }
 
 private:
     void syncControls();

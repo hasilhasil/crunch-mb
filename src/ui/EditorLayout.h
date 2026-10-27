@@ -44,13 +44,24 @@ struct EditorLayout
     juce::Rectangle<float> range() const        { return { plotRight() - 89 * scale, 8 * scale, 80 * scale, 30 * scale }; }
     juce::Rectangle<float> linkedButton() const { return { range().getX() - 169 * scale, 8 * scale, 160 * scale, 30 * scale }; }
 
-    juce::Rectangle<float> bandTab (int band) const
+    /** 顶栏预设选择窗口槽位（与右侧 A/B 对比按钮成组居中于电源键与 LINKED CONTROL 之间） */
+    juce::Rectangle<float> presetSelector() const
     {
-        const float left = 200 * scale;
-        const float available = linkedButton().getX() - left - 20 * scale;
-        const float cell = juce::jmin (83 * scale, available / 4);
-        const float start = left + (available - 4 * cell) * 0.5f;
-        return { start + band * cell, 8 * scale, cell - 3 * scale, 30 * scale };
+        const float left  = power().getRight() + 14.0f * scale;
+        const float right = linkedButton().getX() - 14.0f * scale;
+        const float presW = 228.0f * scale;
+        const float gap   = 10.0f  * scale;
+        const float abW   = 66.0f  * scale;
+        const float total = presW + gap + abW;
+        const float start = juce::jmax (left, left + (right - left - total) * 0.5f);
+        return { start, 8.0f * scale, presW, 30.0f * scale };
+    }
+
+    /** 顶栏 A/B 对比按钮槽位（紧邻预设选择窗口右侧，仅含 A / B 双字母图标） */
+    juce::Rectangle<float> abCompareButton() const
+    {
+        const auto p = presetSelector();
+        return { p.getRight() + 10.0f * scale, 8.0f * scale, 66.0f * scale, 30.0f * scale };
     }
 
     juce::Rectangle<float> globalCell (int index) const
@@ -70,14 +81,12 @@ struct EditorLayout
         return { (plotRight() - w) * 0.5f, globalTop() - h - 42 * scale, w, h };
     }
 
-    /** 齿轮菜单左侧伴随展开的「四包正交组合切换卡片」槽位（不遮挡原 4 行主题下拉框） */
+    /** 右上角设置按钮展开的唯一新版「四包正交组合 + MIDI Learn」菜单卡片（已移除旧 4 行主题菜单） */
     juce::Rectangle<float> packSwitcherCard() const
     {
-        const float dropW = 180.0f * scale;
-        const float dropX = width - dropW - 6.0f * scale;
         const float w = 340.0f * scale;
-        const float h = 344.0f * scale;
-        const float x = juce::jmax (10.0f * scale, dropX - w - 8.0f * scale);
+        const float h = 380.0f * scale;
+        const float x = juce::jmax (10.0f * scale, width - w - 8.0f * scale);
         const float y = topHeight() + 4.0f * scale;
         return { x, y, w, h };
     }
@@ -90,6 +99,7 @@ struct EditorLayout
      *   section 3 = Layout Pack（2 项：0=Standard, 1=Sculpted）
      *   section 4 = Locale Pack（2 项：0=en-US, 1=zh-CN）
      *   section 5 = Rollback（1 项：0=Rollback Last Swap）
+     *   section 6 = MIDI Learn（1 项：0=MIDI Learn Toggle）
      */
     juce::Rectangle<float> packOptionRect (int section, int optionIndex) const
     {
@@ -129,7 +139,10 @@ struct EditorLayout
             const float cellW = (innerW - 6.0f * scale) * 0.5f;
             return { x0 + optionIndex * (cellW + 6.0f * scale), y0 + 250.0f * scale, cellW, btnH };
         }
-        // section == 5: Rollback
-        return { x0, y0 + 296.0f * scale, innerW, 28.0f * scale };
+        if (section == 5)
+            return { x0, y0 + 294.0f * scale, innerW, 28.0f * scale };
+
+        // section == 6: MIDI Learn
+        return { x0, y0 + 332.0f * scale, innerW, 28.0f * scale };
     }
 };

@@ -34,23 +34,27 @@ namespace UiPack
         {
             const float d    = spec.offset * scale;
             const float blur = spec.blur   * scale;
-            const int   passes = 4;
+            const int   passes = 6;
 
             if (d > 0.1f && opacity > 0.01f)
             {
+                // 6 层平方衰减柔化核（Gaussian-like falloff）：外圈宽扩散低权重、内圈平滑过渡，
+                // 消除原 4 层窄带线性硬叠造成的左上角刺眼白圈。
+                constexpr float kNormSum = 2.277778f; // sum_{i=1..6} ((7 - i)/6)^2
                 for (int i = passes; i >= 1; --i)
                 {
                     const float t      = (float) i / (float) passes;
-                    const float expand = blur * 0.36f * t;
-                    const float shift  = d * (0.45f + 0.55f * t);
-                    const float weight = (1.0f - (t - 0.25f) * 0.65f) / (float) passes;
+                    const float fall   = (float) (passes + 1 - i) / (float) passes;
+                    const float expand = blur * 0.44f * t;
+                    const float shift  = d * (0.30f + 0.70f * t);
+                    const float weight = (fall * fall) / kNormSum;
 
-                    // 左上高光（-shift, -shift）
+                    // 左上高光（-shift, -shift）：半径略大于暗影以模拟漫反射柔光
                     if (spec.lightAlpha > 0.001f)
                     {
                         g.setColour (pal.shadowLight.withMultipliedAlpha (spec.lightAlpha * weight * opacity));
-                        g.fillRoundedRectangle (rect.translated (-shift, -shift).expanded (expand),
-                                                cornerRadius + expand * 0.6f);
+                        g.fillRoundedRectangle (rect.translated (-shift * 0.88f, -shift * 0.88f).expanded (expand * 1.05f),
+                                                cornerRadius + expand * 0.65f);
                     }
                     // 右下暗影（+shift, +shift）
                     if (spec.darkAlpha > 0.001f)
@@ -66,10 +70,10 @@ namespace UiPack
             g.setColour ((fillAccent ? pal.accent : pal.bg).withMultipliedAlpha (opacity));
             g.fillRoundedRectangle (rect, cornerRadius);
 
-            // 135° 柔和塑形微光泽（左上 bgLight -> 右下 bg）
+            // 135° 柔和塑形微光泽（收敛强度至 0.15f，避免与左上外高光叠加过曝）
             if (! fillAccent)
             {
-                juce::ColourGradient sheen (pal.bgLight.withMultipliedAlpha (0.38f * opacity),
+                juce::ColourGradient sheen (pal.bgLight.withMultipliedAlpha (0.15f * opacity),
                                             rect.getX(), rect.getY(),
                                             pal.bg.withMultipliedAlpha (0.0f),
                                             rect.getRight(), rect.getBottom(), false);
@@ -170,6 +174,65 @@ namespace UiPack
             {
                 const auto& spec = hovered ? theme.shadowHover : theme.shadowButton;
                 drawRaisedRect (g, rect, radius, pal, spec, scale, opacity, false);
+            }
+        }
+
+        /** 绘制紧凑按键组内的微凸键帽（用于一体化内凹底座内的 S/M/B/Δ 及 A/B 切换键） */
+        static void drawCompactCap (juce::Graphics& g,
+                                    juce::Rectangle<float> rect,
+                                    const PaletteTokens& pal,
+                                    const ThemeTokens& theme,
+                                    bool activeOrPressed,
+                                    bool hovered,
+                                    float scale = 1.0f,
+                                    float opacity = 1.0f,
+                                    float customRadius = -1.0f,
+                                    bool fillAccentWhenActive = false)
+        {
+            const float radius = (customRadius >= 0.0f) ? customRadius : (theme.radiusSm * scale);
+            if (! theme.isNeumorphic)
+            {
+                if (activeOrPressed)
+                {
+                    g.setColour ((fillAccentWhenActive ? pal.accent.withAlpha (0.88f)
+                                                       : pal.accent.withAlpha (0.28f)).withMultipliedAlpha (opacity));
+                    g.fillRoundedRectangle (rect, radius);
+                    g.setColour (pal.accent.withAlpha (0.75f * opacity));
+                    g.drawRoundedRectangle (rect, radius, 1.0f * scale);
+                }
+                else
+                {
+                    g.setColour ((hovered ? pal.track.brighter (0.12f) : pal.surfaceA).withMultipliedAlpha (opacity));
+                    g.fillRoundedRectangle (rect, radius);
+                    if (hovered)
+                    {
+                        g.setColour (pal.gridZ.withMultipliedAlpha (0.85f * opacity));
+                        g.drawRoundedRectangle (rect, radius, 1.0f * scale);
+                    }
+                }
+                return;
+            }
+
+            if (activeOrPressed)
+            {
+                if (fillAccentWhenActive)
+                {
+                    drawRaisedRect (g, rect, radius, pal, theme.shadowBadge, scale, opacity, true);
+                }
+                else
+                {
+                    drawInsetRect (g, rect, radius, pal, theme.insetFocus, scale, opacity, false);
+                    g.setColour (pal.accent.withMultipliedAlpha (0.18f * opacity));
+                    g.fillRoundedRectangle (rect.reduced (1.0f * scale), juce::jmax (1.5f, radius - 1.0f * scale));
+                }
+            }
+            else
+            {
+                DualShadowSpec micro = hovered ? theme.shadowHover : theme.shadowBadge;
+                micro.offset     *= 0.72f;
+                micro.blur       *= 0.75f;
+                micro.lightAlpha *= 0.80f;
+                drawRaisedRect (g, rect, radius, pal, micro, scale, opacity, false);
             }
         }
 

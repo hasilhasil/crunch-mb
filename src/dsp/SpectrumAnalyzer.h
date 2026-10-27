@@ -18,9 +18,16 @@ public:
     void pushSamples (const float* mono, int numSamples);
     bool processPendingFrame();
     void setTilt (float dbPerOct);
-    // Pro-MB Analyzer 面板对标：
-    //   Speed     — release 时间常数（Pro-MB：fast/medium/slow；无 attack 参数）
-    //   Freeze    — 停止下落，显示历史最大包络（Pro-MB: "stop falling, max over time"）
+    // 频谱分析器 Speed 三档一阶指数衰减时间常数 τ（ms）：
+    //   · Fast = 100 ms, Medium = 200 ms（默认）, Slow = 400 ms
+    //   · 单级一阶指数平滑（仅在 processFrame 执行一次，消除二阶串联滞后与顶部悬停）
+    static constexpr double kSpeedTauMs[3] = { 100.0, 200.0, 400.0 };   // Fast / Medium / Slow
+    static constexpr double speedToReleaseMs (int speedIdx) noexcept
+    {
+        const int idx = (speedIdx < 0) ? 0 : (speedIdx > 2 ? 2 : speedIdx);
+        return kSpeedTauMs[idx];
+    }
+
     void setReleaseMs (double ms) noexcept { releaseMs_.store (juce::jmax (1.0, ms)); }
     void setFrozen (bool f)        noexcept { frozen_.store (f); }
     bool isFrozen() const          noexcept { return frozen_.load(); }
@@ -79,9 +86,12 @@ private:
 
     std::vector<float> binLevelsDb_;
     std::vector<float> prevLevelsDb_;
+    std::vector<float> hopPeakMag_;
+    std::vector<float> displayScratchDb_;
     bool hasFrame_ = false;
+    float lastTilt_ = 0.0f;
 
-    static constexpr double kReleaseMs = 20.0;    // 默认 = Medium（Pro-MB 默认档）
+    static constexpr double kReleaseMs = kSpeedTauMs[1];         // 默认 = Medium (200 ms)
     std::atomic<double> releaseMs_ { kReleaseMs };
     std::atomic<bool>  frozen_    { false };     // Pro-MB Freeze
     float fadeIn_ = 0.0f;      // B1：起始软启动进度 0→1（每帧按 1−exp(−dt/τ) 推进）

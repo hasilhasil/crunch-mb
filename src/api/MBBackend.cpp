@@ -421,9 +421,23 @@ void MBBackend::setCrossovers (float x1, float x2, float x3)
     const float vals[3] = { x1, x2, x3 };
     const char* ids[3]  = { Param::ID::xover1, Param::ID::xover2, Param::ID::xover3 };
     for (int i = 0; i < 3; ++i)
-        if (auto* p = proc_.apvts.getParameter (ids[i]))
-            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-                p->setValueNotifyingHost (rp->getNormalisableRange().convertTo0to1 (vals[i]));
+    {
+        juce::AudioProcessorParameter* p = nullptr;
+        if (paramCacheBuilt_)
+        {
+            const auto it = paramCache_.find (ids[i]);
+            if (it != paramCache_.end())
+                p = it->second;
+        }
+        if (p == nullptr)
+            p = proc_.apvts.getParameter (ids[i]);
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            const float norm = rp->getNormalisableRange().convertTo0to1 (vals[i]);
+            if (std::abs (norm - p->getValue()) > 1.0e-7f)
+                p->setValueNotifyingHost (norm);
+        }
+    }
 }
 
 std::array<float, 4> MBBackend::getBandGainReduction()
