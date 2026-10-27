@@ -24,7 +24,8 @@ namespace
     }
     inline bool isStructuralParam (const juce::String& id) noexcept
     {
-        return id == Param::ID::xover1 || id == Param::ID::xover2 || id == Param::ID::xover3
+        return id == Param::ID::enabled
+            || id == Param::ID::xover1 || id == Param::ID::xover2 || id == Param::ID::xover3
             || id == Param::ID::xoverSlope || id == Param::ID::phaseMode
             || id == Param::ID::linearQuality || id == Param::ID::lookahead
             || id == Param::ID::oversampling;      // 2026-10-14
@@ -66,6 +67,7 @@ void CrunchMBAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // 会把分析线程停掉 → 用户看到的"频谱消失且不动，必须关开编辑器才好"（2026-09-23）。
     // 编辑器开关状态由 setEditorActive() 单独管理，prepareToPlay 不碰它。
     spectrumEngine_.setSampleRate (sampleRate_);
+    pushAnalyzerSettingsToEngine();
 
     // pre 抽头延迟环：容量 = 最大分频延迟(6144) + 最大 lookahead(3ms @ 1x)
     //   + 过采样滤波器延迟余量(256) + 块余量。
@@ -84,8 +86,14 @@ void CrunchMBAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 
 void CrunchMBAudioProcessor::releaseResources()
 {
-    const juce::SpinLock::ScopedLockType sl (dspLock_);
-    dsp_.reset();
+    {
+        const juce::SpinLock::ScopedLockType sl (dspLock_);
+        dsp_.reset();
+    }
+    inputPeak_.store  (0.0f, std::memory_order_relaxed);
+    outputPeak_.store (0.0f, std::memory_order_relaxed);
+    for (auto& g : bandGainDb_)
+        g.store (0.0f, std::memory_order_relaxed);
 }
 
 bool CrunchMBAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -133,14 +141,18 @@ void CrunchMBAudioProcessor::applyStructure()
 
 void CrunchMBAudioProcessor::updateLatency() noexcept
 {
-    // 修复 BUG-02：setLatencySamples() 与 preTapRing_ 均以 **1× 宿主采样率样本数** 为单位。
+    // setLatencySamples() 与 preTapRing_ 均以 **1× 宿主采样率样本数** 为单位。
     // dsp_.getCrossoverLatencySamples() 与 getOversamplingLatencySamples() 均已返回 1× 样本数，
     // lookahead 同样按 1× sampleRate_ 计算（不可再乘 osFactor）。
+    // 当插件总开关 enabled 关闭时，processBlock 直通 0 延迟干声，PDC 上报同步归 0。
+    const bool en = boolParam (apvts.getRawParameterValue (Param::ID::enabled));
     const int laSamples1x = (int) std::lround (
         Param::lookaheadIndexToMs (choiceIndex (apvts.getRawParameterValue (Param::ID::lookahead)))
         * 0.001 * sampleRate_);
-    const int lat = dsp_.getCrossoverLatencySamples() + juce::jmax (0, laSamples1x)
-                  + dsp_.getOversamplingLatencySamples();
+    const int lat = en
+        ? (dsp_.getCrossoverLatencySamples() + juce::jmax (0, laSamples1x)
+           + dsp_.getOversamplingLatencySamples())
+        : 0;
     preTapLatency_.store (lat, std::memory_order_release);
     if (lat != lastLatency_)
     {
@@ -153,7 +165,17 @@ void CrunchMBAudioProcessor::reapplyStructureAndLatency()
 {
     applyStructure();
     updateLatency();
+    pushAnalyzerSettingsToEngine();
     uiWakeFlag_.store (true, std::memory_order_release);
+}
+
+void CrunchMBAudioProcessor::pushAnalyzerSettingsToEngine() noexcept
+{
+    static const double kSpeedTauMs[3] = { 10.0, 20.0, 60.0 };
+    spectrumEngine_.setResolution (analyzerSettings_.fftSize);
+    spectrumEngine_.setReleaseMs (kSpeedTauMs[juce::jlimit (0, 2, analyzerSettings_.speed)]);
+    spectrumEngine_.setTilt (analyzerSettings_.tilt);
+    spectrumEngine_.setFrozen (analyzerSettings_.frozen);
 }
 
 MBBackend& CrunchMBAudioProcessor::getBackend()
@@ -189,7 +211,7 @@ void CrunchMBAudioProcessor::pushHistoryPoint (float inputDb, float outputDb) no
     const unsigned idx = cnt % (unsigned) kHistoryCapacity;
     historyIn_[(size_t) idx].store (inputDb,  std::memory_order_relaxed);
     historyOut_[(size_t) idx].store (outputDb, std::memory_order_relaxed);
-    // 修复 P1-10：historyCounter_ 保持单调递增（仅写槽位时取模），避免每 4096 块回绕归 1 清空历史
+    // historyCounter_ 保持单调递增（仅写槽位时取模），避免每 4096 块回绕归 1 清空历史
     historyCounter_.store (cnt + 1u, std::memory_order_release);
 }
 
@@ -234,17 +256,15 @@ void CrunchMBAudioProcessor::parameterChanged (const juce::String& parameterID, 
     if (isStructuralParam (parameterID))
         triggerAsyncUpdate();          // 合并到下一消息循环
 
-    // R32：任何参数变化都通知 UI"该醒了"。
-    // Phase E-2 空闲降频后 UI 唯一的检测点也是定时器，这里置原子标志兜底。
-    uiWakeFlag_.store (true, std::memory_order_release);
-
     // R35（N4）：带 id 的精确通知，让 UI 只刷新对应的参数副本。
     // ⚠️ 只在**消息线程**调用回调：宿主做 sample-accurate 自动化时 setValue
     //    可能发生在音频线程，那里绝不能碰 juce::Component，也不该构造
-    //    juce::String 拷贝。音频线程路径只置上面的 uiWakeFlag_，
+    //    juce::String 拷贝。音频线程路径（或编辑器未挂载回调时）置 uiWakeFlag_，
     //    由 UI 定时器做一次全量同步（见 DisplayView::syncUiFromParams）。
     if (uiWakeCallback_ != nullptr && juce::MessageManager::existsAndIsCurrentThread())
         uiWakeCallback_ (parameterID);
+    else
+        uiWakeFlag_.store (true, std::memory_order_release);
 }
 
 void CrunchMBAudioProcessor::readScalars (MultibandDSP::ScalarParams& sp) const noexcept
@@ -321,33 +341,54 @@ void CrunchMBAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const int mainInCh    = getMainBusNumInputChannels();
     const int mainOutCh   = getMainBusNumOutputChannels();
 
-    // FL Studio 等宿主在未接线槽位可能禁用 mainIn：此时直接清零输出缓冲返回
+    // FL Studio 等宿主在未接线槽位可能禁用 mainIn：此时直接清零输出缓冲与峰值状态返回
     if (mainInCh <= 0 || buffer.getNumChannels() <= 0 || numSamples <= 0)
     {
         buffer.clear();
+        inputPeak_.store  (0.0f, std::memory_order_relaxed);
+        outputPeak_.store (0.0f, std::memory_order_relaxed);
+        for (auto& g : bandGainDb_)
+            g.store (0.0f, std::memory_order_relaxed);
         return;
     }
 
-    // ---- Enabled 旁通（TECH_SPEC §5.1）：关时直通主进→主出 ----
-    if (! boolParam (apvts.getRawParameterValue (Param::ID::enabled)))
-    {
-        if (mainInCh == 1 && mainOutCh == 2 && buffer.getNumChannels() >= 2)   // 单声道进 → 双通同源
-            juce::FloatVectorOperations::copy (buffer.getWritePointer (1),
-                                               buffer.getReadPointer (0), numSamples);
-        for (int ch = juce::jmax (mainInCh, mainOutCh); ch < buffer.getNumChannels(); ++ch)
-            buffer.clear (ch, 0, numSamples);
-        return;
-    }
-
-    // 修复 P0-4：使用主总线通道数（而非包含侧链的 buffer.getNumChannels()）收敛 safeCh，
+    // 使用主总线通道数（而非包含侧链的 buffer.getNumChannels()）收敛 safeCh，
     // 防止 Mono 主总线 + Stereo 侧链（总 3 通道）时把侧链左声道（ch 1）误当主输出右声道处理。
     const int mainBusCh = juce::jmax (mainInCh, mainOutCh);
     const int safeCh    = juce::jlimit (1, 2, juce::jmin (mainBusCh, buffer.getNumChannels()));
+    const int tapN      = juce::jmin (numSamples, (int) monoPre_.size());
+
+    // ---- Enabled 旁通（TECH_SPEC §5.1）：关时直通主进→主出，同时更新 IN/OUT 峰值并归零压缩增益 ----
+    if (! boolParam (apvts.getRawParameterValue (Param::ID::enabled)))
+    {
+        if (mainInCh == 1 && safeCh == 2)                    // 单声道进 → 双通同源
+            juce::FloatVectorOperations::copy (buffer.getWritePointer (1),
+                                               buffer.getReadPointer (0), numSamples);
+        for (int ch = safeCh; ch < buffer.getNumChannels(); ++ch)
+            buffer.clear (ch, 0, numSamples);
+
+        float pk = 0.0f;
+        for (int i = 0; i < tapN; ++i)
+        {
+            const float m = safeCh > 1
+                ? 0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i))
+                : buffer.getSample (0, i);
+            monoPre_[(size_t) i]  = m;
+            monoPost_[(size_t) i] = m;
+            pk = juce::jmax (pk, std::abs (m));
+        }
+        inputPeak_.store  (pk, std::memory_order_relaxed);
+        outputPeak_.store (pk, std::memory_order_relaxed);
+        for (auto& g : bandGainDb_)
+            g.store (0.0f, std::memory_order_relaxed);
+        if (tapN > 0)
+            spectrumEngine_.pushSamples (monoPre_.data(), monoPost_.data(), tapN);
+        return;
+    }
+
     if (mainInCh == 1 && safeCh == 2)
         juce::FloatVectorOperations::copy (buffer.getWritePointer (1),
                                            buffer.getReadPointer (0), numSamples);
-
-    const int tapN = juce::jmin (numSamples, (int) monoPre_.size());
 
     // ---- 侧链总线（输入 bus 1；禁用/无信号时 fallback INT） ----
     const float* scPtr[2] = { nullptr, nullptr };
@@ -431,6 +472,10 @@ void CrunchMBAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         xml->setAttribute ("uiAnalyzerSpeed",  analyzerSettings_.speed);
         xml->setAttribute ("uiAnalyzerTilt",   (double) analyzerSettings_.tilt);
         xml->setAttribute ("uiAnalyzerFrozen", analyzerSettings_.frozen ? 1 : 0);
+        xml->setAttribute ("uiThemePack",      uiPackSettings_.themeId);
+        xml->setAttribute ("uiPalettePack",    uiPackSettings_.paletteId);
+        xml->setAttribute ("uiLayoutPack",     uiPackSettings_.layoutId);
+        xml->setAttribute ("uiLocalePack",     uiPackSettings_.localeId);
         copyXmlToBinary (*xml, destData);
     }
 }
@@ -451,6 +496,15 @@ void CrunchMBAudioProcessor::setStateInformation (const void* data, int sizeInBy
                 s.tilt    = (float) xml->getDoubleAttribute ("uiAnalyzerTilt", 0.0);
                 s.frozen  = xml->getIntAttribute ("uiAnalyzerFrozen", 0) != 0;
                 analyzerSettings_ = s;
+            }
+            if (xml->hasAttribute ("uiThemePack"))
+            {
+                UiPackSettings up;
+                up.themeId   = juce::jlimit (0, 1, xml->getIntAttribute ("uiThemePack", 0));
+                up.paletteId = juce::jlimit (0, 5, xml->getIntAttribute ("uiPalettePack", 0));
+                up.layoutId  = juce::jlimit (0, 1, xml->getIntAttribute ("uiLayoutPack", 0));
+                up.localeId  = juce::jlimit (0, 1, xml->getIntAttribute ("uiLocalePack", 0));
+                uiPackSettings_ = up;
             }
 
             apvts.replaceState (juce::ValueTree::fromXml (*xml));

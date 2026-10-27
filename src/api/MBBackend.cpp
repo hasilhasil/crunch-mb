@@ -193,7 +193,7 @@ std::vector<ParamValue> MBBackend::getParams (const std::vector<juce::String>& i
 
 SetResult MBBackend::setParam (const juce::String& id, float value)
 {
-    // 修复 API-01：直接修改 xover1..3 时统一走 1 八度最小带宽钳制，保持 APVTS/UI 与底层 DSP 一致
+    // 直接修改 xover1..3 时统一走 1 八度最小带宽钳制，保持 APVTS/UI 与底层 DSP 一致
     if (id == Param::ID::xover1) return setCrossover (0, value);
     if (id == Param::ID::xover2) return setCrossover (1, value);
     if (id == Param::ID::xover3) return setCrossover (2, value);

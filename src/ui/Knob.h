@@ -59,6 +59,8 @@ public:
     void setValuePrefix (juce::String p)       { valuePrefix_ = std::move (p); repaint(); }
     void setLinkedMark (bool b)                { linkedMark_ = b; repaint(); }   // §5.2 ⊞ 联动标识
     void setPalette (MBTheme::Palette p)       { pal_ = p; invalidateBackLayer(); repaint(); }
+    void setThemeTokens (const UiPack::ThemeTokens& t) { themeTokens_ = t; invalidateBackLayer(); repaint(); }
+    bool isNeumorphicForTest() const noexcept  { return themeTokens_.isNeumorphic; }
     void setSelectionFeedbackEnabled(bool enabled) { selectionFeedback_=enabled; }
     void setUiTextSizes(float label,float value) { labelTextSize_=label;valueTextSize_=value; }
     void focusGained(juce::Component::FocusChangeType) override { repaint(); }
@@ -219,6 +221,7 @@ private:
 
     juce::String label_, suffix_, valuePrefix_;
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
+    UiPack::ThemeTokens themeTokens_ = UiPack::buildThemePack (UiPack::ThemeId::Classic);
 
     // 内嵌编辑（自绘）
     bool editing_ = false;

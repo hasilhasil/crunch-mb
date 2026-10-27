@@ -370,8 +370,9 @@ bool Knob::keyPressedEditing (const juce::KeyPress& key)
 // 与 270° 行程一致；环在值弧**外侧**。
 void Knob::buildBackLayer (float d)
 {
-    // +4px 余量给外圈刻度（刻度画在半径 r+0.075d 处）
-    const int px = juce::roundToInt (d) + 4;
+    // +10px 余量容纳外圈刻度与新拟物双阴影羽化
+    const int pad = themeTokens_.isNeumorphic ? 12 : 4;
+    const int px  = juce::roundToInt (d) + pad;
     backLayer_ = juce::Image (juce::Image::ARGB, px, px, true);
     juce::Graphics g (backLayer_);
 
@@ -384,7 +385,7 @@ void Knob::buildBackLayer (float d)
     const int   nTicks = 11;
     const float tickInner = r + juce::jmax (1.5f, d * 0.035f);
     const float tickOuter = r + juce::jmax (3.5f, d * 0.075f);
-    g.setColour (pal_.gridZ);
+    g.setColour (themeTokens_.isNeumorphic ? pal_.dim.withAlpha (0.55f) : pal_.gridZ);
     for (int i = 0; i < nTicks; ++i)
     {
         const float t = (float) i / (float) (nTicks - 1);
@@ -396,12 +397,21 @@ void Knob::buildBackLayer (float d)
         g.drawLine (x1, y1, x2, y2, juce::jmax (1.0f, d * 0.018f));
     }
 
-    // ---- 深色圆体底（径向渐变，上亮下暗）----
     const float bodyR = r - juce::jmax (1.0f, d * 0.02f);
-    juce::ColourGradient bodyGrad (pal_.track.brighter (0.10f), cx, cy - bodyR,
-                                   pal_.track.darker (0.25f), cx, cy + bodyR, false);
-    g.setGradientFill (bodyGrad);
-    g.fillEllipse (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
+    const juce::Rectangle<float> bodyBox (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
+
+    if (themeTokens_.isNeumorphic)
+    {
+        // 新拟物：外环底座为柔和内凹圆槽（insetCircle）
+        UiPack::NeuPainter::drawInsetCircle (g, bodyBox, pal_, themeTokens_.insetButton, d / 72.0f);
+    }
+    else
+    {
+        juce::ColourGradient bodyGrad (pal_.track.brighter (0.10f), cx, cy - bodyR,
+                                       pal_.track.darker (0.25f), cx, cy + bodyR, false);
+        g.setGradientFill (bodyGrad);
+        g.fillEllipse (bodyBox);
+    }
 }
 
 // ---------------- 绘制 ----------------
@@ -422,7 +432,7 @@ void Knob::paint (juce::Graphics& g)
         const float labH = labFont.getHeight() + 1.0f;
         g.setFont (labFont);
         g.setColour (pal_.dim);
-        auto labelBox = juce::Rectangle<float> (0.0f, kb.getY() - juce::jmax (labH, juce::jmin (15.0f, d * 0.32f)),
+        auto labelBox = juce::Rectangle<float> (0.0f, kb.getY() - juce::jmax (labH + 3.0f, juce::jmin (18.0f, d * 0.36f)),
                                                 w, labH);
         g.drawText (label_, labelBox, juce::Justification::centredTop);
 
@@ -504,7 +514,7 @@ void Knob::paint (juce::Graphics& g)
     // 弧色：NORMAL → 悬停提亮 → 拖动转"暖色"（Pro-MB OverlayRotate 的暖辉光）
     // R36：暖色固定为金色，而不是主题 accent 的提亮版——否则 Blue 主题下
     //   ROTATE 只是"更亮的蓝"，和 ACTIVE 分不开（快照 06 里两者几乎一样）。
-    const juce::Colour warmCol (0xFFFFC86B);
+    const juce::Colour warmCol = pal_.accent4;
     juce::Colour arcCol = pal_.accent.brighter (0.10f * activeK);
     if (pressK > 0.001f)
         arcCol = arcCol.darker (0.32f * pressK);
@@ -514,29 +524,53 @@ void Knob::paint (juce::Graphics& g)
     g.strokePath (val, juce::PathStrokeType (thick, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
 
-    // ---- 帽（近白）+ 深色指针 ----
-    // NORMAL / ACTIVE（略亮）/ DOWN（压暗）/ ROTATE（转暖）
+    // ---- 帽 + 指针 ----
     const float capR = r - thick - juce::jmax (1.0f, d * 0.05f);   // R36：恒定
-    juce::Colour capCol = pal_.knob;
-    capCol = capCol.brighter (0.16f * activeK);                    // ACTIVE：提亮
-    capCol = capCol.darker   (0.26f * pressK);                     // DOWN：压暗（要能与 ACTIVE 分辨）
-    if (rotateK > 0.001f)
-        capCol = capCol.interpolatedWith (juce::Colour (0xFFFFD79A), rotateK * 0.62f);
-    juce::ColourGradient grad (capCol.brighter (0.12f), cx, cy - capR,
-                               capCol.darker (0.15f), cx, cy + capR, false);
-    g.setGradientFill (grad);
-    g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
+    const juce::Rectangle<float> capBox (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
+    if (themeTokens_.isNeumorphic)
+    {
+        // 新拟物 neu-circle 旋钮帽物理：
+        //   · NORMAL -> 外凸双阴影 shadowButton
+        //   · ACTIVE -> Hover Shadowing（外阴影向 shadowHover 收缩，零位移）
+        //   · DOWN   -> Extrude to Intrude（转为内凹 insetButton）
+        const float ks = juce::jmax (0.65f, d / 72.0f);
+        if (pressK > 0.45f)
+        {
+            UiPack::NeuPainter::drawInsetCircle (g, capBox, pal_, themeTokens_.insetButton, ks);
+        }
+        else
+        {
+            UiPack::DualShadowSpec spec = themeTokens_.shadowButton;
+            spec.offset = spec.offset + (themeTokens_.shadowHover.offset - spec.offset) * activeK;
+            spec.blur   = spec.blur   + (themeTokens_.shadowHover.blur   - spec.blur)   * activeK;
+            UiPack::NeuPainter::drawRaisedCircle (g, capBox, pal_, spec, ks);
+        }
+    }
+    else
+    {
+        juce::Colour capCol = pal_.knob;
+        capCol = capCol.brighter (0.16f * activeK);                    // ACTIVE：提亮
+        capCol = capCol.darker   (0.26f * pressK);                     // DOWN：压暗（要能与 ACTIVE 分辨）
+        if (rotateK > 0.001f)
+            capCol = capCol.interpolatedWith (pal_.accent4.interpolatedWith (pal_.knob, 0.35f), rotateK * 0.62f);
+        juce::ColourGradient grad (capCol.brighter (0.12f), cx, cy - capR,
+                                   capCol.darker (0.15f), cx, cy + capR, false);
+        g.setGradientFill (grad);
+        g.fillEllipse (capBox);
+    }
 
     const float ang = av;
     // 指针：与弧同一角度约定 —— (cx + R·sin(ang), cy − R·cos(ang))
     const float pR0 = capR * 0.22f;
-    const float pR1 = arcR;                     // = 弧所在半径（R36：恒定）
+    const float pR1 = themeTokens_.isNeumorphic ? (capR * 0.86f) : arcR;
     const float px1 = cx + std::sin (ang) * pR0;
     const float py1 = cy - std::cos (ang) * pR0;
     const float px2 = cx + std::sin (ang) * pR1;
     const float py2 = cy - std::cos (ang) * pR1;
-    g.setColour (pal_.light ? juce::Colours::black.withAlpha (0.75f)
-                            : juce::Colours::black.withAlpha (0.80f));
+    if (themeTokens_.isNeumorphic)
+        g.setColour (rotateK > 0.05f ? pal_.accent : pal_.text.withAlpha (0.85f));
+    else
+        g.setColour (pal_.knob.contrasting (1.0f).withAlpha (pal_.light ? 0.75f : 0.80f));
     g.drawLine (px1, py1, px2, py2, juce::jmax (1.5f, d * 0.07f));
 
     // ---- 数值读数（旋钮下方）----§5.2：偏移旋钮带 "Δ " 前缀
@@ -545,8 +579,13 @@ void Knob::paint (juce::Graphics& g)
     const auto valFont = MBTheme::font (MBTheme::regular(), valueTextSize_>0?valueTextSize_:d * (15.0f / 72.0f));
     if(selectionFeedback_ && hasKeyboardFocus(true)){
         const auto box=juce::Rectangle<float>(3,kb.getBottom(),w-6,valFont.getHeight()+5);
-        g.setColour(pal_.accent.withAlpha(.15f));g.fillRoundedRectangle(box,4);
-        g.setColour(pal_.accent);g.drawRoundedRectangle(box,4,1);}
+        if(themeTokens_.isNeumorphic)
+            UiPack::NeuPainter::drawInsetRect(g, box, 5.0f, pal_, themeTokens_.insetFocus, 0.85f, 1.0f, true);
+        else {
+            g.setColour(pal_.accent.withAlpha(.15f));g.fillRoundedRectangle(box,4);
+            g.setColour(pal_.accent);g.drawRoundedRectangle(box,4,1);
+        }
+    }
     g.setFont (valFont);
     g.setColour (editing_ ? pal_.accent : pal_.text);
     g.drawText (txt, juce::Rectangle<float> (0.0f, kb.getBottom() + 1.0f, w,
@@ -558,10 +597,19 @@ void Knob::paint (juce::Graphics& g)
     {
         const float bw = juce::jmax (w, 78.0f), bh = 22.0f;
         auto box = juce::Rectangle<float> (w * 0.5f - bw * 0.5f, cy - bh * 0.5f, bw, bh);
-        g.setColour (pal_.surface.withAlpha (0.97f));
-        g.fillRoundedRectangle (box, 5.0f);
-        g.setColour (pal_.accent);
-        g.drawRoundedRectangle (box, 5.0f, 1.2f);
+        if (themeTokens_.isNeumorphic)
+        {
+            UiPack::NeuPainter::drawInsetRect (g, box, 6.0f, pal_, themeTokens_.insetFocus, 1.0f, 1.0f, true);
+            g.setColour (pal_.accent.withAlpha (0.5f));
+            g.drawRoundedRectangle (box, 6.0f, 1.0f);
+        }
+        else
+        {
+            g.setColour (pal_.surface.withAlpha (0.97f));
+            g.fillRoundedRectangle (box, 5.0f);
+            g.setColour (pal_.accent);
+            g.drawRoundedRectangle (box, 5.0f, 1.2f);
+        }
         g.setColour (pal_.text);
         g.setFont (MBTheme::font (MBTheme::regular(), valueTextSize_>0?valueTextSize_:12.0f));
         // A2 修复：paint() 只读光标状态，不再翻转（翻转已移到 setEditCursorBlink）

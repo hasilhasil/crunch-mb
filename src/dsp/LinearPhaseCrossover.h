@@ -61,7 +61,7 @@ public:
         return buf_[(readPos_ + i) % capacity_];
     }
 
-    /** 用 n 个 val 预填环形缓冲（reset 时预填 blockSize 个 0，消除固定延迟环 dly_ 的可变块长漂移）。 */
+    /** 用 n 个零值预填环形缓冲（reset 时预填 blockSize 个 0，消除固定延迟环 dly_ 的可变块长漂移）。 */
     void fillZeros (size_t n) noexcept
     {
         readPos_ = 0;
@@ -178,48 +178,51 @@ private:
         auto& outFifo = outFifo_[(size_t) channel];
         auto& ov      = overlap_[(size_t) channel];
 
-        // Phase：Ring 版（音频线程零分配）。原为 vector 的
-        //   insert(end,...) / erase(begin,...) / push_back ——虽在 prepare()
-        //   reserve 过，稳态峰值恰可能触到上界而重新分配，违反 TECH_SPEC §4
-        //   "音频线程零分配"。改为固定容量环形缓冲后，热路径只做索引运算
-        //   与数据搬运，不再有可能触发分配。
-        inFifo.push (input, (size_t) numSamples);
-
-        while ((int) inFifo.size() >= blockSize_)
+        // 分片推进（防止极端超大块超出单次 FIFO 容量）
+        int pos = 0;
+        while (pos < numSamples)
         {
-            for (int i = 0; i < blockSize_; ++i)
-                fftIn_[(size_t) i] = std::complex<float> (inFifo[(size_t) i], 0.0f);
-            for (int i = blockSize_; i < fftSize_; ++i)
-                fftIn_[(size_t) i] = std::complex<float> {};
+            const int chunk = juce::jmin (blockSize_, numSamples - pos);
+            inFifo.push (input + pos, (size_t) chunk);
 
-            inFifo.advanceRead ((size_t) blockSize_);   // 只前移读位置，不搬数据
+            const auto& irSpec = irSpectrumSlots_[(size_t) activeIrSlot_.load (std::memory_order_acquire)];
 
-            const auto& irSpec = irSpectrumSlots_[(size_t) (activeIrSlot_.load (std::memory_order_acquire) & 1)];
-            fft_->perform (fftIn_.data(), fftOut_.data(), false);
-            for (int i = 0; i < fftSize_; ++i)
-                fftOut_[(size_t) i] *= irSpec[(size_t) i];
-            fft_->perform (fftOut_.data(), fftIn_.data(), true);
+            while ((int) inFifo.size() >= blockSize_)
+            {
+                for (int i = 0; i < blockSize_; ++i)
+                    fftIn_[(size_t) i] = std::complex<float> (inFifo[(size_t) i], 0.0f);
+                for (int i = blockSize_; i < fftSize_; ++i)
+                    fftIn_[(size_t) i] = std::complex<float> {};
 
-            // 输出块先落到预分配的 outTmp_ 再入环（避免边算边改环）
-            for (int i = 0; i < blockSize_; ++i)
-                outTmp_[(size_t) i] = fftIn_[(size_t) i].real() + ov[(size_t) i];
-            outFifo.push (outTmp_.data(), (size_t) blockSize_);
+                inFifo.advanceRead ((size_t) blockSize_);   // 只前移读位置，不搬数据
 
-            for (int i = 0; i < blockSize_; ++i)
-                ov[(size_t) i] = (i < irLength_ - 1) ? fftIn_[(size_t) (blockSize_ + i)].real() : 0.0f;
-        }
+                fft_->perform (fftIn_.data(), fftOut_.data(), false);
+                for (int i = 0; i < fftSize_; ++i)
+                    fftOut_[(size_t) i] *= irSpec[(size_t) i];
+                fft_->perform (fftOut_.data(), fftIn_.data(), true);
 
-        const int have = (int) outFifo.size();
-        if (have >= numSamples)
-        {
-            outFifo.popTo (output, (size_t) numSamples);
-        }
-        else
-        {
-            outFifo.popTo (output, (size_t) have);
-            for (int i = have; i < numSamples; ++i)
-                output[i] = 0.0f;
-            outFifo.clear();
+                // 输出块先落到预分配的 outTmp_ 再入环（避免边算边改环）
+                for (int i = 0; i < blockSize_; ++i)
+                    outTmp_[(size_t) i] = fftIn_[(size_t) i].real() + ov[(size_t) i];
+                outFifo.push (outTmp_.data(), (size_t) blockSize_);
+
+                for (int i = 0; i < blockSize_; ++i)
+                    ov[(size_t) i] = (i < irLength_ - 1) ? fftIn_[(size_t) (blockSize_ + i)].real() : 0.0f;
+            }
+
+            const int have = (int) outFifo.size();
+            if (have >= chunk)
+            {
+                outFifo.popTo (output + pos, (size_t) chunk);
+            }
+            else
+            {
+                outFifo.popTo (output + pos, (size_t) have);
+                for (int i = have; i < chunk; ++i)
+                    output[pos + i] = 0.0f;
+                outFifo.clear();
+            }
+            pos += chunk;
         }
     }
 

@@ -143,12 +143,19 @@ namespace Param
     }
 
     // ---------- 最小带宽钳制（DESIGN §3.2 / TECH_SPEC §3.8） ----------
-    // 每分区 ≥ 1 个八度（频率比 ≥ 2:1）。按文档顺序就地钳制。
+    // 每分区 ≥ 1 个八度（频率比 ≥ 2:1）。先收敛各界的合法区间，避免逆序入参触发
+    // juce::jlimit 的 lowerLimit <= upperLimit 断言或破坏 2:1 不变量。
     inline void clampCrossovers (float& xover1, float& xover2, float& xover3)
     {
-        xover1 = juce::jlimit (40.0f,                        xover2 * 0.5f, xover1);
-        xover2 = juce::jlimit (juce::jmax (xover1 * 2.0f,  80.0f),  xover3 * 0.5f, xover2);
-        xover3 = juce::jlimit (juce::jmax (xover2 * 2.0f, 160.0f), 10000.0f,      xover3);
+        const float u1 = juce::jlimit (40.0f, 2500.0f, juce::jmin (xover2 * 0.5f, xover3 * 0.25f));
+        xover1 = juce::jlimit (40.0f, u1, xover1);
+
+        const float l2 = juce::jlimit (80.0f, 5000.0f, xover1 * 2.0f);
+        const float u2 = juce::jmax   (l2, juce::jmin (5000.0f, xover3 * 0.5f));
+        xover2 = juce::jlimit (l2, u2, xover2);
+
+        const float l3 = juce::jlimit (160.0f, 10000.0f, xover2 * 2.0f);
+        xover3 = juce::jlimit (l3, 10000.0f, xover3);
     }
 
     // ---------- 布局工厂（62 参数） ----------

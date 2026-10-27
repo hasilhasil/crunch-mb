@@ -56,9 +56,32 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
-    // 主题（Phase 5 的 ⚙ 菜单接；当前提供 setter）
+    // 主题与四包正交组合 API（Theme / Palette / Layout / Locale 原子切换与回滚）
     void setTheme (MBTheme::Theme t);
     MBTheme::Theme getTheme() const noexcept { return theme_; }
+
+    const UiPack::UiSnapshot& getUiSnapshot() const noexcept { return composition_.snapshot(); }
+    UiPack::UiComposition& getCompositionForTest() noexcept  { return composition_; }
+    juce::uint32 getUiRevision() const noexcept              { return composition_.revision(); }
+
+    UiPack::VerificationVerdict setUiPacks (UiPack::ThemeId t, UiPack::PaletteId p,
+                                            UiPack::LayoutId l, UiPack::LocaleId lc);
+    UiPack::VerificationVerdict setThemePack   (UiPack::ThemeId t);
+    UiPack::VerificationVerdict setPalettePack (UiPack::PaletteId p);
+    UiPack::VerificationVerdict setLayoutPack  (UiPack::LayoutId l);
+    UiPack::VerificationVerdict setLocalePack  (UiPack::LocaleId lc);
+    UiPack::VerificationVerdict applyNeumorphismPreset (UiPack::PaletteId pal = UiPack::PaletteId::NeuLight);
+    UiPack::VerificationVerdict applyClassicPreset     (UiPack::PaletteId pal = UiPack::PaletteId::Blue);
+    void rollbackUiPacks();
+
+    juce::Rectangle<float> packSwitcherCardForTest() const
+    {
+        return EditorLayout (getLocalBounds(), composition_.snapshot().layout).packSwitcherCard();
+    }
+    juce::Rectangle<float> packOptionRectForTest (int section, int optionIndex) const
+    {
+        return EditorLayout (getLocalBounds(), composition_.snapshot().layout).packOptionRect (section, optionIndex);
+    }
 
     // 编辑器开关（懒启动频谱分析）
     void setActive (bool active) noexcept;
@@ -390,6 +413,8 @@ public:
         analyzerFreeze_ = v; applyAnalyzerSettings();
     }
     void  applyAnalyzerSettingsForTest()      { applyAnalyzerSettings(); }
+    bool  spectrumPreVisibleForTest() const noexcept  { return spectrumView_ != nullptr && spectrumView_->isPreLayerVisibleForTest(); }
+    bool  spectrumPostVisibleForTest() const noexcept { return spectrumView_ != nullptr && spectrumView_->isPostLayerVisibleForTest(); }
     // T40 Popover 控件测试钩子 —— Phase A：经 BandPopover 转发
     void applyPopoverKnobForTest (int k, double v);
     juce::Rectangle<float> popSliderRectForTest (int k) const;
@@ -745,7 +770,7 @@ private:
     float dragStartOutputGainDb_ = 0.0f;   // Phase D-6：Alt+拖 OUT 起始增益
     float dragStartRange_ = 0.0f;
     bool mouseDownOnButton_ = false;
-    juce::StringArray activeGestureParams_;    // 当前画布拖拽已開啟 beginChangeGesture 的参数 ID 列表
+    juce::StringArray activeGestureParams_;    // 当前画布拖拽已开启 beginChangeGesture 的参数 ID 列表
     void beginGestureForParam (const juce::String& id);
     void beginCrossoverDragGestures();
     void endActiveDragGestures();
@@ -925,6 +950,9 @@ private:
     std::array<float, Param::kNumBands> lastDrawnMakeup_ {};
     std::array<float, Param::kNumBands> lastDrawnMix_ {};
     void snapshotDrawnParams() noexcept;
+    void applyCompositionSnapshot (bool persistToProcessor = true);
+    bool handlePackSwitcherClick (juce::Point<float> p);
+    UiPack::UiComposition composition_;
     // 实时值由音频线程写、UI 线程读；这里各存一份平滑后的显示值，
     // 让环的转动有弹道感而不是每帧跳。
     // ⚠️ 初值必须是静音底 −100dB，不能是 0：0 会被弹道逻辑当成"当前电平 0dB"，

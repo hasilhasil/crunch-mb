@@ -89,6 +89,7 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
         analyzerSpeed_   = as.speed;
         analyzerTilt_    = as.tilt;
         analyzerFreeze_  = as.frozen;
+        applyAnalyzerSettings();
     }
     addAndMakeVisible (*analyzerPanel_);
     // Phase D-4：Output 自绘面板（同一套 sticky 语义）
@@ -98,6 +99,15 @@ DisplayView::DisplayView (CrunchMBAudioProcessor& processor)
     outputPanel_->onGesture=[this](int index,bool begin){const char* ids[]={"inputGain","outputGain","globalMix"};
         if(auto* parameter=proc_.apvts.getParameter(ids[juce::jlimit(0,2,index)])){if(begin)parameter->beginChangeGesture();else parameter->endChangeGesture();}};
     addAndMakeVisible (*outputPanel_);
+    // 初始化四包正交组合快照（从 processor 持久化状态恢复，默认 Classic + Blue + Standard + EnUS）
+    {
+        const auto& up = proc_.getUiPackSettings();
+        composition_.applyPacks ((UiPack::ThemeId)   juce::jlimit (0, 1, up.themeId),
+                                 (UiPack::PaletteId) juce::jlimit (0, 5, up.paletteId),
+                                 (UiPack::LayoutId)  juce::jlimit (0, 1, up.layoutId),
+                                 (UiPack::LocaleId)  juce::jlimit (0, 1, up.localeId));
+        applyCompositionSnapshot (false);
+    }
     // Phase A：Tween 初值直接吸附到当前状态，避免首次绘制时从 0 淡入
     syncAllTweens();
 }
@@ -305,26 +315,114 @@ void DisplayView::endActiveDragGestures()
     activeGestureParams_.clearQuick();
 }
 
+void DisplayView::applyCompositionSnapshot (bool persistToProcessor)
+{
+    const auto& snap = composition_.snapshot();
+    theme_ = (MBTheme::Theme) snap.paletteId;
+    pal_   = snap.palette;
+    MBTheme::setCjkMode (snap.isCjkLocale());
+
+    if (linkedDrawer_ != nullptr)
+        linkedDrawer_->applyUiSnapshot (snap);
+    if (bandPopover_ != nullptr)
+        bandPopover_->applyUiSnapshot (snap);
+    if (freqInput_ != nullptr)
+        freqInput_->applyUiSnapshot (snap);
+    if (spectrumView_ != nullptr)
+        spectrumView_->setTheme (theme_);
+    if (analyzerPanel_ != nullptr)
+        analyzerPanel_->applyUiSnapshot (snap);
+    if (outputPanel_ != nullptr)
+        outputPanel_->applyUiSnapshot (snap);
+
+    if (persistToProcessor)
+    {
+        CrunchMBAudioProcessor::UiPackSettings up;
+        up.themeId   = (int) snap.themeId;
+        up.paletteId = (int) snap.paletteId;
+        up.layoutId  = (int) snap.layoutId;
+        up.localeId  = (int) snap.localeId;
+        proc_.setUiPackSettings (up);
+    }
+
+    curvePathsValid_ = false;
+    if (spectrumView_ != nullptr)
+        spectrumView_->invalidate();
+    repaint();
+}
+
+UiPack::VerificationVerdict DisplayView::setUiPacks (UiPack::ThemeId t, UiPack::PaletteId p,
+                                                     UiPack::LayoutId l, UiPack::LocaleId lc)
+{
+    const auto v = composition_.applyPacks (t, p, l, lc);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+UiPack::VerificationVerdict DisplayView::setThemePack (UiPack::ThemeId t)
+{
+    const auto v = composition_.setThemePack (t);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+UiPack::VerificationVerdict DisplayView::setPalettePack (UiPack::PaletteId p)
+{
+    const auto v = composition_.setPalettePack (p);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+UiPack::VerificationVerdict DisplayView::setLayoutPack (UiPack::LayoutId l)
+{
+    const auto v = composition_.setLayoutPack (l);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+UiPack::VerificationVerdict DisplayView::setLocalePack (UiPack::LocaleId lc)
+{
+    const auto v = composition_.setLocalePack (lc);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+UiPack::VerificationVerdict DisplayView::applyNeumorphismPreset (UiPack::PaletteId pal)
+{
+    const auto v = composition_.applyNeumorphismPreset (pal);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+UiPack::VerificationVerdict DisplayView::applyClassicPreset (UiPack::PaletteId pal)
+{
+    const auto v = composition_.applyClassicPreset (pal);
+    if (v.ok)
+        applyCompositionSnapshot (true);
+    return v;
+}
+
+void DisplayView::rollbackUiPacks()
+{
+    composition_.rollback();
+    applyCompositionSnapshot (true);
+}
+
 void DisplayView::setTheme (MBTheme::Theme t)
 {
-    if (theme_ == t)
-        return;
-    theme_ = t;
-    pal_ = MBTheme::palette (t);
-    if (linkedDrawer_ != nullptr)
-        linkedDrawer_->setTheme (t);
-    if (bandPopover_ != nullptr)
-        bandPopover_->setTheme (t);
-    if (freqInput_ != nullptr)
-        freqInput_->setTheme (t);
-    if (spectrumView_ != nullptr)
-        spectrumView_->setTheme (t);
-    if (analyzerPanel_ != nullptr)
-        analyzerPanel_->setTheme (t);
-    if (outputPanel_ != nullptr)
-        outputPanel_->setTheme (t);
-    curvePathsValid_ = false;
-    repaint();
+    const auto palId = (UiPack::PaletteId) t;
+    const bool isNeuPalette = (palId == UiPack::PaletteId::NeuLight
+                            || palId == UiPack::PaletteId::NeuTeal
+                            || palId == UiPack::PaletteId::NeuDark);
+    const auto wantTheme  = isNeuPalette ? UiPack::ThemeId::Neumorphism : composition_.snapshot().themeId;
+    const auto wantLayout = isNeuPalette ? UiPack::LayoutId::Sculpted   : composition_.snapshot().layoutId;
+    setUiPacks (wantTheme, palId, wantLayout, composition_.snapshot().localeId);
 }
 
 void DisplayView::setActive (bool active) noexcept
@@ -375,7 +473,7 @@ void DisplayView::uiWakeFromParam (const juce::String& id)
 // 真正的取值仍由各组件向 backend 读——副本不持有第二份真源。
 void DisplayView::syncUiFromParams (bool fullSync)
 {
-    // ---- popover（修复 UI-04：移除提前 break，同帧内多参数变更全部同步）----
+    // ---- popover（移除提前 break，同帧内多参数变更全部同步）----
     if (bandPopover_ != nullptr && bandPopover_->isOpen())
     {
         if (fullSync)
@@ -398,6 +496,37 @@ void DisplayView::syncUiFromParams (bool fullSync)
             isAllBypassed(),
             getParamPhysical (Param::ID::autoGain) >= 0.5f,
             Param::choiceIndexFromValue (getParamPhysical (Param::ID::monitorMode)));
+
+    // ---- Analyzer 显示设置（setStateInformation 后全量同步）----
+    if (fullSync)
+    {
+        const auto& as = proc_.getAnalyzerSettings();
+        analyzerPreOn_   = as.preOn;
+        analyzerPostOn_  = as.postOn;
+        analyzerFftSize_ = as.fftSize;
+        analyzerSpeed_   = as.speed;
+        analyzerTilt_    = as.tilt;
+        analyzerFreeze_  = as.frozen;
+        if (analyzerPanel_ != nullptr)
+        {
+            analyzerPanel_->setPreOnForTest   (as.preOn);
+            analyzerPanel_->setPostOnForTest  (as.postOn);
+            analyzerPanel_->setFftSizeForTest (as.fftSize);
+            analyzerPanel_->setSpeedForTest   (as.speed);
+            analyzerPanel_->setTiltForTest    (as.tilt);
+            analyzerPanel_->setFrozenForTest  (as.frozen);
+            analyzerPanel_->repaint();
+        }
+        syncSpectrumLayers();
+        proc_.pushAnalyzerSettingsToEngine();
+
+        const auto& up = proc_.getUiPackSettings();
+        composition_.applyPacks ((UiPack::ThemeId)   juce::jlimit (0, 1, up.themeId),
+                                 (UiPack::PaletteId) juce::jlimit (0, 5, up.paletteId),
+                                 (UiPack::LayoutId)  juce::jlimit (0, 1, up.layoutId),
+                                 (UiPack::LocaleId)  juce::jlimit (0, 1, up.localeId));
+        applyCompositionSnapshot (false);
+    }
 }
 
 // ---------------- R35 测试钩子 ----------------
@@ -465,7 +594,7 @@ void DisplayView::drawGrid (juce::Graphics& g)
     const float bottom = plotBottomPx();
     const float top = plotTopPx();        // #2：网格不伸进顶栏区域
 
-    // 横线：曲线/ Range 增益域（修复 P2-15：步长严格同右轴刻度：±6→1dB、±12→2dB、±30→10dB）
+    // 横线：曲线/ Range 增益域（步长严格同右轴刻度：±6→1dB、±12→2dB、±30→10dB）
     //      0 线用 gridZ 强调（Pro-MB 的 0 基准线）
     const float R = curveRangeDisplay_;
     const float step = (R <= 6.5f) ? 1.0f : (R <= 12.5f) ? 2.0f : 10.0f;
@@ -489,11 +618,17 @@ void DisplayView::drawGrid (juce::Graphics& g)
 // ---------------- 绘制 ----------------
 void DisplayView::drawBackground (juce::Graphics& g)
 {
-    // Phase B-3：频谱全出血——背景只铺底色，**不再画**绘图区上下硬边框。
-    // 原来的 1px gridZ 线（y=30 与 y=588）会把频谱区框成一个盒子，
-    // 与 Pro-MB"频谱铺满、顶/底栏半透明压在上面"的观感相反。
-    // 分区之间的分隔由全高分割线负责，顶/底栏各自有一条淡边。
     g.fillAll (pal_.bg);
+
+    const auto& snap = composition_.snapshot();
+    if (snap.isNeumorphic() || snap.layout.sunkenPlotWell)
+    {
+        // 新拟物中央频谱视窗：嵌在 #e0e5ec 底板上的圆角内凹屏幕槽（neu-pressed）
+        const EditorLayout l (getLocalBounds(), snap.layout);
+        const auto well = l.plotWellRect();
+        const float r = (snap.layout.plotCornerRadius > 0.0f ? snap.layout.plotCornerRadius : snap.theme.radiusLg) * l.scale;
+        UiPack::NeuPainter::drawInsetRect (g, well, r, pal_, snap.theme.insetWell, l.scale, 1.0f, true);
+    }
 }
 
 float DisplayView::curveDbAtFreq (float freq) const
@@ -558,32 +693,36 @@ void DisplayView::drawScales (juce::Graphics& g)
     //   常量 kGainScaleRightX=882**——窗口拉到 1840 宽时右轴读数画在 x≈770，
     //   而绘图区右缘在 1764，标签直接跑到画面中间。
     //   用户实测"音量数字刻度表为固定缩放值不会跟着 UI 放大"。
+    const auto& snap = composition_.snapshot();
+    const EditorLayout lay (getLocalBounds(), snap.layout);
+    const auto well = snap.layout.sunkenPlotWell
+        ? lay.plotWellRect()
+        : juce::Rectangle<float> (0.0f, plotTopPx(), plotRightPx(), plotHeightPx());
     const float fs = uiFontScale();          // 以 620 高为基准的字号倍率
-    const float top = plotTopPx();
-    const float bottom = plotBottomPx();
+    const float top = well.getY();
+    const float bottom = well.getBottom();
     const float W = (float) getWidth();
     auto clampTextBox = [&] (juce::Rectangle<float> r) -> juce::Rectangle<float>
     {
         const float h = r.getHeight();
-        const float y = juce::jlimit (juce::jmin (top + h, bottom - h),
-                                      juce::jmax (top + h, bottom - h * 2.0f),
+        const float y = juce::jlimit (juce::jmin (top + h * 0.5f, bottom - h),
+                                      juce::jmax (top + h * 0.5f, bottom - h * 1.8f),
                                       r.getY());
-        const float x = juce::jmin (r.getX(), W - r.getWidth() - 1.0f);
+        const float x = juce::jlimit (well.getX() + 4.0f * fs,
+                                      juce::jmax (well.getX() + 4.0f * fs, well.getRight() - r.getWidth() - 4.0f * fs),
+                                      r.getX());
         return juce::Rectangle<float> (x, y, r.getWidth(), h);
     };
 
     g.setFont (MBTheme::font (MBTheme::regular(), 13.0f * fs));   // #5：字号 10→13（D：随缩放）
 
     // 右轴：曲线/Range 增益刻度（accent）
-    // #2：对齐 Pro-MB 截图——步长随量程：±3/±6 → 1dB、±12 → 2dB、±30 → 10dB；
-    //     0 线标签用亮色强调（Pro-MB 的 0 基准线）
     {
         const float R = curveRangeDisplay_;
         const float step = (R <= 6.5f) ? 1.0f : (R <= 12.5f) ? 2.0f : 10.0f;
         const float labelW = sx (56.0f);
         const float labelH = sy (14.0f);
-        // R35（D）：基准 X 必须走 sx()，否则窗口变宽后跑到画面中间
-        const float scaleRightX = plotRightPx() - 5.0f * fs;
+        const float scaleRightX = well.getRight() - 6.0f * fs;
         for (float db = -std::floor (R / step) * step; db <= R + 1.0e-4f; db += step)
         {
             const juce::String t = (db > 0.0f ? "+" : "") + juce::String (db, (step < 1.0f ? 1 : 0));
@@ -595,16 +734,16 @@ void DisplayView::drawScales (juce::Graphics& g)
         }
     }
 
-    // 左轴：频谱/电平刻度（dim）——回滚为 20dB 一步进（#1 回滚）
+    // 左轴：频谱/电平刻度（dim）
     g.setColour (pal_.dim);
     for (int db = 0; db >= -100; db -= 20)
         g.drawText (juce::String (db),
-                    clampTextBox (juce::Rectangle<float> (sx (4.0f),
+                    clampTextBox (juce::Rectangle<float> (well.getX() + 6.0f * fs,
                                                           specDbToY ((float) db) - sy (7.0f),
                                                           sx (48.0f), sy (14.0f))),
                     juce::Justification::centredLeft);
 
-    // 底部频率刻度（常显）——#3：右缘标签右对齐并提亮；#5：字号 10.5→13
+    // 底部频率刻度（常显）
     g.setFont (MBTheme::font (MBTheme::regular(), 13.0f * fs));
     struct FLabel { float f; const char* t; bool bold; };
     for (const auto& l : { FLabel { 50, "50", false }, FLabel { 100, "100", false },
@@ -615,27 +754,43 @@ void DisplayView::drawScales (juce::Graphics& g)
     {
         g.setColour (l.bold ? pal_.text : pal_.dim);      // #3：20k 用亮色
         const float w = sx (46.0f);
-        const float h = sy (16.0f);                      // R35（D）：随缩放
+        const float h = sy (16.0f);
         float x = freqToX (l.f) - w * 0.5f;
-        // #3：右缘附近的标签右对齐到**绘图区右缘**（避开 IN/OUT 音量表）
-        if (freqToX (l.f) > plotRightPx() - w)
-            x = plotRightPx() - w;
-        g.drawText (l.t, juce::Rectangle<float> (x, plotBottomPx() - 25.0f * fs, w, h),
+        if (freqToX (l.f) > well.getRight() - w - 4.0f * fs)
+            x = well.getRight() - w - 4.0f * fs;
+        g.drawText (l.t, juce::Rectangle<float> (x, bottom - 22.0f * fs, w, h),
                     juce::Justification::centredTop);
     }
 }
 
 void DisplayView::drawCrossovers (juce::Graphics& g)
 {
-
-    const float s=EditorLayout(getLocalBounds()).scale;
-    const float xs[]={freqToX(cachedX1_),freqToX(cachedX2_),freqToX(cachedX3_)};
-    const float y=plotTopPx()+plotHeightPx()*.44f;
-    for(int i=0;i<3;++i){const float x=xs[i];const bool hot=hoverDividers_==i||(drag_==DragMode::Divider&&dragBand_==i);
-        drawHairlineV(g,x,plotTopPx(),plotBottomPx(),pal_.gridZ);
-        g.setColour(hot?pal_.accent.withAlpha(.35f):pal_.track);g.fillRoundedRectangle({x-11*s,y-11*s,22*s,22*s},6*s);
-        g.setColour(hot?pal_.accent:pal_.dim);g.drawLine(x-3*s,y-5*s,x-3*s,y+5*s,1.3f*s);g.drawLine(x+3*s,y-5*s,x+3*s,y+5*s,1.3f*s);}
-
+    const auto& snap = composition_.snapshot();
+    const EditorLayout l (getLocalBounds(), snap.layout);
+    const float s = l.scale;
+    const float xs[] = { freqToX (cachedX1_), freqToX (cachedX2_), freqToX (cachedX3_) };
+    const float y = plotTopPx() + plotHeightPx() * 0.44f;
+    const auto well = snap.layout.sunkenPlotWell
+        ? l.plotWellRect()
+        : juce::Rectangle<float> (0.0f, plotTopPx(), plotRightPx(), plotHeightPx());
+    for (int i = 0; i < 3; ++i)
+    {
+        const float x = xs[i];
+        const bool dragging = (drag_ == DragMode::Divider && dragIndex_ == i);
+        const bool hot = (hoverDividers_ == i) || dragging;
+        drawHairlineV (g, x, well.getY(), well.getBottom(), pal_.gridZ);
+        const juce::Rectangle<float> handle (x - 11 * s, y - 11 * s, 22 * s, 22 * s);
+        if (snap.isNeumorphic())
+            UiPack::NeuPainter::drawButton (g, handle, pal_, snap.theme, dragging, hot, s, 1.0f, 6 * s);
+        else
+        {
+            g.setColour (hot ? pal_.accent.withAlpha (.35f) : pal_.track);
+            g.fillRoundedRectangle (handle, 6 * s);
+        }
+        g.setColour (hot ? pal_.accent : pal_.dim);
+        g.drawLine (x - 3 * s, y - 5 * s, x - 3 * s, y + 5 * s, 1.3f * s);
+        g.drawLine (x + 3 * s, y - 5 * s, x + 3 * s, y + 5 * s, 1.3f * s);
+    }
 }
 
 // 频率短格式（与 BandPopover::fmtHzShort 同规则；此处为 DisplayView 本地副本）
@@ -668,15 +823,23 @@ juce::String DisplayView::linkedFeedbackText(int band) const
 
 void DisplayView::drawBandHeaders (juce::Graphics& g)
 {
-
-    const float W=(float)getWidth(),scale=EditorLayout(getLocalBounds()).scale;
-    const char* names[]={"LOW","LOW MID","HIGH MID","HIGH"};
+    const auto& snap = composition_.snapshot();
+    const float W = (float) getWidth(), scale = EditorLayout (getLocalBounds(), snap.layout).scale;
+    const juce::String names[4] = {
+        snap.t ("band.low"), snap.t ("band.lowMid"),
+        snap.t ("band.highMid"), snap.t ("band.high")
+    };
     for(int b=0;b<4;++b){
         g.setFont(MBTheme::font(MBTheme::regular(),13*scale));g.setColour(b==selectedBand_?pal_.accent:pal_.dim);
         g.drawText(names[b],juce::Rectangle<float>{freqToX(bandCenterFreq(b))-70*scale,plotTopPx()+12*scale,140*scale,18*scale},juce::Justification::centred);
         if(b==selectedBand_){const juce::String labels[]={"S","M","B",juce::String::fromUTF8("Δ")};
             for(int j=0;j<4;++j){bool on=j==0?getParamBool("band"+juce::String(b)+"Solo"):j==1?getParamBool("band"+juce::String(b)+"Mute"):j==2?isBandBypassed(b):getParamBool("band"+juce::String(b)+"Delta");
-                auto r=bandButtonRect(b,j);g.setColour(on?pal_.accent.withAlpha(.3f):pal_.surfaceA);g.fillRoundedRectangle(r,5*scale);
+                auto r=bandButtonRect(b,j);
+                if(snap.isNeumorphic())
+                    UiPack::NeuPainter::drawButton(g,r,pal_,snap.theme,on,r.contains(lastMousePos_),scale,1.0f,5*scale);
+                else {
+                    g.setColour(on?pal_.accent.withAlpha(.3f):pal_.surfaceA);g.fillRoundedRectangle(r,5*scale);
+                }
                 g.setColour(on?pal_.accent:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),13*scale));g.drawText(labels[j],r,juce::Justification::centred);}}
         if(linkedFeedbackIndex_>=0 && animNowMs()<linkedFeedbackUntilMs_){
             const float edges[]={0,freqToX(cachedX1_),freqToX(cachedX2_),freqToX(cachedX3_),plotRightPx()};
@@ -684,9 +847,16 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
             if(width>38*scale){const float x=juce::jlimit(edges[b]+6*scale,edges[b+1]-width-6*scale,freqToX(bandCenterFreq(b))-width*.5f);
                 const auto r=juce::Rectangle<float>(x,plotTopPx()+77*scale,width,47*scale);
                 const float alpha=juce::jlimit(0.0f,1.0f,(float)(linkedFeedbackUntilMs_-animNowMs())/400.0f);
-                const char* labels[]={"THRESHOLD","ATTACK","RELEASE","OUTPUT","MIX","RANGE"};
-                g.setColour(pal_.surfaceA.withMultipliedAlpha(alpha));g.fillRoundedRectangle(r,6*scale);
-                g.setColour(pal_.accent.withAlpha(.45f*alpha));g.drawRoundedRectangle(r,6*scale,scale);
+                const juce::String labels[]={
+                    snap.t("knob.threshold"),snap.t("knob.attack"),snap.t("knob.release"),
+                    snap.t("knob.output"),snap.t("knob.mix"),snap.t("knob.range")
+                };
+                if(snap.isNeumorphic())
+                    UiPack::NeuPainter::drawRaisedRect(g,r,6*scale,pal_,snap.theme.shadowBadge,scale,alpha,false);
+                else {
+                    g.setColour(pal_.surfaceA.withMultipliedAlpha(alpha));g.fillRoundedRectangle(r,6*scale);
+                    g.setColour(pal_.accent.withAlpha(.45f*alpha));g.drawRoundedRectangle(r,6*scale,scale);
+                }
                 g.setColour(pal_.dim.withMultipliedAlpha(alpha));g.setFont(MBTheme::font(MBTheme::uiMedium(),12*scale));
                 g.drawText(labels[linkedFeedbackIndex_],r.withHeight(21*scale),juce::Justification::centred,false);
                 g.setColour(pal_.text.withMultipliedAlpha(alpha));g.setFont(MBTheme::font(MBTheme::uiMedium(),15*scale));
@@ -743,11 +913,20 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
             if (sel)                                          // #2：仅选中段有外层
             {
                 const float rad = hov ? sx (7.0f) : sx (5.0f);
-                g.setColour (pal_.accent.withAlpha (0.25f));
-                g.fillEllipse (px - rad * 2.0f, py - rad * 2.0f, rad * 4.0f, rad * 4.0f);
+                if (snap.isNeumorphic())
+                {
+                    const juce::Rectangle<float> outerDot (px - rad * 1.8f, py - rad * 1.8f, rad * 3.6f, rad * 3.6f);
+                    UiPack::NeuPainter::drawRaisedCircle (g, outerDot, pal_,
+                                                          hov ? snap.theme.shadowHover : snap.theme.shadowBadge, scale);
+                }
+                else
+                {
+                    g.setColour (pal_.accent.withAlpha (0.25f));
+                    g.fillEllipse (px - rad * 2.0f, py - rad * 2.0f, rad * 4.0f, rad * 4.0f);
+                }
                 g.setColour (pal_.accent);
                 g.fillEllipse (px - rad, py - rad, rad * 2.0f, rad * 2.0f);
-                g.setColour (juce::Colours::white);
+                g.setColour (pal_.onAccent);
                 g.fillEllipse (px - rad * 0.35f, py - rad * 0.35f, rad * 0.7f, rad * 0.7f);
             }
             else                                              // #2：未选中段只画实心圆
@@ -793,90 +972,202 @@ void DisplayView::drawBandHeaders (juce::Graphics& g)
 
 void DisplayView::drawMeters (juce::Graphics& g)
 {
-
-    const EditorLayout l(getLocalBounds());const float s=l.scale,x=l.plotRight(),top=l.topHeight()+8*s,bottom=l.globalTop()-32*s;
-    g.setColour(pal_.panel.withAlpha(.67f));g.fillRect(x,0.0f,l.meterWidth(),l.globalTop());
-    drawHairlineV(g,x,0,l.globalTop(),pal_.gridZ);
-    const float barW=13*s,b1=x+6*s,b2=x+25*s;
-    for(const float bx:{b1,b2}){g.setColour(pal_.meterBg);g.fillRect(bx,top,barW,bottom-top);}
-    g.setColour(pal_.inFill.withAlpha(.65f));g.fillRect(b1,meterY(meterInDb_),barW,bottom-meterY(meterInDb_));
-    g.setGradientFill(juce::ColourGradient(pal_.outLevel,0,top,pal_.accent,0,bottom,false));
-    g.fillRect(b2,meterY(meterOutDb_),barW,bottom-meterY(meterOutDb_));
-    g.setColour(pal_.outLevel);g.fillRect(b1,meterY(peakInDb_),barW,2*s);g.fillRect(b2,meterY(peakOutDb_),barW,2*s);
-    const auto now=(juce::uint32)animNowMs();if(now>=nextMeterLabelMs_){labelInDb_=meterInDb_;labelOutDb_=meterOutDb_;nextMeterLabelMs_=now+250;}
-    g.setFont(MBTheme::font(MBTheme::regular(),11*s));g.setColour(pal_.text);
-    g.drawText(juce::String(labelInDb_,1),juce::Rectangle<float>{x,l.globalTop()-24*s,22*s,16*s},juce::Justification::centred,false);
-    g.drawText(juce::String(labelOutDb_,1),juce::Rectangle<float>{x+22*s,l.globalTop()-24*s,22*s,16*s},juce::Justification::centred,false);
-
+    const auto& snap = composition_.snapshot();
+    const EditorLayout l (getLocalBounds(), snap.layout);
+    const float s = l.scale, x = l.plotRight(), top = l.topHeight() + 8 * s, bottom = l.globalTop() - 32 * s;
+    g.setColour (pal_.panel.withAlpha (snap.isNeumorphic() ? 0.35f : 0.67f));
+    g.fillRect (x, 0.0f, l.meterWidth(), l.globalTop());
+    if (! snap.isNeumorphic())
+        drawHairlineV (g, x, 0, l.globalTop(), pal_.gridZ);
+    const float barW = 13 * s, b1 = x + 6 * s, b2 = x + 25 * s;
+    for (const float bx : { b1, b2 })
+    {
+        const juce::Rectangle<float> trough (bx, top, barW, bottom - top);
+        if (snap.isNeumorphic())
+            UiPack::NeuPainter::drawInsetRect (g, trough, 4 * s, pal_, snap.theme.insetButton, s, 1.0f, true);
+        else
+        {
+            g.setColour (pal_.meterBg);
+            g.fillRect (trough);
+        }
+    }
+    g.setColour (pal_.inFill.withAlpha (.65f));
+    g.fillRect (b1, meterY (meterInDb_), barW, bottom - meterY (meterInDb_));
+    g.setGradientFill (juce::ColourGradient (pal_.outLevel, 0, top, pal_.accent, 0, bottom, false));
+    g.fillRect (b2, meterY (meterOutDb_), barW, bottom - meterY (meterOutDb_));
+    g.setColour (pal_.outLevel);
+    g.fillRect (b1, meterY (peakInDb_), barW, 2 * s);
+    g.fillRect (b2, meterY (peakOutDb_), barW, 2 * s);
+    const auto now = (juce::uint32) animNowMs();
+    if (now >= nextMeterLabelMs_) { labelInDb_ = meterInDb_; labelOutDb_ = meterOutDb_; nextMeterLabelMs_ = now + 250; }
+    g.setFont (MBTheme::font (MBTheme::regular(), 11 * s));
+    g.setColour (pal_.text);
+    g.drawText (juce::String (labelInDb_, 1), juce::Rectangle<float> { x, l.globalTop() - 24 * s, 22 * s, 16 * s }, juce::Justification::centred, false);
+    g.drawText (juce::String (labelOutDb_, 1), juce::Rectangle<float> { x + 22 * s, l.globalTop() - 24 * s, 22 * s, 16 * s }, juce::Justification::centred, false);
 }
 
 void DisplayView::drawTopStrip (juce::Graphics& g)
 {
+    const auto& snap = composition_.snapshot();
+    const EditorLayout l (getLocalBounds(), snap.layout);
+    const float s = l.scale;
+    g.setColour (pal_.surfaceA);
+    g.fillRect (0.0f, 0.0f, l.width, l.topHeight());
+    if (! snap.isNeumorphic())
+        drawHairlineH (g, l.topHeight() - 1, 0, l.width, pal_.gridZ.withAlpha (.6f));
 
-    const EditorLayout l (getLocalBounds()); const float s=l.scale;
-    g.setColour (pal_.surfaceA); g.fillRect (0.0f,0.0f,l.width,l.topHeight());
-    drawHairlineH (g,l.topHeight()-1,0,l.width,pal_.gridZ.withAlpha (.6f));
-    g.setColour (pal_.accent); g.fillEllipse (17*s,20*s,6*s,6*s);
-    g.setFont (MBTheme::font (MBTheme::uiMedium(),18*s));
-    g.setColour (pal_.text); g.drawText ("CRUNCH",juce::Rectangle<float>{30*s,0,75*s,l.topHeight()},juce::Justification::centredLeft);
-    const float mbX=30*s+juce::GlyphArrangement::getStringWidth(MBTheme::font(MBTheme::uiMedium(),18*s),"CRUNCH")+6*s;
-    g.setColour (pal_.accent); g.drawText ("MB",juce::Rectangle<float>{mbX,0,30*s,l.topHeight()},juce::Justification::centredLeft);
-    powerBtnRect_=l.power();
-    g.setColour (isPluginEnabled()?pal_.dim:pal_.accent);
-    const auto c=powerBtnRect_.getCentre();
-    juce::Path power; power.addCentredArc (c.x,c.y,7*s,7*s,0,.6f,juce::MathConstants<float>::twoPi-.6f,true);
-    g.strokePath (power,juce::PathStrokeType (1.6f*s)); g.drawLine(c.x,c.y-9*s,c.x,c.y-1*s,1.6f*s);
-    const char* names[]={"LOW","LOW MID","HIGH MID","HIGH"};
-    g.setFont (MBTheme::font(MBTheme::uiMedium(),13*s));
-    for(int b=0;b<4;++b){const auto r=l.bandTab(b);const bool selected=b==selectedBand_;
-        if(selected){g.setColour(pal_.accent.withAlpha(.13f));g.fillRoundedRectangle(r,5*s);g.setColour(pal_.accent);g.fillRect(r.withTop(r.getBottom()-2*s));}
-        g.setColour(selected?pal_.accent:pal_.dim);g.drawText(names[b],r,juce::Justification::centred);}
-    displayRangeBtn_=l.range(); g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),13*s));
-    const juce::String modes[]={"Auto",juce::String::fromUTF8("±3 dB"),juce::String::fromUTF8("±6 dB"),juce::String::fromUTF8("±12 dB"),juce::String::fromUTF8("±30 dB")};
-    g.drawText(modes[displayRangeMode_],displayRangeBtn_.withTrimmedRight(10*s),juce::Justification::centred);
-    const float ax=displayRangeBtn_.getRight()-7*s,ay=displayRangeBtn_.getCentreY();
-    g.drawLine(ax-3*s,ay-2*s,ax,ay+1*s,s);g.drawLine(ax,ay+1*s,ax+3*s,ay-2*s,s);
-    const auto t=l.theme();g.setColour(pal_.track);g.fillRoundedRectangle(t,6*s);
-    // Centre the circular mark and distribute its three dots evenly. The former
-    // dots were all clustered on one side, making the button look tilted.
-    const auto centre=t.getCentre();
-    g.setColour(pal_.text);
-    g.drawEllipse(juce::Rectangle<float>(16*s,16*s).withCentre(centre),1.3f*s);
-    for(int i=0;i<3;++i){const float a=-juce::MathConstants<float>::halfPi+i*juce::MathConstants<float>::twoPi/3;
-        const auto dot=centre+juce::Point<float>(std::cos(a),std::sin(a))*(4.2f*s);
-        g.fillEllipse(juce::Rectangle<float>(2.4f*s,2.4f*s).withCentre(dot));}
+    g.setColour (pal_.accent);
+    g.fillEllipse (17 * s, 20 * s, 6 * s, 6 * s);
+    g.setFont (MBTheme::font (MBTheme::uiMedium(), 18 * s));
+    g.setColour (pal_.text);
+    g.drawText ("CRUNCH", juce::Rectangle<float> { 30 * s, 0, 75 * s, l.topHeight() }, juce::Justification::centredLeft);
+    const float mbX = 30 * s + juce::GlyphArrangement::getStringWidth (MBTheme::font (MBTheme::uiMedium(), 18 * s), "CRUNCH") + 6 * s;
+    g.setColour (pal_.accent);
+    g.drawText ("MB", juce::Rectangle<float> { mbX, 0, 30 * s, l.topHeight() }, juce::Justification::centredLeft);
 
+    powerBtnRect_ = l.power();
+    if (snap.isNeumorphic())
+        UiPack::NeuPainter::drawButton (g, powerBtnRect_, pal_, snap.theme, ! isPluginEnabled(),
+                                        powerBtnRect_.contains (lastMousePos_), s, 1.0f, 8 * s);
+    g.setColour (isPluginEnabled() ? pal_.dim : pal_.accent);
+    const auto c = powerBtnRect_.getCentre();
+    juce::Path power;
+    power.addCentredArc (c.x, c.y, 7 * s, 7 * s, 0, .6f, juce::MathConstants<float>::twoPi - .6f, true);
+    g.strokePath (power, juce::PathStrokeType (1.6f * s));
+    g.drawLine (c.x, c.y - 9 * s, c.x, c.y - 1 * s, 1.6f * s);
+
+    const juce::String names[4] = {
+        snap.t ("band.low"), snap.t ("band.lowMid"),
+        snap.t ("band.highMid"), snap.t ("band.high")
+    };
+    g.setFont (MBTheme::font (MBTheme::uiMedium(), 13 * s));
+    for (int b = 0; b < 4; ++b)
+    {
+        const auto r = l.bandTab (b);
+        const bool selected = (b == selectedBand_);
+        if (snap.isNeumorphic())
+        {
+            UiPack::NeuPainter::drawButton (g, r, pal_, snap.theme, selected,
+                                            r.contains (lastMousePos_), s, 1.0f, 6 * s);
+        }
+        else if (selected)
+        {
+            g.setColour (pal_.accent.withAlpha (.13f));
+            g.fillRoundedRectangle (r, 5 * s);
+            g.setColour (pal_.accent);
+            g.fillRect (r.withTop (r.getBottom() - 2 * s));
+        }
+        g.setColour (selected ? pal_.accent : pal_.dim);
+        g.drawText (names[b], r, juce::Justification::centred);
+    }
+
+    displayRangeBtn_ = l.range();
+    if (snap.isNeumorphic())
+        UiPack::NeuPainter::drawButton (g, displayRangeBtn_, pal_, snap.theme,
+                                        dropDownOpen_ && ! dropDownThemeMode_ && dropDownParamId_.isEmpty(),
+                                        displayRangeBtn_.contains (lastMousePos_), s, 1.0f, 6 * s);
+    g.setColour (pal_.dim);
+    g.setFont (MBTheme::font (MBTheme::uiRegular(), 13 * s));
+    const juce::String modes[] = {
+        snap.t ("top.autoRange"),
+        juce::String::fromUTF8 ("±3 dB"),
+        juce::String::fromUTF8 ("±6 dB"),
+        juce::String::fromUTF8 ("±12 dB"),
+        juce::String::fromUTF8 ("±30 dB")
+    };
+    g.drawText (modes[displayRangeMode_], displayRangeBtn_.withTrimmedRight (10 * s), juce::Justification::centred);
+    const float ax = displayRangeBtn_.getRight() - 7 * s, ay = displayRangeBtn_.getCentreY();
+    g.drawLine (ax - 3 * s, ay - 2 * s, ax, ay + 1 * s, s);
+    g.drawLine (ax, ay + 1 * s, ax + 3 * s, ay - 2 * s, s);
+
+    const auto t = l.theme();
+    UiPack::NeuPainter::drawButton (g, t, pal_, snap.theme,
+                                    dropDownOpen_ && dropDownThemeMode_,
+                                    t.contains (lastMousePos_), s, 1.0f, 6 * s);
+    const auto centre = t.getCentre();
+    g.setColour (pal_.text);
+    g.drawEllipse (juce::Rectangle<float> (16 * s, 16 * s).withCentre (centre), 1.3f * s);
+    for (int i = 0; i < 3; ++i)
+    {
+        const float a = -juce::MathConstants<float>::halfPi + i * juce::MathConstants<float>::twoPi / 3;
+        const auto dot = centre + juce::Point<float> (std::cos (a), std::sin (a)) * (4.2f * s);
+        g.fillEllipse (juce::Rectangle<float> (2.4f * s, 2.4f * s).withCentre (dot));
+    }
 }
 
 void DisplayView::drawGlobalBar (juce::Graphics& g)
 {
+    const auto& snap = composition_.snapshot();
+    const EditorLayout l (getLocalBounds(), snap.layout);
+    const float s = l.scale;
+    g.setColour (pal_.surfaceA);
+    g.fillRect (0.0f, l.globalTop(), l.width, l.globalHeight());
+    if (! snap.isNeumorphic())
+        drawHairlineH (g, l.globalTop(), 0, l.width, pal_.gridZ);
 
-    const EditorLayout l(getLocalBounds());const float s=l.scale;
-    g.setColour(pal_.surfaceA);g.fillRect(0.0f,l.globalTop(),l.width,l.globalHeight());
-    drawHairlineH(g,l.globalTop(),0,l.width,pal_.gridZ);
-    globalSelectorRects_.clear();globalSelectorIds_.clear();globalBarY_=l.globalTop();
-    const juce::String labels[]={"PHASE","SLOPE","QUALITY","LOOKAHEAD","OVERSAMPLING"};
-    const juce::String ids[]={Param::ID::phaseMode,Param::ID::xoverSlope,Param::ID::linearQuality,Param::ID::lookahead,Param::ID::oversampling};
-    const auto labelFont=MBTheme::font(MBTheme::uiMedium(),13*s);
-    const auto valueFont=MBTheme::font(MBTheme::uiRegular(),13*s);
-    for(int i=0;i<5;++i){auto r=l.globalCell(i);globalSelectorRects_.add(r);globalSelectorIds_.add(ids[i]);
-        juce::String value="-";
-        if(auto* p=dynamic_cast<juce::AudioParameterChoice*>(proc_.apvts.getParameter(ids[i])))value=p->getCurrentChoiceName();
-        if(r.contains(lastMousePos_)){g.setColour(pal_.accent.withAlpha(.08f));g.fillRoundedRectangle(r,4*s);}
-        // Identical font height and text rectangle keep label and state on one baseline.
-        auto text=r.withSizeKeepingCentre(r.getWidth(),20*s);
-        const float lw=juce::GlyphArrangement::getStringWidth(labelFont,labels[i]);
-        g.setFont(labelFont);g.setColour(pal_.dim);g.drawText(labels[i],text.withWidth(lw),juce::Justification::centredLeft,false);
-        auto vr=text.withTrimmedLeft(lw+5*s).withTrimmedRight(7*s);
-        g.setFont(valueFont);g.setColour(pal_.text);g.drawText(value,vr,juce::Justification::centredLeft,false);
-        const float x=r.getRight()-3*s,y=r.getCentreY();g.setColour(pal_.dim);
-        g.drawLine(x-2*s,y-s,x,y+s,s);g.drawLine(x,y+s,x+2*s,y-s,s);
+    globalSelectorRects_.clear();
+    globalSelectorIds_.clear();
+    globalBarY_ = l.globalTop();
+    const juce::String labels[5] = {
+        snap.t ("global.phase"), snap.t ("global.slope"),
+        snap.t ("global.quality"), snap.t ("global.lookahead"),
+        snap.t ("global.oversampling")
+    };
+    const juce::String ids[5] = {
+        Param::ID::phaseMode, Param::ID::xoverSlope,
+        Param::ID::linearQuality, Param::ID::lookahead, Param::ID::oversampling
+    };
+    const auto labelFont = MBTheme::font (MBTheme::uiMedium(), 13 * s);
+    const auto valueFont = MBTheme::font (MBTheme::uiRegular(), 13 * s);
+    for (int i = 0; i < 5; ++i)
+    {
+        auto r = l.globalCell (i);
+        globalSelectorRects_.add (r);
+        globalSelectorIds_.add (ids[i]);
+        juce::String value = "-";
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*> (proc_.apvts.getParameter (ids[i])))
+            value = p->getCurrentChoiceName();
+        const bool isMenuOpen = dropDownOpen_ && dropDownParamId_ == ids[i];
+        const bool hovered = r.contains (lastMousePos_);
+        if (snap.isNeumorphic())
+        {
+            UiPack::NeuPainter::drawButton (g, r, pal_, snap.theme, isMenuOpen, hovered, s, 1.0f, 6 * s);
+        }
+        else if (hovered)
+        {
+            g.setColour (pal_.accent.withAlpha (.08f));
+            g.fillRoundedRectangle (r, 4 * s);
+        }
+        auto text = r.withSizeKeepingCentre (r.getWidth() - (snap.isNeumorphic() ? 10 * s : 0.0f), 20 * s);
+        const float lw = juce::GlyphArrangement::getStringWidth (labelFont, labels[i]);
+        g.setFont (labelFont);
+        g.setColour (pal_.dim);
+        g.drawText (labels[i], text.withWidth (lw), juce::Justification::centredLeft, false);
+        auto vr = text.withTrimmedLeft (lw + 5 * s).withTrimmedRight (7 * s);
+        g.setFont (valueFont);
+        g.setColour (pal_.text);
+        g.drawText (value, vr, juce::Justification::centredLeft, false);
+        const float x = r.getRight() - (snap.isNeumorphic() ? 6 * s : 3 * s), y = r.getCentreY();
+        g.setColour (pal_.dim);
+        g.drawLine (x - 2 * s, y - s, x, y + s, s);
+        g.drawLine (x, y + s, x + 2 * s, y - s, s);
     }
-    const juce::String buttons[]={"Analyzer","OUT "+juce::String(getParamPhysical(Param::ID::outputGain),1)+" dB","BYPASS"};
-    for(int i=5;i<8;++i){auto r=l.globalCell(i);const bool active=i==7?isAllBypassed():i==5?analyzerFreeze_:false;
-        g.setColour(active?pal_.accent.withAlpha(.22f):pal_.track);g.fillRoundedRectangle(r,6*s);
-        g.setColour(active?pal_.accent:pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.drawText(buttons[i-5],r,juce::Justification::centred,false);}
-
+    const juce::String buttons[3] = {
+        snap.t ("global.analyzer"),
+        snap.t ("global.outPrefix") + juce::String (getParamPhysical (Param::ID::outputGain), 1) + " dB",
+        snap.t ("global.bypass")
+    };
+    for (int i = 5; i < 8; ++i)
+    {
+        auto r = l.globalCell (i);
+        const bool active = i == 7 ? isAllBypassed()
+                          : i == 5 ? (analyzerFreeze_ || (analyzerPanel_ != nullptr && analyzerPanel_->isOpen()))
+                                   : (outputPanel_ != nullptr && outputPanel_->isOpen());
+        UiPack::NeuPainter::drawButton (g, r, pal_, snap.theme, active, r.contains (lastMousePos_), s, 1.0f, 6 * s);
+        g.setColour (active ? pal_.accent : pal_.text);
+        g.setFont (MBTheme::font (MBTheme::uiMedium(), 13 * s));
+        g.drawText (buttons[i - 5], r, juce::Justification::centred, false);
+    }
 }
 
 // Phase A：drawDrawer() 已随抽屉整体拆到 LinkedDrawer::paint()。
@@ -1075,11 +1366,17 @@ void DisplayView::timerCallback()
 
     // R35（N4）：消费"参数已变"的通知，刷新各面板里的参数副本。
     //   正常路径：uiWakeFromParam 收集了 parameterID → 精确刷新。
-    //   兜底路径：只有原子标志被置（音频线程自动化 / setStateInformation）
-    //             → 做一次全量同步。
+    //   兜底路径：原子标志被置（音频线程自动化 / setStateInformation / loadState）
+    //             → 立即提回 60Hz 并做一次全量同步（不被非空 pendingParamIds_ 屏蔽）。
     {
-        const bool flagSet  = proc_.consumeUiWakeFlag();
-        const bool fullSync = flagSet && pendingParamIds_.isEmpty();
+        const bool fullSync = proc_.consumeUiWakeFlag();
+        if (fullSync)
+        {
+            idleFrames_     = 0;
+            uiStatePending_ = true;
+            if (! useTestClock_ && isTimerRunning())
+                startTimerHz (60);
+        }
         if (fullSync || ! pendingParamIds_.isEmpty())
         {
             syncUiFromParams (fullSync);
@@ -1438,7 +1735,7 @@ void DisplayView::updateCurve (double dtSeconds)
                 mx = juce::jmax (mx, std::abs (bandRangeDb_[(size_t) b]));
             const float autoTarget = (mx <= 3.0f) ? 3.0f : (mx <= 6.0f) ? 6.0f
                                    : (mx <= 12.0f) ? 12.0f : 30.0f;
-            // 修复 P2-15：非拖拽稳态下允许带滞后自动回落（避免一旦触发 ±30 dB 就永久锁死）
+            // 非拖拽稳态下允许带滞后自动回落（避免一旦触发 ±30 dB 就永久锁死）
             if (autoTarget >= curveRangeDb_ || mx <= autoTarget * 0.90f)
                 target = autoTarget;
         }
@@ -1564,8 +1861,7 @@ void DisplayView::drawRangeBell (juce::Graphics& g)
                                           .withAlpha (0.95f * showK));
                 g.fillRoundedRectangle (handle, hh * 0.5f);
                 // 左右两道小刻痕，暗示"可横向/纵向拖"
-                g.setColour (pal_.light ? juce::Colours::black.withAlpha (0.55f * showK)
-                                        : juce::Colours::white.withAlpha (0.75f * showK));
+                g.setColour (pal_.onAccent.withAlpha (0.75f * showK));
                 g.fillRect (px - hw * 0.26f, yLo - hh * 0.18f, sx (1.5f), hh * 0.36f);
                 g.fillRect (px + hw * 0.26f - sx (1.5f), yLo - hh * 0.18f, sx (1.5f), hh * 0.36f);
             }
@@ -1768,7 +2064,7 @@ float DisplayView::paramRangeMaxOf (const juce::String& id) const
 
 bool DisplayView::isBandBypassed (int band) const
 {
-    // 修复 UI-05：统一与 toggleBypass / MBBackend::isBypassed 使用 <= 0.5f（0.5%）物理百分比作为 Bypass 判据，
+    // 统一与 toggleBypass / MBBackend::isBypassed 使用 <= 0.5f（0.5%）物理百分比作为 Bypass 判据，
     // 消除 Mix 处于 (0.5%, 50%) 时 UI 显示为 Bypass 但点击 B 按钮无法解除 Bypass 的死锁。
     return getParamPhysical ("band" + juce::String (band) + "Mix") <= 0.5f;
 }
@@ -1849,7 +2145,7 @@ void DisplayView::applyDividerFreq (int index, float freq)
 void DisplayView::applyCenterFreq (int band, float freq)
 {
     // P2 + #1：横拖频点 = 改该段"中心频率"
-    //   · band1/2（两缘自由）：整段等比（保持倍频程带宽）平移；修复 UI-03 撞墙时双边同步停止、绝不挤压带宽
+    //   · band1/2（两缘自由）：整段等比（保持倍频程带宽）平移；撞墙时双边同步停止、绝不挤压带宽
     //   · band0（左缘锁 20Hz）/ band3（右缘锁 20kHz）：中心移动时活动边跟随
     float x1 = cachedX1_, x2 = cachedX2_, x3 = cachedX3_;
     const float kLo = 20.0f, kHi = 20000.0f;
@@ -2017,7 +2313,7 @@ bool DisplayView::hitTestMidiButton (juce::Point<float> p) const
 
 int DisplayView::midiControlId (juce::Point<float> p) const
 {
-    // 修复 UI-01：与当前 EditorLayout / bandButtonRect / hitTestDivider 几何完全对齐
+    // 与当前 EditorLayout / bandButtonRect / hitTestDivider 几何完全对齐
     const EditorLayout l (getLocalBounds());
 
     // 分割线
@@ -2106,7 +2402,7 @@ void DisplayView::drawMidiLearnOverlay (juce::Graphics& g)
                                                  r.getY() - bh - sy (3.0f), bw, bh);
             g.setColour (pal_.accent.withAlpha (0.92f));
             g.fillRoundedRectangle (badge, 3.0f);
-            g.setColour (juce::Colours::white);
+            g.setColour (pal_.onAccent);
             g.drawText (txt, badge, juce::Justification::centred);
         }
     };
@@ -2158,7 +2454,7 @@ void DisplayView::openFreqEditor (int index, int band)
     {
         x = (index == 0) ? freqToX (cachedX1_)
           : (index == 1) ? freqToX (cachedX2_) : freqToX (cachedX3_);
-        y = sy (470.0f);
+        y = plotTopPx() + plotHeightPx() * 0.44f;
     }
     freqInput_->open (index, band, x, y);
     setWantsKeyboardFocus (true);
@@ -2411,7 +2707,7 @@ void DisplayView::closeDropDown()
 int DisplayView::dropDownCurrentIndex() const
 {
     if (dropDownThemeMode_)
-        return juce::jlimit (0, 2, (int) theme_);
+        return ((int) theme_ >= 0 && (int) theme_ <= 2) ? (int) theme_ : -1;
 
     if (! dropDownParamId_.isEmpty())
     {
@@ -2546,22 +2842,22 @@ void DisplayView::drawDropDown (juce::Graphics& g)
 {
     if (! dropDownOpen_)
         return;
+    const auto& snap = composition_.snapshot();
+    const EditorLayout l (getLocalBounds(), snap.layout);
+    const float s = l.scale;
     const auto r = dropDownRect();
     const bool themeMode  = dropDownThemeMode_;                    // R34（N6）
     const bool globalMode = (! themeMode) && dropDownParamId_.isNotEmpty();
     const float rowH = r.getHeight() / (float)juce::jmax(1,dropDownCount_);
 
-    // 当前选中索引（三种模式统一经 dropDownCurrentIndex()，
-    // 与键盘回车共用同一份推导 —— R34（N5））
-    const int curIdx = juce::jlimit (0, juce::jmax (0, dropDownCount_ - 1),
-                                     dropDownCurrentIndex());
+    const int curIdx = dropDownCurrentIndex();
     juce::StringArray labels;
     if (themeMode)
     {
         labels.add ("Blue");
         labels.add ("Red");
         labels.add ("Cream");
-        labels.add (midiLearnActive_ ? "MIDI Learn: On" : "MIDI Learn: Off");
+        labels.add (midiLearnActive_ ? snap.t ("pack.midiLearnOn") : snap.t ("pack.midiLearnOff"));
     }
     else if (globalMode)
     {
@@ -2569,14 +2865,16 @@ void DisplayView::drawDropDown (juce::Graphics& g)
     }
     else
     {
-        const char* dr[5] = { "Auto", "+/- 3 dB", "+/- 6 dB",
-                              "+/- 12 dB", "+/- 30 dB" };
+        const juce::String dr[5] = { snap.t ("top.autoRange"), "+/- 3 dB", "+/- 6 dB",
+                                     "+/- 12 dB", "+/- 30 dB" };
         for (int i = 0; i < dropDownCount_; ++i) labels.add (dr[i]);
     }
 
-    // 多层投影（与弹层面板同一套深度语言）
-    // R35（N11）：偏移/扩张必须随面板高度缩放，否则窗口放大后阴影贴死在
-    //   文本边上（BandPopover 的面板阴影早已乘了 k，这里一直没乘）。
+    if (snap.isNeumorphic())
+    {
+        UiPack::NeuPainter::drawRaisedRect (g, r, snap.theme.radiusLg * s, pal_, snap.theme.shadowCard, s, 1.0f, false);
+    }
+    else
     {
         const float k = juce::jmax (0.6f, r.getHeight() / (22.0f * 5.0f));
         struct Layer { float dy; float alpha; float expand; };
@@ -2588,42 +2886,174 @@ void DisplayView::drawDropDown (juce::Graphics& g)
         for (const auto& L : layers)
         {
             auto shadow = r.translated (0.0f, L.dy * k).expanded (L.expand * k);
-            g.setColour (juce::Colours::black.withAlpha (L.alpha));
+            g.setColour (pal_.halo.withMultipliedAlpha (L.alpha * 1.4f));
             g.fillRoundedRectangle (shadow, r.getWidth() * 0.08f + L.expand * k);
         }
+
+        g.setColour (pal_.popA);
+        g.fillRoundedRectangle (r, r.getWidth() * 0.08f);
+        g.setColour (pal_.accent.withAlpha (0.55f));
+        g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
     }
 
-    g.setColour (pal_.popA);
-    g.fillRoundedRectangle (r, r.getWidth() * 0.08f);
-    g.setColour (pal_.accent.withAlpha (0.55f));
-    g.drawRoundedRectangle (r, r.getWidth() * 0.08f, 1.0f);
-
-    // R35（N10）：原为 `globalMode ? 10.0f : 10.0f`（两个分支相同，恒等三元），
-    //   作者显然想区分两种模式字号但没写出来。这里按实际需要保留单一字号。
-    g.setFont (MBTheme::font (MBTheme::uiRegular(), 13.0f * EditorLayout(getLocalBounds()).scale));
+    g.setFont (MBTheme::font (MBTheme::uiRegular(), 13.0f * s));
     for (int i = 0; i < dropDownCount_; ++i)
     {
         const auto row = juce::Rectangle<float> (r.getX(), r.getY() + rowH * (float) i,
                                                  r.getWidth(), rowH);
         const bool cur = (i == curIdx);
         const bool hot = (i == dropDownHover_);
-        if (hot && ! cur)
+        if (snap.isNeumorphic())
         {
-            g.setColour (pal_.track.withAlpha (0.7f));
-            g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+            if (cur || hot)
+                UiPack::NeuPainter::drawButton (g, row.reduced (4.0f * s, 2.0f * s),
+                                                pal_, snap.theme, cur, hot, s, 1.0f, 5.0f * s);
         }
-        // 当前项：accent 底 + 白字 + 左侧勾
-        if (cur)
+        else
         {
-            g.setColour (pal_.accent.withAlpha (0.85f));
-            g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+            if (hot && ! cur)
+            {
+                g.setColour (pal_.track.withAlpha (0.7f));
+                g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+            }
+            if (cur)
+            {
+                g.setColour (pal_.accent.withAlpha (0.85f));
+                g.fillRoundedRectangle (row.reduced (r.getWidth() * 0.02f), 4.0f);
+            }
         }
-        g.setColour (cur ? juce::Colours::white
+        g.setColour (cur ? (snap.isNeumorphic() ? pal_.accent : pal_.onAccent)
                          : (hot ? pal_.text : pal_.dim));
         g.drawText (cur ? juce::String::fromUTF8 ("\xE2\x9C\x93  ") + labels[i] : labels[i],
                     row.withTrimmedLeft (r.getWidth() * 0.08f),
                     juce::Justification::centredLeft);
     }
+
+    // ---- 齿轮菜单打开时，伴随绘制「四包正交组合切换卡片」（Theme / Palette / Layout / Locale / Rollback）----
+    if (themeMode)
+    {
+        const auto card = l.packSwitcherCard();
+        if (snap.isNeumorphic())
+        {
+            UiPack::NeuPainter::drawRaisedRect (g, card, snap.theme.radiusLg * s, pal_, snap.theme.shadowCard, s, 1.0f, false);
+        }
+        else
+        {
+            g.setColour (pal_.halo.withMultipliedAlpha (0.42f));
+            g.fillRoundedRectangle (card.translated (0.0f, 5.0f * s).expanded (3.0f * s), 12.0f * s);
+            g.setColour (pal_.popA);
+            g.fillRoundedRectangle (card, 12.0f * s);
+            g.setColour (pal_.gridZ);
+            g.drawRoundedRectangle (card, 12.0f * s, 1.0f * s);
+        }
+
+        g.setColour (pal_.text);
+        g.setFont (MBTheme::font (MBTheme::uiMedium(), 13.5f * s));
+        g.drawText (snap.t ("pack.title"),
+                    card.withTrimmedLeft (12.0f * s).withHeight (30.0f * s),
+                    juce::Justification::centredLeft);
+
+        auto drawSectionTitle = [&] (const char* key, float yOff)
+        {
+            g.setColour (pal_.dim);
+            g.setFont (MBTheme::font (MBTheme::uiMedium(), 11.0f * s));
+            g.drawText (snap.t (key),
+                        juce::Rectangle<float> (card.getX() + 12.0f * s, card.getY() + yOff * s,
+                                                card.getWidth() - 24.0f * s, 16.0f * s),
+                        juce::Justification::centredLeft);
+        };
+
+        auto drawPackBtn = [&] (int sec, int idx, const juce::String& text, bool active)
+        {
+            const auto br = l.packOptionRect (sec, idx);
+            const bool hov = br.contains (lastMousePos_);
+            UiPack::NeuPainter::drawButton (g, br, pal_, snap.theme, active, hov, s, 1.0f, 5.0f * s);
+            g.setColour (active ? pal_.accent : (hov ? pal_.text : pal_.dim));
+            g.setFont (MBTheme::font (active ? MBTheme::uiMedium() : MBTheme::uiRegular(), 11.5f * s));
+            g.drawText (text, br.reduced (3.0f * s, 0.0f), juce::Justification::centred, false);
+        };
+
+        // Section 0: Presets
+        const bool isNeuPreset = snap.themeId == UiPack::ThemeId::Neumorphism
+                              && snap.paletteId == UiPack::PaletteId::NeuLight
+                              && snap.layoutId == UiPack::LayoutId::Sculpted;
+        const bool isClassicPreset = snap.themeId == UiPack::ThemeId::Classic
+                                  && snap.paletteId == UiPack::PaletteId::Blue
+                                  && snap.layoutId == UiPack::LayoutId::Standard;
+        drawPackBtn (0, 0, snap.t ("pack.presetNeu"),     isNeuPreset);
+        drawPackBtn (0, 1, snap.t ("pack.presetClassic"), isClassicPreset);
+
+        // Section 1: Theme Pack
+        drawSectionTitle ("pack.theme", 65.0f);
+        drawPackBtn (1, 0, snap.t ("pack.theme.classic"), snap.themeId == UiPack::ThemeId::Classic);
+        drawPackBtn (1, 1, snap.t ("pack.theme.neu"),     snap.themeId == UiPack::ThemeId::Neumorphism);
+
+        // Section 2: Palette Pack (6 items)
+        drawSectionTitle ("pack.palette", 111.0f);
+        const char* palLabels[6] = { "Blue", "Red", "Cream", "NeuLight", "NeuTeal", "NeuDark" };
+        for (int i = 0; i < 6; ++i)
+            drawPackBtn (2, i, palLabels[i], (int) snap.paletteId == i);
+
+        // Section 3: Layout Pack
+        drawSectionTitle ("pack.layout", 187.0f);
+        drawPackBtn (3, 0, snap.t ("pack.layout.standard"), snap.layoutId == UiPack::LayoutId::Standard);
+        drawPackBtn (3, 1, snap.t ("pack.layout.sculpted"), snap.layoutId == UiPack::LayoutId::Sculpted);
+
+        // Section 4: Locale Pack
+        drawSectionTitle ("pack.locale", 233.0f);
+        drawPackBtn (4, 0, "English", (int) snap.localeId == 0);
+        drawPackBtn (4, 1, juce::String::fromUTF8 ("\xE7\xAE\x80\xE4\xBD\x93\xE4\xB8\xAD\xE6\x96\x87"), (int) snap.localeId == 1);
+
+        // Section 5: Rollback
+        drawPackBtn (5, 0, snap.t ("pack.rollback"), false);
+    }
+}
+
+bool DisplayView::handlePackSwitcherClick (juce::Point<float> p)
+{
+    if (! dropDownOpen_ || ! dropDownThemeMode_)
+        return false;
+    const EditorLayout l (getLocalBounds(), composition_.snapshot().layout);
+    if (! l.packSwitcherCard().contains (p))
+        return false;
+
+    for (int i = 0; i < 2; ++i)
+        if (l.packOptionRect (0, i).contains (p))
+        {
+            if (i == 0) applyNeumorphismPreset (UiPack::PaletteId::NeuLight);
+            else        applyClassicPreset (UiPack::PaletteId::Blue);
+            return true;
+        }
+    for (int i = 0; i < 2; ++i)
+        if (l.packOptionRect (1, i).contains (p))
+        {
+            setThemePack ((UiPack::ThemeId) i);
+            return true;
+        }
+    for (int i = 0; i < 6; ++i)
+        if (l.packOptionRect (2, i).contains (p))
+        {
+            setPalettePack ((UiPack::PaletteId) i);
+            return true;
+        }
+    for (int i = 0; i < 2; ++i)
+        if (l.packOptionRect (3, i).contains (p))
+        {
+            setLayoutPack ((UiPack::LayoutId) i);
+            return true;
+        }
+    for (int i = 0; i < 2; ++i)
+        if (l.packOptionRect (4, i).contains (p))
+        {
+            setLocalePack ((UiPack::LocaleId) i);
+            return true;
+        }
+    if (l.packOptionRect (5, 0).contains (p))
+    {
+        rollbackUiPacks();
+        return true;
+    }
+    return true; // 点击落在卡片空白区域：消费点击且不误触底层频谱
 }
 
 void DisplayView::openDisplayRangeMenu()
@@ -2760,6 +3190,8 @@ void DisplayView::mouseDown (const juce::MouseEvent& e)
     //     （先关掉再开，永远是打开）。
     if (dropDownOpen_)
     {
+        if (handlePackSwitcherClick (p))
+            return;
         int item = -1;
         if (hitTestDropDownItem (p, item))
         {
@@ -3231,7 +3663,7 @@ void DisplayView::mouseDrag (const juce::MouseEvent& e)
 
     if (drag_ == DragMode::Divider)
     {
-        const float f = juce::jlimit (40.0f, 10000.0f, xToFreq (p.x));
+        const float f = juce::jlimit (20.0f, 20000.0f, xToFreq (p.x));
         applyDividerFreq (dragIndex_, f);
         return;
     }
@@ -3475,7 +3907,20 @@ void DisplayView::paint (juce::Graphics& g)
 
     drawBackground (g);
     g.saveState();
-    g.reduceClipRegion(juce::Rectangle<float>(0.0f, plotTopPx(), plotRightPx(), plotHeightPx()).toNearestInt());
+    const auto& snap = composition_.snapshot();
+    if (snap.layout.sunkenPlotWell)
+    {
+        const EditorLayout l (getLocalBounds(), snap.layout);
+        const auto well = l.plotWellRect();
+        const float r = (snap.layout.plotCornerRadius > 0.0f ? snap.layout.plotCornerRadius : snap.theme.radiusLg) * l.scale;
+        juce::Path clip;
+        clip.addRoundedRectangle (well, r);
+        g.reduceClipRegion (clip);
+    }
+    else
+    {
+        g.reduceClipRegion (juce::Rectangle<float> (0.0f, plotTopPx(), plotRightPx(), plotHeightPx()).toNearestInt());
+    }
     drawGrid (g);
     drawPartitions (g);
     // 频谱在第 4 位（分区之后、Range/曲线/刻度/分割线/段名/电平表之前）——

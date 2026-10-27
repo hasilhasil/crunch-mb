@@ -57,8 +57,10 @@ public:
 
     void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); }
 
-    /** 测试钩子 */
+    /** 测试钩子 */\
     bool hasFrameForTest() const { return hasFrame_; }
+    bool isPreLayerVisibleForTest()  const noexcept { return preOn_; }
+    bool isPostLayerVisibleForTest() const noexcept { return postOn_; }
     bool pathsReadyForTest() const
     {
         return pathsValid_ && ! (preFill_.isEmpty() && preStroke_.isEmpty());

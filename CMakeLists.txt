@@ -5,14 +5,28 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# JUCE 8.0.4 内嵌源码树（兄弟项目共享；可 -DJUCE_DIR= 覆盖）
+# JUCE 8.0.4 内嵌源码树（兄弟项目共享；可 -DJUCE_DIR= 覆盖，独立克隆时回退 .cache/JUCE-8.0.4）
 if(NOT DEFINED JUCE_DIR)
-    set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/JUCE-8.0.4")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/JUCE-8.0.4/CMakeLists.txt")
+        set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/JUCE-8.0.4")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.cache/JUCE-8.0.4/CMakeLists.txt")
+        set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.cache/JUCE-8.0.4")
+    else()
+        set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/JUCE-8.0.4")
+    endif()
 endif()
 
-# 字体共享自兄弟项目（含空格路径，已验证可用；可 -DFONT_DIR= 覆盖）
+# 字体共享自兄弟项目（含空格路径，已验证可用；可 -DFONT_DIR= 覆盖，独立克隆时回退本仓或 .cache/Fonts）
 if(NOT DEFINED FONT_DIR)
-    set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/src/ui/Fonts")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/src/ui/Fonts/Poppins-Regular.ttf")
+        set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/src/ui/Fonts")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts/Poppins-Regular.ttf")
+        set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Fonts")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.cache/Fonts/Poppins-Regular.ttf")
+        set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.cache/Fonts")
+    else()
+        set(FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../260916 Crunch Compressor/src/ui/Fonts")
+    endif()
 endif()
 
 add_subdirectory("${JUCE_DIR}" JUCE)
@@ -76,7 +90,17 @@ target_sources(CrunchMB PRIVATE
     src/ui/LinkedDrawer.cpp
     src/ui/LinkedDrawer.h
     src/ui/SpectrumView.cpp
-    src/ui/SpectrumView.h)
+    src/ui/SpectrumView.h
+    src/ui/core/PaletteContract.h
+    src/ui/core/ThemeContract.h
+    src/ui/core/LayoutContract.h
+    src/ui/core/LocaleRuntime.h
+    src/ui/core/NeuPainter.h
+    src/ui/core/UiComposition.h
+    src/ui/packs/palettes/BuiltInPalettes.h
+    src/ui/packs/themes/BuiltInThemes.h
+    src/ui/packs/layouts/BuiltInLayouts.h
+    src/ui/packs/locales/BuiltInLocales.h)
 
 target_compile_definitions(CrunchMB PUBLIC
     JUCE_WEB_BROWSER=0
@@ -148,7 +172,17 @@ target_sources(CrunchMBTests PRIVATE
     src/ui/LinkedDrawer.cpp
     src/ui/LinkedDrawer.h
     src/ui/SpectrumView.cpp
-    src/ui/SpectrumView.h)
+    src/ui/SpectrumView.h
+    src/ui/core/PaletteContract.h
+    src/ui/core/ThemeContract.h
+    src/ui/core/LayoutContract.h
+    src/ui/core/LocaleRuntime.h
+    src/ui/core/NeuPainter.h
+    src/ui/core/UiComposition.h
+    src/ui/packs/palettes/BuiltInPalettes.h
+    src/ui/packs/themes/BuiltInThemes.h
+    src/ui/packs/layouts/BuiltInLayouts.h
+    src/ui/packs/locales/BuiltInLocales.h)
 target_include_directories(CrunchMBTests PRIVATE src)
 target_compile_definitions(CrunchMBTests PRIVATE
     JUCE_PLUGINHOST_VST3=1

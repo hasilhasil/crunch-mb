@@ -63,6 +63,14 @@ public:
 
     void setHostBounds (juce::Rectangle<int> hostBounds);
     void setTheme (MBTheme::Theme t) { pal_ = MBTheme::palette (t); repaint(); }
+    void applyUiSnapshot (const UiPack::UiSnapshot& snap)
+    {
+        pal_          = snap.palette;
+        themeTokens_  = snap.theme;
+        layoutTokens_ = snap.layout;
+        locale_       = snap.locale;
+        repaint();
+    }
 
     // ---- 当前设置（宿主读取）----
     bool  preOn()   const noexcept { return preOn_; }
@@ -111,4 +119,12 @@ private:
     bool  frozen_ = false;
 
     MBTheme::Palette pal_ = MBTheme::palette (MBTheme::Theme::Blue);
+    UiPack::ThemeTokens  themeTokens_  = UiPack::buildThemePack  (UiPack::ThemeId::Classic);
+    UiPack::LayoutTokens layoutTokens_ = UiPack::buildLayoutPack (UiPack::LayoutId::Standard);
+    const UiPack::LocalePack* locale_  = &UiPack::buildLocalePack (UiPack::LocaleId::EnUS);
+    juce::String tr (const char* key) const
+    {
+        return (locale_ != nullptr) ? locale_->get (key)
+                                    : UiPack::buildLocalePack (UiPack::LocaleId::EnUS).get (key);
+    }
 };

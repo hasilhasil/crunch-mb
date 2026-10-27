@@ -49,7 +49,7 @@ public:
     bool getLatest (std::array<float, kDisplayPoints>& pre,
                     std::array<float, kDisplayPoints>& post);
 
-    // UI 线程：对数频率轴（无锁/自旋锁保护，采样率切换后自动更新版本）
+    // UI 线程：对数频率轴（自旋锁 + 版本号保护，采样率切换后自动更新）
     bool getFrequencies (std::vector<float>& freqs);
     bool getFrequencies (std::vector<float>& freqs, juce::uint32& ioVersion);
 

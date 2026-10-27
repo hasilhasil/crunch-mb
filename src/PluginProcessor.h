@@ -95,6 +95,17 @@ public:
     const AnalyzerSettings& getAnalyzerSettings() const noexcept { return analyzerSettings_; }
     void setAnalyzerSettings (const AnalyzerSettings& s) noexcept { analyzerSettings_ = s; }
 
+    // ---------- 四包 UI 组合持久化（默认保持原深色界面：Classic + Blue + Standard + EnUS） ----------
+    struct UiPackSettings
+    {
+        int themeId   = 0;   // 0=Classic, 1=Neumorphism
+        int paletteId = 0;   // 0=Blue, 1=Red, 2=Cream, 3=NeuLight, 4=NeuTeal, 5=NeuDark
+        int layoutId  = 0;   // 0=Standard, 1=Sculpted
+        int localeId  = 0;   // 0=en-US, 1=zh-CN
+    };
+    const UiPackSettings& getUiPackSettings() const noexcept { return uiPackSettings_; }
+    void setUiPackSettings (const UiPackSettings& s) noexcept { uiPackSettings_ = s; }
+
     // ---------- 编辑器开关（懒启动频谱分析，Phase 4.1） ----------
     void setEditorActive (bool active) noexcept;
 
@@ -139,6 +150,9 @@ public:
     /** 供 setStateInformation / MBBackend::loadState 在替换 ValueTree 后同步刷新 DSP 结构、延迟与 UI。 */
     void reapplyStructureAndLatency();
 
+    /** 将持久化或更新后的 AnalyzerSettings 同步下发到 SpectrumEngine。 */
+    void pushAnalyzerSettingsToEngine() noexcept;
+
 private:
     void applyStructure();                    // 消息线程：分频/FIR 设计
     void updateLatency() noexcept;            // 消息线程：setLatencySamples
@@ -157,6 +171,7 @@ private:
     std::function<void (const juce::String&)> uiWakeCallback_;
     // R35（N4）：Analyzer 显示设置（随状态持久化，见 getStateInformation）
     AnalyzerSettings analyzerSettings_;
+    UiPackSettings   uiPackSettings_;
 
     // 电平表（音频线程写原子，UI 做弹道）
     std::atomic<float> inputPeak_  { 0.0f };
