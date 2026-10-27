@@ -124,15 +124,15 @@ void OutputPanel::paint(juce::Graphics& g)
         g.setColour(pal_.halo.withMultipliedAlpha(.38f*a));g.fillRoundedRectangle(r.translated(0,5*s).expanded(3*s),12*s);
         g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);g.setColour(pal_.gridZ);g.drawRoundedRectangle(r,12*s,s);
     }
-    g.setColour(pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
+    g.setColour(pal_.text.withMultipliedAlpha(a));g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
     g.drawText(tr("output.title"),r.withTrimmedLeft(18*s).withHeight(42*s),juce::Justification::centredLeft);
-    g.setColour(pal_.gridZ.withMultipliedAlpha(themeTokens_.isNeumorphic?0.35f:1.0f));
+    g.setColour(pal_.gridZ.withMultipliedAlpha((themeTokens_.isNeumorphic?0.35f:1.0f)*a));
     g.drawLine(r.getX()+16*s,r.getY()+42*s,r.getRight()-16*s,r.getY()+42*s,s);
     for(int i=0;i<2;++i){auto cell=toggleRect(i);bool on=i==0?globalBypass_:autoGain_;
         UiPack::NeuPainter::drawButton(g,cell,pal_,themeTokens_,on,false,s,a,5*s);
-        g.setColour(on?pal_.accent:pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),14*s));
+        g.setColour((on?pal_.accent:pal_.dim).withMultipliedAlpha(a));g.setFont(MBTheme::font(MBTheme::uiMedium(),14*s));
         g.drawText(i==0?tr("output.globalBypass"):tr("output.autoGain"),cell.withTrimmedLeft(12*s).withTrimmedRight(40*s),juce::Justification::centredLeft);
         g.drawText(on?tr("output.on"):tr("output.off"),cell.withTrimmedLeft(cell.getWidth()-40*s),juce::Justification::centred);}
-    g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiRegular(),14*s));
+    g.setColour(pal_.dim.withMultipliedAlpha(a));g.setFont(MBTheme::font(MBTheme::uiRegular(),14*s));
     g.drawText(tr("output.monitor"),juce::Rectangle<float>(r.getX()+20*s,r.getY()+254*s,100*s,36*s),juce::Justification::centredLeft);
 }

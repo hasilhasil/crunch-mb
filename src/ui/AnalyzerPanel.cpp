@@ -141,10 +141,10 @@ void AnalyzerPanel::paint(juce::Graphics& g)
         g.setColour(pal_.popA.withMultipliedAlpha(a));g.fillRoundedRectangle(r,12*s);
         g.setColour(pal_.gridZ);g.drawRoundedRectangle(r,12*s,s);
     }
-    g.setColour(pal_.text);g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
+    g.setColour(pal_.text.withMultipliedAlpha(a));g.setFont(MBTheme::font(MBTheme::uiMedium(),16*s));
     g.drawText(tr("analyzer.title"),r.withTrimmedLeft(18*s).withHeight(40*s),juce::Justification::centredLeft);
     const char* headingKeys[]={"analyzer.resolution","analyzer.speed","analyzer.tilt"};const float ys[]={90,162,226};
-    for(int i=0;i<3;++i){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim);
+    for(int i=0;i<3;++i){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim.withMultipliedAlpha(a));
         g.drawText(tr(headingKeys[i]),juce::Rectangle<float>(r.getX()+18*s,r.getY()+ys[i]*s,r.getWidth()-36*s,22*s),juce::Justification::centredLeft);}
     const bool on[]={preOn_,postOn_,fftSize_==1024,fftSize_==2048,fftSize_==4096,fftSize_==8192,
         speed_==0,speed_==1,speed_==2,std::abs(tilt_)<.01f,std::abs(tilt_-1.5f)<.01f,std::abs(tilt_-3)<.01f,std::abs(tilt_-4.5f)<.01f,frozen_};
@@ -156,7 +156,7 @@ void AnalyzerPanel::paint(juce::Graphics& g)
     };
     for(int i=0;i<14;++i){auto cell=optionRect(i);
         UiPack::NeuPainter::drawButton(g,cell,pal_,themeTokens_,on[i],false,s,a,5*s);
-        g.setColour(on[i]?(themeTokens_.isNeumorphic?pal_.accent:pal_.text):pal_.dim);
+        g.setColour((on[i]?(themeTokens_.isNeumorphic?pal_.accent:pal_.text):pal_.dim).withMultipliedAlpha(a));
         g.setFont(MBTheme::font(on[i]?MBTheme::uiMedium():MBTheme::uiRegular(),(i>=2&&i<6?13.0f:14.0f)*s));
         g.drawText(labels[i],cell.reduced(3*s,0),juce::Justification::centred,false);}
 }

@@ -254,9 +254,12 @@ void BandPopover::layoutExpertFields()
 {
     const auto box=expertContentRect();const float s=EditorLayout(hostBounds_).scale;
     const float left=box.getX()+box.getWidth()*.58f;
+    const float a = juce::jlimit (0.0f, 1.0f, anim_);
+    const bool vis = expertOpen_ && (open_ || a >= 0.004f);
     for(int i=0;i<2;++i){auto& field=i==0?scLow_:scHigh_;field.setScale(s);
         field.setBounds(juce::Rectangle<float>(left,box.getY()+(32+48*i)*s,box.getRight()-left-12*s,38*s).toNearestInt());
-        field.setVisible(open_&&expertOpen_);}
+        field.setAlpha (a);
+        field.setVisible (vis);}
 }
 
 // ---------------- 开合 / 动画 ----------------
@@ -277,11 +280,14 @@ void BandPopover::setOpen (bool open)
                   Anim::kPopoverMs, anim_);
     animTarget_ = open ? 1.0f : 0.0f;
     layoutKnobs (false);
+    if (expertLayer_ != nullptr)
+        expertLayer_->repaint();
     repaint();
 }
 
 bool BandPopover::advance (double nowMs)
 {
+    const float prevAnim = anim_;
     anim_ = tween_.value (nowMs);
     if (std::abs (anim_ - animTarget_) < Anim::kSnapEps)
     {
@@ -289,11 +295,15 @@ bool BandPopover::advance (double nowMs)
         tween_.snapTo (animTarget_);
     }
     layoutKnobs (false);
-    if (expertLayer_ != nullptr && expertOpen_)
-        expertLayer_->repaint();       // R35（C-b）：覆盖层随动画重绘
     if (! open_ && anim_ <= Anim::kSnapEps)
         for (auto& kb : knobs_)
             if (kb != nullptr) kb->setVisible (false);
+    if (std::abs (anim_ - prevAnim) > 1.0e-5f)
+    {
+        if (expertLayer_ != nullptr)
+            expertLayer_->repaint();
+        repaint();
+    }
     return ! tween_.done (nowMs);
 }
 
@@ -823,7 +833,7 @@ void BandPopover::paint (juce::Graphics& g)
         const float s = scale;
         const juce::Rectangle<float> bolt(r.getX(),r.getY(),8*s,0);
         static const char* kNameKeys[4] = { "band.low", "band.lowMid", "band.highMid", "band.high" };
-        g.setColour (pal_.text);
+        g.setColour (pal_.text.withMultipliedAlpha (a));
         g.setFont (MBTheme::font (MBTheme::uiMedium(), 12.0f * s));
         g.drawText (tr (kNameKeys[juce::jlimit (0, 3, band_)]) + "  "
                     + (freqText_.isNotEmpty() ? freqText_
@@ -842,13 +852,13 @@ void BandPopover::paint (juce::Graphics& g)
         {
             const float cx2 = closeBtn.getCentreX(), cy2 = closeBtn.getCentreY();
             const float rr  = cs * 0.24f;
-            g.setColour (pal_.text);
+            g.setColour (pal_.text.withMultipliedAlpha (a));
             g.drawLine (cx2 - rr, cy2 - rr, cx2 + rr, cy2 + rr, juce::jmax (1.2f, cs * 0.09f));
             g.drawLine (cx2 + rr, cy2 - rr, cx2 - rr, cy2 + rr, juce::jmax (1.2f, cs * 0.09f));
         }
 
         // 分隔线
-        g.setColour (pal_.grid);
+        g.setColour (pal_.grid.withMultipliedAlpha (a));
         g.fillRect (r.getX() + r.getWidth() * (10.0f / 472.0f),
                     r.getY() + 36.0f * s,
                     r.getWidth() - r.getWidth() * (20.0f / 472.0f), 1.0f);
@@ -1002,15 +1012,16 @@ void BandPopover::paint (juce::Graphics& g)
 void BandPopover::paintExpertLayer(juce::Graphics& g)
 {
     if((!open_&&anim_<.004f)||!expertOpen_||anim_<.004f)return;
+    const float a = juce::jlimit (0.0f, 1.0f, anim_);
     const auto box=expertContentRect();const float s=EditorLayout(hostBounds_,layoutTokens_).scale;
     if(themeTokens_.isNeumorphic)
     {
-        UiPack::NeuPainter::drawInsetRect(g,box,themeTokens_.radiusMd*s,pal_,themeTokens_.insetWell,s,anim_,true);
+        UiPack::NeuPainter::drawInsetRect(g,box,themeTokens_.radiusMd*s,pal_,themeTokens_.insetWell,s,a,true);
     }
     else
     {
-        g.setColour(pal_.surface.withAlpha(.80f*anim_));g.fillRoundedRectangle(box,7*s);
-        g.setColour(pal_.gridZ);g.drawRoundedRectangle(box,7*s,s);
+        g.setColour(pal_.surface.withAlpha(.80f*a));g.fillRoundedRectangle(box,7*s);
+        g.setColour(pal_.gridZ.withMultipliedAlpha(a));g.drawRoundedRectangle(box,7*s,s);
     }
     const juce::String titles[]={tr("pop.detector"),tr("pop.lookahead"),tr("pop.scFiltering")};
     const juce::String options[3][3]={
@@ -1019,15 +1030,15 @@ void BandPopover::paintExpertLayer(juce::Graphics& g)
         {tr("pop.band"),tr("pop.free"),{}}
     };
     const int selected[]={sliders_[3]>.5?1:0,(int)std::lround(sliders_[4]*2),getParamNorm("band"+juce::String(juce::jmax(0,band_))+"SCFilter")>.5f?1:0};
-    for(int row=0;row<3;++row){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim);
+    for(int row=0;row<3;++row){g.setFont(MBTheme::font(MBTheme::uiMedium(),13*s));g.setColour(pal_.dim.withMultipliedAlpha(a));
         g.drawText(titles[row],juce::Rectangle<float>(box.getX()+12*s,box.getY()+(12+row*40)*s,130*s,30*s),juce::Justification::centredLeft);
         for(int i=0;i<(row==1?3:2);++i){const auto r=expertOptionRect((ExpertRow)(row+1),i);const bool on=selected[row]==i;
-            UiPack::NeuPainter::drawButton(g,r,pal_,themeTokens_,on,r.contains(lastMousePos_),s,anim_,4*s);
-            g.setColour(on?(themeTokens_.isNeumorphic?pal_.accent:pal_.text):pal_.dim);
+            UiPack::NeuPainter::drawButton(g,r,pal_,themeTokens_,on,r.contains(lastMousePos_),s,a,4*s);
+            g.setColour((on?(themeTokens_.isNeumorphic?pal_.accent:pal_.text):pal_.dim).withMultipliedAlpha(a));
             g.setFont(MBTheme::font(on?MBTheme::uiMedium():MBTheme::uiRegular(),14*s));
             g.drawText(options[row][i],r,juce::Justification::centred,false);}}
     const float left=box.getX()+box.getWidth()*.58f;
-    g.setColour(pal_.dim);g.setFont(MBTheme::font(MBTheme::uiMedium(),12*s));
+    g.setColour(pal_.dim.withMultipliedAlpha(a));g.setFont(MBTheme::font(MBTheme::uiMedium(),12*s));
     g.drawText(tr("pop.freqFreeMode"),juce::Rectangle<float>(left,box.getY()+8*s,box.getRight()-left-12*s,22*s),juce::Justification::centredLeft);
 }
 
